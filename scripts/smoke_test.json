@@ -1,0 +1,27 @@
+{
+  "_comment": "Headless smoke test — drives the engine through the Qingyi route.",
+  "commands": [
+    {"op": "inspect"},
+    {"op": "start_scene", "scene": "prologue_arrival"},
+    {"op": "next", "count": 15},
+    {"op": "move", "location": "main_gate"},
+    {"op": "next", "count": 15},
+    {"op": "move", "location": "front_lawn"},
+    {"op": "move", "location": "library"},
+    {"op": "start_scene", "scene": "meet_qingyi"},
+    {"op": "next", "count": 10},
+    {"op": "choose", "choice": "ask_name"},
+    {"op": "next", "count": 8},
+    {"op": "adjust_affection", "npc": "qingyi", "delta": 55},
+    {"op": "move", "location": "library_stacks"},
+    {"op": "start_scene", "scene": "qingyi_route_stacks"},
+    {"op": "next", "count": 12},
+    {"op": "choose", "choice": "protect"},
+    {"op": "next", "count": 8},
+    {"op": "start_scene", "scene": "qingyi_climax"},
+    {"op": "next", "count": 16},
+    {"op": "choose", "choice": "place_book"},
+    {"op": "next", "count": 16},
+    {"op": "inspect"}
+  ]
+}

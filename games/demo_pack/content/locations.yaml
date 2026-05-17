@@ -1,0 +1,39 @@
+locations:
+
+  - id: starting_room
+    name: "起點的房間"
+    region: "序章"
+    description: |
+      故事開始的地方。把這段文字改成你的遊戲第一個場景的描述。
+    background: assets/backgrounds/starting_room.png
+    map_x: 10
+    map_y: 50
+    exits: [town]
+
+  - id: town
+    name: "街上"
+    region: "城市"
+    description: |
+      一個熱鬧的小鎮街道。試著想像主角第一次走出家門的感覺。
+    background: assets/backgrounds/town.png
+    map_x: 30
+    map_y: 50
+    exits: [starting_room, park]
+    npcs:
+      - npc_id: heroine_1
+        times: [afternoon, evening]
+    scene_hooks:
+      - scene_id: meet_heroine
+        trigger: examine
+        forbids_flags: [met_heroine]
+        once: true
+
+  - id: park
+    name: "公園"
+    region: "城市"
+    description: |
+      安靜的小公園。湖邊偶爾會有意外的相遇。
+    background: assets/backgrounds/park.png
+    map_x: 45
+    map_y: 50
+    exits: [town]

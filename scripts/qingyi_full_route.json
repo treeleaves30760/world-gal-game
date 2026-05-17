@@ -1,0 +1,25 @@
+{
+  "commands": [
+    {"op": "start_scene", "scene": "prologue_arrival"},
+    {"op": "next", "count": 12},
+    {"op": "move", "location": "main_gate"},
+    {"op": "next", "count": 10},
+    {"op": "move", "location": "front_lawn"},
+    {"op": "move", "location": "library"},
+    {"op": "start_scene", "scene": "meet_qingyi"},
+    {"op": "next", "count": 8},
+    {"op": "choose", "choice": "ask_name"},
+    {"op": "next", "count": 5},
+    {"op": "adjust_affection", "npc": "qingyi", "delta": 55},
+    {"op": "advance_time", "phases": 2},
+    {"op": "move", "location": "library_stacks"},
+    {"op": "next", "count": 12},
+    {"op": "choose", "choice": "protect"},
+    {"op": "next", "count": 6},
+    {"op": "start_scene", "scene": "qingyi_climax"},
+    {"op": "next", "count": 12},
+    {"op": "choose", "choice": "place_book"},
+    {"op": "next", "count": 12},
+    {"op": "inspect"}
+  ]
+}

@@ -1,0 +1,37 @@
+scenes:
+
+  - id: meet_heroine
+    title: "初遇 · 女主角A"
+    location: town
+    background: assets/backgrounds/town.png
+    lines:
+      - text: |
+          街上突然有人叫住你。
+      - speaker: "女主角A"
+        text: "「等等！你是新來的對吧？」"
+        portrait: assets/characters/heroine_1_normal.png
+        expression: smile
+      - speaker: "女主角A"
+        text: |
+          「我叫A。
+          下次來找我，我可以帶你逛這個小鎮。」
+        expression: smile
+    choices:
+      - id: friendly
+        text: "「好啊，謝謝妳！」"
+        effects:
+          - kind: affection
+            target: heroine_1
+            value: 5
+          - kind: set_flag
+            target: met_heroine
+            value: true
+      - id: shy
+        text: "「呃，下次再說吧。」"
+        effects:
+          - kind: affection
+            target: heroine_1
+            value: 1
+          - kind: set_flag
+            target: met_heroine
+            value: true

@@ -1,0 +1,36 @@
+characters:
+
+  - id: heroine_1
+    name: "女主角A"
+    role: "你的第一位女主角"
+    age: 19
+    is_heroine: true
+    route_id: heroine_1
+    portrait: assets/characters/heroine_1_normal.png
+    portrait_set:
+      smile: assets/characters/heroine_1_smile.png
+    description: |
+      請改寫這段描述，告訴 LLM 她的外表、個性、能感受到的細節。
+    persona: |
+      描述她說話的風格、她在不同情緒下會怎麼反應、她如何看待玩家。
+    voice: "說話節奏與口氣描述（一句話）。"
+    backstory: |
+      她的過去 — 對 LLM 來說，這是『她記得而玩家還不知道』的事。
+    likes: ["範例1", "範例2"]
+    dislikes: ["範例3"]
+    llm_brain: true
+    thresholds:
+      - name: "朋友"
+        value: 25
+        unlocks: ["heroine_1_friend"]
+      - name: "戀人"
+        value: 80
+        unlocks: ["heroine_1_ending"]
+
+  - id: townsperson
+    name: "路人甲"
+    role: "鎮上居民"
+    portrait: assets/characters/townsperson.png
+    description: "一個尋常的小鎮居民。"
+    persona: "親切、好奇、講話愛離題。"
+    llm_brain: true

@@ -1,0 +1,31 @@
+# Pack metadata for demo_pack.
+title: "範例遊戲"
+subtitle: "Demo Pack"
+
+text_speed: 45
+
+# Optional bundled font — relative to this pack's root.
+# bundled_font: assets/fonts/MyFont.ttf
+
+title_bg: assets/backgrounds/title.png
+
+start_location: starting_room
+intro_scene: prologue
+
+player:
+  name: "玩家"
+  pronouns: "他"
+
+# Optionally override the engine's defaults. Comment out keys you don't
+# care about — the engine will keep its bundled defaults for those.
+# theme:
+#   accent: [216, 80, 143]
+#   accent_alt: [107, 107, 255]
+#   accent_warm: [240, 198, 116]
+# locale:
+#   affection_levels:
+#     - {min: 0,   label: "Stranger"}
+#     - {min: 25,  label: "Friend"}
+#     - {min: 100, label: "Lover"}
+#   ui:
+#     new_game: "New Game"

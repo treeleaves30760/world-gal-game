@@ -1,0 +1,45 @@
+[project]
+name = "world-gal-game"
+version = "0.1.0"
+description = "A pygame Gal-Game engine: map exploration, multi-axis affection, branching scenes, achievements, items, LLM-driven NPCs. Each game is a YAML content pack loaded at runtime; the engine itself ships no game-specific content."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [{ name = "Hsu Po-Hsiang" }]
+keywords = ["gal-game", "visual-novel", "pygame", "engine", "yaml", "llm"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: MacOS X",
+    "Environment :: Win32 (MS Windows)",
+    "Environment :: X11 Applications",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Games/Entertainment",
+]
+dependencies = [
+    "pygame-ce>=2.5",
+    "pydantic>=2.5",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+llm = ["anthropic>=0.40"]
+dev = ["pytest>=8.0"]
+build = ["pyinstaller>=6.5"]
+
+[project.scripts]
+# The console entry point installed when this package is pip / uv installed.
+world-gal-game = "world_gal_game.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+# Only ship the engine. Games are external — they bring their own content.
+packages = ["world_gal_game"]

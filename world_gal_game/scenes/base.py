@@ -1,0 +1,168 @@
+"""Scene base class + manager.
+
+A Scene is one "screen" of the game: title, exploration, dialogue, etc.
+The SceneManager owns a stack so overlays (map, affection, log, save,
+chat) can be pushed on top of the active scene and popped without losing
+the underlying state.
+
+SceneContext is the shared bag of services every scene needs.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+import pygame
+
+if TYPE_CHECKING:
+    from ..config import EngineConfig
+    from ..core.game_state import GameState
+    from ..core.localization import Localization
+    from ..dialogue.dialogue_engine import DialogueEngine
+    from ..npc.llm_brain import LLMBrain
+    from ..npc.npc_base import NPCRegistry
+    from ..ui.assets import AssetManager
+    from ..ui.fonts import FontRegistry
+    from ..ui.theme import Theme
+
+
+@dataclass
+class SceneContext:
+    config: "EngineConfig"
+    state: "GameState"
+    npcs: "NPCRegistry"
+    brain: "LLMBrain"
+    dialogue: "DialogueEngine"
+    assets: "AssetManager"
+    fonts: "FontRegistry"
+    theme: "Theme"
+    localization: "Localization"
+    screen_size: tuple[int, int] = (1280, 720)
+
+    def t(self, key: str, default: str | None = None, **fmt) -> str:
+        """Shortcut for scenes that need a localized UI string."""
+        return self.localization.t(key, default, **fmt)
+
+
+class Scene:
+    """Base for all screens. Subclasses override the lifecycle hooks."""
+
+    def __init__(self, ctx: SceneContext):
+        self.ctx = ctx
+        # Hint to the SceneManager whether the scene below should still draw.
+        self.is_overlay: bool = False
+
+    def enter(self, **kwargs) -> None:
+        """Called when scene becomes active."""
+        pass
+
+    def exit(self) -> None:
+        """Called when scene is popped/replaced."""
+        pass
+
+    def resume(self) -> None:
+        """Called when an overlay above this scene is popped."""
+        pass
+
+    def pause(self) -> None:
+        """Called when an overlay is pushed on top of this scene."""
+        pass
+
+    def handle_event(self, event: pygame.event.Event) -> None:
+        pass
+
+    def update(self, dt: float, inp) -> None:
+        pass
+
+    def draw(self, surface: pygame.Surface) -> None:
+        pass
+
+    def describe(self) -> dict:
+        """Headless-mode dump: return a JSON-able description of state."""
+        return {"scene": type(self).__name__}
+
+
+class SceneManager:
+    """A small stack-based scene manager.
+
+    - push(scene): overlay
+    - pop(): close current overlay
+    - replace(scene): swap the bottom of the stack
+    - The top of the stack receives input; everything below draws if it's an overlay scenario.
+    """
+
+    def __init__(self):
+        self._stack: list[Scene] = []
+        self._pending: list[tuple[str, Scene | None, dict]] = []
+
+    # ---- mutation queue (so scenes can switch in their own update) ----
+    def replace(self, scene: Scene, **kwargs) -> None:
+        self._pending.append(("replace", scene, kwargs))
+
+    def push(self, scene: Scene, **kwargs) -> None:
+        self._pending.append(("push", scene, kwargs))
+
+    def pop(self) -> None:
+        self._pending.append(("pop", None, {}))
+
+    def clear_to(self, scene: Scene, **kwargs) -> None:
+        self._pending.append(("clear_to", scene, kwargs))
+
+    # ---- queries ----
+    @property
+    def current(self) -> Scene | None:
+        return self._stack[-1] if self._stack else None
+
+    def stack(self) -> list[Scene]:
+        return list(self._stack)
+
+    # ---- per-frame work ----
+    def commit_pending(self) -> None:
+        for op, scene, kwargs in self._pending:
+            if op == "replace":
+                if self._stack:
+                    self._stack[-1].exit()
+                    self._stack.pop()
+                if scene is not None:
+                    self._stack.append(scene)
+                    scene.enter(**kwargs)
+            elif op == "push":
+                if self._stack:
+                    self._stack[-1].pause()
+                if scene is not None:
+                    self._stack.append(scene)
+                    scene.enter(**kwargs)
+            elif op == "pop":
+                if self._stack:
+                    self._stack[-1].exit()
+                    self._stack.pop()
+                if self._stack:
+                    self._stack[-1].resume()
+            elif op == "clear_to":
+                while self._stack:
+                    self._stack[-1].exit()
+                    self._stack.pop()
+                if scene is not None:
+                    self._stack.append(scene)
+                    scene.enter(**kwargs)
+        self._pending.clear()
+
+    def update(self, dt: float, inp) -> None:
+        self.commit_pending()
+        if self._stack:
+            self._stack[-1].update(dt, inp)
+        self.commit_pending()
+
+    def draw(self, surface: pygame.Surface) -> None:
+        if not self._stack:
+            return
+        # Find the deepest fully-opaque scene (the last non-overlay scene
+        # from the top). Draw from there upward.
+        bottom_idx = len(self._stack) - 1
+        while bottom_idx > 0 and self._stack[bottom_idx].is_overlay:
+            bottom_idx -= 1
+        for s in self._stack[bottom_idx:]:
+            s.draw(surface)
+
+    def describe(self) -> list[dict]:
+        return [s.describe() for s in self._stack]

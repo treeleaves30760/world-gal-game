@@ -1,0 +1,33 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# pygame-ce / SDL
+*.dll
+*.dylib
+*.so
+
+# user / runtime artefacts (ad-hoc test screenshots & saves)
+screenshots/
+saves/
+*.save.json
+
+# PyInstaller build artefacts
+*.spec.bak
+
+# editor leftovers
+.DS_Store
+.vscode/
+.idea/
+
+# codex temp output (the wrapper moves files but logs may linger)
+.codex_cache/
+
+# OS image caches under games/<pack>/assets — keep, they're game content

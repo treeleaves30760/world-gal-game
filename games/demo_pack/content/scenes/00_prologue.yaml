@@ -1,0 +1,18 @@
+scenes:
+
+  - id: prologue
+    title: "序章"
+    location: starting_room
+    background: assets/backgrounds/starting_room.png
+    lines:
+      - text: |
+          這是你遊戲的第一段文字。
+          改寫它，介紹你的世界。
+      - text: |
+          你呼吸了一口氣，準備推開門。
+      - speaker: "玩家"
+        text: "「該出發了。」"
+    on_end:
+      - kind: set_flag
+        target: prologue_done
+        value: true
