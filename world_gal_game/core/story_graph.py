@@ -10,11 +10,13 @@ content authors can write scenes without touching Python.
 from __future__ import annotations
 
 from typing import Any, Literal
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class Effect(BaseModel):
     """A single state change produced by a line or choice."""
+
+    model_config = ConfigDict(extra="forbid")
 
     kind: Literal[
         "affection",         # change a character's affection
@@ -45,6 +47,8 @@ class Effect(BaseModel):
 class Condition(BaseModel):
     """A predicate over the current game state."""
 
+    model_config = ConfigDict(extra="forbid")
+
     kind: Literal[
         "flag",            # flag must be truthy
         "not_flag",        # flag must be falsy
@@ -68,6 +72,8 @@ class Condition(BaseModel):
 class Choice(BaseModel):
     """A branch the player can pick at a decision point."""
 
+    model_config = ConfigDict(extra="forbid")
+
     id: str
     text: str
     requires: list[Condition] = Field(default_factory=list)
@@ -79,6 +85,8 @@ class Choice(BaseModel):
 
 class Line(BaseModel):
     """A single line of dialogue or narration."""
+
+    model_config = ConfigDict(extra="forbid")
 
     speaker: str | None = None       # None = narration
     text: str
@@ -95,6 +103,8 @@ class Line(BaseModel):
 
 class Scene(BaseModel):
     """A scene = a list of lines + an optional set of choices at the end."""
+
+    model_config = ConfigDict(extra="forbid")
 
     id: str
     title: str = ""

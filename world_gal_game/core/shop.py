@@ -26,10 +26,12 @@ scene choices.
 """
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ShopListing(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     item: str
     price: int
     stock: int = -1    # -1 = unlimited; otherwise decremented on buy
@@ -37,6 +39,8 @@ class ShopListing(BaseModel):
 
 
 class Shop(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     currency: str = "money"
     listings: list[ShopListing] = Field(default_factory=list)
     # If set, the shop will buy items back from the player. Sell price =

@@ -15,12 +15,14 @@ Either the delta or the affinity tag can be overridden per item via the
 from __future__ import annotations
 
 from typing import Any
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from .story_graph import Effect
 
 
 class Item(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     id: str
     name: str
     description: str = ""
