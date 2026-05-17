@@ -112,3 +112,26 @@ def test_no_tokens_passthrough():
     s = GameState()
     text = "普通的旁白，沒有任何插值符號。"
     assert interpolate(text, s) == text
+
+
+# ---------- regression: speaker field interpolated too -----------------------
+
+
+def test_speaker_field_interpolated_via_engine():
+    """Regression: when line.speaker contains {player_name}, the dialogue
+    engine must render the resolved player name in the speaker label,
+    not the raw token. Reported visible as '{player_name}' on the
+    Tsing-Hua prologue."""
+    from world_gal_game.core.story_graph import Scene, Line, StoryGraph
+    from world_gal_game.dialogue.dialogue_engine import DialogueEngine
+
+    s = GameState()
+    s.player.name = "靜宜"
+    s.story = StoryGraph()
+    s.story.add_scene(Scene(id="t", lines=[
+        Line(speaker="{player_name}", text="（自言自語。）"),
+    ]))
+    eng = DialogueEngine(s)
+    pres = eng.start_scene("t")
+    assert pres.line is not None
+    assert pres.line.speaker == "靜宜"

@@ -210,14 +210,18 @@ class DialogueEngine:
         # Mark as read *before* pushing to history (order doesn't matter for
         # the ReadLog, but it's consistent with "user has now seen this").
         self.state.read_log.mark_line(scene.id, idx)
+        # Interpolate speaker too so lines spoken by the player can use
+        # `speaker: "{player_name}"` and render the chosen name.
+        speaker_rendered = (interpolate(line.speaker, self.state)
+                            if line.speaker else None)
         # Push to dialogue history so the scrollback overlay can show it
         # later. We capture the rendered text (post-LLM resolution).
         self.state.dialogue_history.push(
-            speaker=line.speaker, text=text,
+            speaker=speaker_rendered, text=text,
             scene_id=scene.id, portrait=line.portrait,
         )
         return LinePresentation(
-            speaker=line.speaker,
+            speaker=speaker_rendered,
             text=text,
             portrait=line.portrait,
             portraits=list(line.portraits),
