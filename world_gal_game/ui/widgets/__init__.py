@@ -12,6 +12,7 @@ from .portrait_view import PortraitView
 from .map_view import MapView
 from .scrollable import ScrollArea
 from .toast import Toast, ToastStack
+from .debug_overlay import DebugOverlay
 
 __all__ = [
     "Widget", "Rect",
@@ -19,4 +20,5 @@ __all__ = [
     "MenuList", "DialogueBox", "ChoiceMenu", "PortraitView", "MapView",
     "ScrollArea",
     "Toast", "ToastStack",
+    "DebugOverlay",
 ]
