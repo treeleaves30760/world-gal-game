@@ -114,6 +114,7 @@ class Scene(BaseModel):
     location: str | None = None
     background: str | None = None
     bgm: str | None = None
+    cg: str | None = None            # scene-wide CG; individual line.cg overrides
     lines: list[Line] = Field(default_factory=list)
     choices: list[Choice] = Field(default_factory=list)
     on_end: list[Effect] = Field(default_factory=list)
