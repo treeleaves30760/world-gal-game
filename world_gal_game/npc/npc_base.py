@@ -7,7 +7,7 @@ current state into the next utterance.
 from __future__ import annotations
 
 from typing import Any
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 from ..core.shop import Shop
@@ -32,6 +32,8 @@ class NPCMemory(BaseModel):
 
 class NPC(BaseModel):
     """One NPC."""
+
+    model_config = ConfigDict(extra="forbid")
 
     id: str
     name: str

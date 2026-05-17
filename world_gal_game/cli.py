@@ -66,13 +66,64 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
+def validate_main(argv: list[str]) -> int:
+    """Entry point for `wgg validate <pack> [--json]`."""
+    import argparse
+    import json as _json
+
+    p = argparse.ArgumentParser(prog="world-gal-game validate",
+                                description="Validate a game pack's YAML content.")
+    p.add_argument("pack", help="path to the pack directory")
+    p.add_argument("--json", action="store_true",
+                   help="output issues as machine-readable JSON")
+    args = p.parse_args(argv)
+
+    from pathlib import Path
+    from world_gal_game.validator import validate_pack
+
+    pack_path = Path(args.pack).resolve()
+    if not pack_path.exists():
+        print(f"[error] pack 目錄不存在：{pack_path}", file=sys.stderr)
+        return 1
+
+    issues = validate_pack(pack_path)
+
+    if args.json:
+        data = [
+            {
+                "severity": iss.severity,
+                "file": iss.file,
+                "path": iss.path,
+                "message": iss.message,
+                "hint": iss.hint,
+            }
+            for iss in issues
+        ]
+        print(_json.dumps(data, ensure_ascii=False, indent=2))
+    else:
+        if not issues:
+            print("驗證通過，沒有發現問題。")
+        else:
+            for iss in issues:
+                loc = f"{iss.file}:{iss.path}" if iss.path else iss.file
+                print(f"[{iss.severity}] {loc}")
+                print(f"  {iss.message}")
+                if iss.hint:
+                    print(f"  提示：{iss.hint}")
+
+    errors = sum(1 for iss in issues if iss.severity == "error")
+    return 1 if errors else 0
+
+
 def main(argv: list[str] | None = None) -> int:
-    # Early-exit branch for the `build` subcommand so it does not collide
-    # with the engine's own argparse definitions.
+    # Early-exit subcommands — keep before the main argparse so they don't
+    # collide with engine flags. Use the argv passed in (or sys.argv[1:]).
     _args = argv if argv is not None else sys.argv[1:]
     if _args[:1] == ["build"]:
         from world_gal_game.build import main as build_main
         return build_main(_args[1:])
+    if _args[:1] == ["validate"]:
+        return validate_main(_args[1:])
 
     args = build_parser().parse_args(argv)
 

@@ -40,11 +40,13 @@ to the player and persisted through saves.
 from __future__ import annotations
 
 from typing import Any
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class Resource(BaseModel):
     """Declarative definition of one named resource."""
+
+    model_config = ConfigDict(extra="forbid")
 
     id: str
     name: str = ""           # human-readable label for UI

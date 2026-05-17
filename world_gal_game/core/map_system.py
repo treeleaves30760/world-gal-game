@@ -14,11 +14,13 @@ happens when the player moves; this module just models geometry + presence.
 from __future__ import annotations
 
 from typing import Any
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class NPCPresence(BaseModel):
     """An NPC's presence at a location, optionally time-gated."""
+
+    model_config = ConfigDict(extra="forbid")
 
     npc_id: str
     times: list[str] = Field(default_factory=list)  # e.g. ["morning","afternoon"]; empty = anytime
@@ -44,6 +46,8 @@ class NPCPresence(BaseModel):
 class SceneHook(BaseModel):
     """A scene that may auto-trigger or be available at a location."""
 
+    model_config = ConfigDict(extra="forbid")
+
     scene_id: str
     trigger: str = "examine"   # "enter", "examine", "auto", "night_only"
     requires_flags: list[str] = Field(default_factory=list)
@@ -54,6 +58,8 @@ class SceneHook(BaseModel):
 
 class Location(BaseModel):
     """A single place in the world."""
+
+    model_config = ConfigDict(extra="forbid")
 
     id: str
     name: str
