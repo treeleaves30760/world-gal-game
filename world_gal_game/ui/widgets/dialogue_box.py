@@ -61,7 +61,10 @@ class DialogueBox(Widget):
             return
         self._reveal_t += dt
         target = int(self._reveal_t * self.text_speed)
-        if target != self._chars_visible:
+        # Monotonic: never roll back. force_reveal() bumps _chars_visible to
+        # total+1; without this guard the next frame would compute a small
+        # target and overwrite the full reveal.
+        if target > self._chars_visible:
             self._chars_visible = target
             self.body.set_reveal(self._chars_visible)
 
