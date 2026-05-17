@@ -110,6 +110,9 @@ class EngineConfig:
     # text speed (chars/sec); 0 = instant
     text_speed: float = 45.0
 
+    # seconds between auto-advances when auto-play mode is on
+    auto_play_delay: float = 2.5
+
     # dev-mode toggles — populated by from_env(); all off by default
     dev_mode: bool = False
     debug_overlay_enabled: bool = False

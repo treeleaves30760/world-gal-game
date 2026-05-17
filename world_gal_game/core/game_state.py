@@ -13,6 +13,7 @@ from .affection import AffectionTracker
 from .event_log import EventLog, DialogueHistory
 from .inventory import Inventory, ItemRegistry, evaluate_gift
 from .map_system import MapSystem
+from .read_log import ReadLog
 from .resources import ResourceTracker
 from .story_graph import StoryGraph, Condition, Effect
 from .time_system import TimeSystem
@@ -39,6 +40,7 @@ class GameState(BaseModel):
     items: ItemRegistry = Field(default_factory=ItemRegistry)
     inventory: Inventory = Field(default_factory=Inventory)
     resources: ResourceTracker = Field(default_factory=ResourceTracker)
+    read_log: ReadLog = Field(default_factory=ReadLog)
     route: str | None = None    # which heroine route is currently dominant
     meta: dict[str, Any] = Field(default_factory=dict)
 

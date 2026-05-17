@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 
 from ..core.game_state import GameState
 from ..core.story_graph import Scene, Line, Choice
+from ..core.text_interpolation import interpolate
 
 
 @dataclass
@@ -101,8 +102,11 @@ class DialogueEngine:
             return self._present_current()
         # Apply effects.
         effects_out = self.state.apply_all(choice.effects)
+        # Interpolate the recorded choice text so the event log shows the
+        # resolved player-name / resource values at decision time.
+        choice_text = interpolate(choice.text, self.state)
         self.state.events.record(
-            kind="choice", title=choice.text,
+            kind="choice", title=choice_text,
             location=scene.location,
             data={"scene": scene.id, "choice": choice.id, "effects": effects_out},
         )
@@ -113,6 +117,59 @@ class DialogueEngine:
             return self.start_scene(choice.next_scene)
         # Otherwise end this scene.
         return self._end_current_scene()
+
+    # ---------- skip / auto-play helpers --------------------------------------
+
+    def is_current_read(self) -> bool:
+        """Return True if the line the engine is *about to present* is already
+        in the read log.  Useful for skip-mode to decide whether to pause."""
+        scene = self.current_scene()
+        if scene is None:
+            return False
+        idx = self.state.story.current_line_index
+        # Peek past any invisible lines (mirrors _present_current logic).
+        while idx < len(scene.lines) and not self._line_visible(scene.lines[idx]):
+            idx += 1
+        if idx >= len(scene.lines):
+            # At the choice/end boundary — treat as unread so UI pauses.
+            return False
+        return self.state.read_log.is_read(scene.id, idx)
+
+    def skip_to_next_unread(self) -> "ScenePresentation | None":
+        """Auto-advance through already-read lines; stop at the first unread
+        line or any choice point (choices always require player input).
+
+        Returns the first unread ScenePresentation, or None when the scene ends
+        without finding unread content.
+        """
+        while True:
+            scene = self.current_scene()
+            if scene is None:
+                return None
+            idx = self.state.story.current_line_index
+            # Skip invisible lines same as _present_current.
+            while idx < len(scene.lines) and not self._line_visible(scene.lines[idx]):
+                idx += 1
+            self.state.story.current_line_index = idx
+
+            # Reached end-of-lines -> choices or end (always stop skipping).
+            if idx >= len(scene.lines):
+                pres = self.next_line()
+                return None if pres.kind == "end" else pres
+
+            # Unread line: stop and present it.
+            if not self.state.read_log.is_read(scene.id, idx):
+                return self.next_line()
+
+            # Already-read line: advance past it without pausing.
+            # We call next_line() to apply effects and push history, then
+            # continue the loop to check the *following* line.
+            pres = self.next_line()
+            # Stop at any non-line result.  end -> None; choice/transition -> return.
+            if pres.kind == "end":
+                return None
+            if pres.kind in ("choice", "transition"):
+                return pres
 
     # ---------- internals -----------------------------------------------------
 
@@ -140,11 +197,17 @@ class DialogueEngine:
                 is_llm = True
             except Exception as e:
                 text = line.text + f"\n[LLM 失敗: {e}]"
+        # Apply {token} interpolation after LLM resolution so LLM-generated
+        # text can also embed state variables.
+        text = interpolate(text, self.state)
         effects_out: list[dict[str, Any]] = []
         if line.effects:
             effects_out = self.state.apply_all(line.effects)
         if line.bgm:
             self.state.meta["current_bgm"] = line.bgm
+        # Mark as read *before* pushing to history (order doesn't matter for
+        # the ReadLog, but it's consistent with "user has now seen this").
+        self.state.read_log.mark_line(scene.id, idx)
         # Push to dialogue history so the scrollback overlay can show it
         # later. We capture the rendered text (post-LLM resolution).
         self.state.dialogue_history.push(
@@ -195,9 +258,16 @@ class DialogueEngine:
         hidden_locked = [c for c in scene.choices
                          if not self._choice_available(c) and not c.hidden_if_locked]
         if available or hidden_locked:
-            options = [ChoiceOption(id=c.id, text=c.text, enabled=True) for c in available]
-            options += [ChoiceOption(id=c.id, text=c.text + " (條件未達)",
-                                     enabled=False) for c in hidden_locked]
+            options = [
+                ChoiceOption(id=c.id, text=interpolate(c.text, self.state), enabled=True)
+                for c in available
+            ]
+            options += [
+                ChoiceOption(id=c.id,
+                             text=interpolate(c.text, self.state) + " (條件未達)",
+                             enabled=False)
+                for c in hidden_locked
+            ]
             return ScenePresentation(
                 kind="choice", choices=options,
                 scene_id=scene.id, title=scene.title,
