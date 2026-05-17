@@ -16,7 +16,7 @@ import pygame
 
 from .base import Scene, SceneContext
 from ..ui.widgets import Button, Panel, WrappedText, Label
-from ..core.map_system import Location
+from ..core.map_system import Location, Exit
 
 
 class ExplorationScene(Scene):
@@ -38,6 +38,8 @@ class ExplorationScene(Scene):
         self.on_move_to: Callable[[str], None] | None = None
         self.on_advance_time: Callable[[], None] | None = None
         self._info_panel: Panel | None = None
+        # list of (button, description_str | None, is_available)
+        self._exit_buttons: list[tuple[Button, str | None, bool]] = []
 
     def enter(self, *, on_map=None, on_affection=None, on_log=None,
               on_save=None, on_settings=None, on_menu=None,
@@ -85,15 +87,14 @@ class ExplorationScene(Scene):
         self._info_panel = Panel(self._info_rect, self.ctx.theme,
                                  fill=(*self.ctx.theme.bg_panel[:3], 230))
         self._buttons = []
+        self._exit_buttons = []
         flags = self.ctx.state.events.flags
-        exits = self.ctx.state.map.available_exits(flags)
+        time_of_day = self.ctx.state.time.time_of_day.value
         scene_hooks = self.ctx.state.map.available_scenes(
-            time_of_day=self.ctx.state.time.time_of_day.value,
+            time_of_day=time_of_day,
             flags=flags,
             played_scenes=self.ctx.state.story.played,
         )
-        bx = self._info_rect.right - 16
-        by = self._info_rect.y + 16
         # right-stack: action buttons
         all_actions: list[tuple[str, Callable[[], None]]] = []
         if self.on_advance_time:
@@ -107,11 +108,7 @@ class ExplorationScene(Scene):
             label = sc.title or sc.id
             all_actions.append((label, (lambda sid=hook.scene_id:
                                          self._start_scene(sid))))
-        # exits on the left of the buttons
-        for exit_loc in exits:
-            label = f"→ {exit_loc.name}"
-            all_actions.append((label, (lambda lid=exit_loc.id:
-                                          self._move(lid))))
+
         # Layout: 3-column grid bottom-aligned in the right half of the panel.
         col_w = 200
         col_h = 42
@@ -128,6 +125,39 @@ class ExplorationScene(Scene):
                                         theme=self.ctx.theme,
                                         font_size=16,
                                         on_click=cb))
+
+        # Exit buttons: show all exits; grey out unavailable ones rather than hiding.
+        all_exits_info = self.ctx.state.map.all_exits_with_status(flags, time_of_day)
+        exit_col_w = 200
+        exit_col_h = 42
+        exit_cols = 3
+        exit_row_offset = start_y + len(all_actions) // cols * (col_h + 8) + (
+            col_h + 16 if all_actions else 0
+        )
+        # Re-start exit layout below the action buttons
+        exit_start_y = self._info_rect.y + 60 + (
+            (len(all_actions) + exit_cols - 1) // exit_cols
+        ) * (col_h + 8) if all_actions else self._info_rect.y + 60
+        for i, (exit_obj, exit_loc, available, reason) in enumerate(all_exits_info):
+            col = i % exit_cols
+            row = i // exit_cols
+            r = pygame.Rect(start_x + col * (exit_col_w + 8),
+                            exit_start_y + row * (exit_col_h + 8),
+                            exit_col_w, exit_col_h)
+            # Use custom label if set, otherwise default arrow + name
+            display_label = exit_obj.label or f"→ {exit_loc.name}"
+            if available:
+                btn = Button(r, display_label, fonts=self.ctx.fonts,
+                             theme=self.ctx.theme, font_size=16,
+                             on_click=(lambda lid=exit_loc.id: self._move(lid)))
+            else:
+                # Disabled style: ghost button, no callback
+                btn = Button(r, display_label, fonts=self.ctx.fonts,
+                             theme=self.ctx.theme, font_size=16,
+                             style="ghost", on_click=None)
+            # Store alongside description and availability for draw-time hint rendering
+            desc = exit_obj.description or reason
+            self._exit_buttons.append((btn, desc, available))
         # NPCs present
         self._npc_cards = []
         present_ids = self.ctx.state.map.present_npcs(
@@ -155,6 +185,8 @@ class ExplorationScene(Scene):
             b.update(dt, inp)
         for b in self._buttons:
             b.update(dt, inp)
+        for btn, _desc, _avail in self._exit_buttons:
+            btn.update(dt, inp)
         # NPC card clicks
         if inp.mouse_clicked:
             for rect, nid in self._npc_cards:
@@ -181,11 +213,15 @@ class ExplorationScene(Scene):
 
     def draw(self, surface: pygame.Surface) -> None:
         sw, sh = surface.get_size()
-        # background
+        # background: use time-of-day variant if available
         loc: Location | None = self.ctx.state.map.current
-        if loc and loc.background:
-            bg = self.ctx.assets.scaled(loc.background, (sw, sh), fit="cover")
-            surface.blit(bg, (0, 0))
+        if loc:
+            time_val = self.ctx.state.time.time_of_day.value
+            bg = self.ctx.assets.location_background(loc, time_val, size=(sw, sh))
+            if bg:
+                surface.blit(bg, (0, 0))
+            else:
+                surface.fill(self.ctx.theme.bg_deep)
         else:
             surface.fill(self.ctx.theme.bg_deep)
 
@@ -260,6 +296,15 @@ class ExplorationScene(Scene):
         # action buttons
         for b in self._buttons:
             b.draw(surface)
+        # exit buttons with optional description hint beneath
+        for btn, desc, available in self._exit_buttons:
+            btn.draw(surface)
+            if desc:
+                hint_color = (self.ctx.theme.text_mute if not available
+                              else self.ctx.theme.text_mute)
+                hint = self.ctx.fonts.render(desc, 13, hint_color)
+                surface.blit(hint, (btn.rect.x + 4,
+                                    btn.rect.bottom + 2))
         # NPC cards
         for rect, nid in self._npc_cards:
             npc = self.ctx.npcs.get(nid)
@@ -294,13 +339,14 @@ class ExplorationScene(Scene):
 
     def describe(self) -> dict:
         loc = self.ctx.state.map.current
+        flags = self.ctx.state.events.flags
+        time_of_day = self.ctx.state.time.time_of_day.value
         return {
             "scene": "ExplorationScene",
             "location": loc.id if loc else None,
             "location_name": loc.name if loc else None,
             "time": self.ctx.state.time.label(),
-            "exits": [e.id for e in self.ctx.state.map.available_exits(
-                self.ctx.state.events.flags)],
+            "exits": [e.id for e in self.ctx.state.map.available_exits(flags, time_of_day)],
             "npcs_present": [n for _, n in self._npc_cards],
             "scenes_available": [
                 h.scene_id for h in self.ctx.state.map.available_scenes(

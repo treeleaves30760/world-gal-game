@@ -10,9 +10,10 @@ Gal-Game / 視覺小說，從這裡開始。
 1. [**getting-started.md**](getting-started.md) — 安裝、產生第一個 pack、跑起來
 2. [**tutorial-build-a-game.md**](tutorial-build-a-game.md) — 從 0 到可玩 demo 的完整 walk-through（**新手必讀**）
 3. [**pack-format.md**](pack-format.md) — pack 的目錄結構與 meta.yaml
-4. [**scenes.md**](scenes.md) — 場景 YAML、對話、選項、條件鎖
-5. [**characters.md**](characters.md) — 角色、立繪、送禮、商店
-6. [**affection.md**](affection.md) — 好感度、多軸 stat、門檻解鎖
+4. [**locations.md**](locations.md) — 地點、Region、多時段背景、Exit 條件
+5. [**scenes.md**](scenes.md) — 場景 YAML、對話、選項、條件鎖
+6. [**characters.md**](characters.md) — 角色、立繪、送禮、商店
+7. [**affection.md**](affection.md) — 好感度、多軸 stat、門檻解鎖
 
 擴充功能：
 

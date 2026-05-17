@@ -45,17 +45,25 @@ class MapScene(Scene):
 
     def _refresh(self) -> None:
         flags = self.ctx.state.events.flags
+        time_of_day = self.ctx.state.time.time_of_day.value
         cur = self.ctx.state.map.current
-        reachable = {l.id for l in self.ctx.state.map.available_exits(flags)}
+        reachable = {l.id for l in self.ctx.state.map.available_exits(flags, time_of_day)}
+        regions = self.ctx.state.map.regions
         nodes = []
         for loc in self.ctx.state.map.locations.values():
+            region_color = None
+            if loc.region and loc.region in regions:
+                region_color = regions[loc.region].color
             nodes.append({
                 "id": loc.id,
                 "name": loc.name,
                 "region": loc.region,
+                "region_name": regions[loc.region].name if loc.region and loc.region in regions else loc.region,
+                "region_color": region_color,
+                "description": loc.description,
                 "map_x": loc.map_x,
                 "map_y": loc.map_y,
-                "exits": loc.exits,
+                "exits": loc.exit_targets,
                 "visited": loc.id in self.ctx.state.map.visited,
                 "accessible": loc.is_accessible(flags),
             })
@@ -91,7 +99,7 @@ class MapScene(Scene):
                                       self.ctx.config.font_size_header,
                                       self.ctx.theme.accent, bold=True)
         surface.blit(title, (64, 50))
-        hint = self.ctx.fonts.render("點擊可前往的地點 (粉色 = 直接可達，灰色 = 暫時無法前往)",
+        hint = self.ctx.fonts.render("點擊可前往的地點 (粉色 = 直接可達，灰色 = 未訪問/不可達，? = 未探索)",
                                      self.ctx.config.font_size_small,
                                      self.ctx.theme.text_mute)
         surface.blit(hint, (64, 90))
@@ -102,8 +110,9 @@ class MapScene(Scene):
 
     def describe(self) -> dict:
         cur = self.ctx.state.map.current
+        flags = self.ctx.state.events.flags
+        time_of_day = self.ctx.state.time.time_of_day.value
         return {"scene": "MapScene",
                 "current": cur.id if cur else None,
                 "exits": [e.id for e in
-                          self.ctx.state.map.available_exits(
-                              self.ctx.state.events.flags)]}
+                          self.ctx.state.map.available_exits(flags, time_of_day)]}
