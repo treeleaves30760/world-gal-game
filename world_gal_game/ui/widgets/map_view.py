@@ -78,8 +78,7 @@ class MapView(Widget):
                          border_radius=self.theme.radius_l)
         surface.blit(frame, self.rect.topleft)
 
-        # connection lines: only draw between known reachable nodes
-        node_by_id = {n["id"]: n for n in self.nodes}
+        # connection lines between nodes
         for n in self.nodes:
             for exit_id in n.get("exits", []):
                 if exit_id not in self._node_rects:
@@ -95,6 +94,11 @@ class MapView(Widget):
             is_current = n["id"] == self.current_id
             is_reachable = n["id"] in self.reachable_ids
             is_locked = not n.get("accessible", True)
+            is_visited = n.get("visited", False)
+
+            # Region-tinted base for unvisited accessible nodes
+            region_color: tuple[int, int, int] | None = n.get("region_color")
+
             if is_locked:
                 fill = (60, 60, 60, 160)
                 border = self.theme.border_soft
@@ -107,12 +111,24 @@ class MapView(Widget):
                 fill = (*self.theme.accent[:3], 110)
                 border = self.theme.accent
                 text_color = (255, 255, 255)
-            else:
+            elif is_visited and region_color:
+                # Visited, not reachable right now: use region color at medium alpha
+                fill = (*region_color, 90)
+                border = (*region_color, 160)
+                text_color = self.theme.text_mute
+            elif is_visited:
                 fill = (*self.theme.accent_alt[:3], 60)
                 border = (*self.theme.accent_alt[:3], 130)
                 text_color = self.theme.text_mute
+            else:
+                # Unvisited: muted grey + "?" marker
+                fill = (50, 50, 60, 140)
+                border = (80, 80, 90, 120)
+                text_color = self.theme.text_dim
+
             if n["id"] == self._hover_id and (is_reachable or is_current):
                 fill = tuple(min(255, c + 40) for c in fill[:3]) + (fill[3],)
+
             chip = pygame.Surface(rect.size, pygame.SRCALPHA)
             pygame.draw.rect(chip, fill, chip.get_rect(),
                              border_radius=self.theme.radius_m)
@@ -120,11 +136,37 @@ class MapView(Widget):
                              width=2 if is_current else 1,
                              border_radius=self.theme.radius_m)
             surface.blit(chip, rect.topleft)
-            label = self.fonts.render(n["name"], 18, text_color, bold=True)
-            surface.blit(label, (rect.x + (rect.width - label.get_width()) // 2,
-                                 rect.y + 5))
-            region = n.get("region") or ""
-            if region:
-                sub = self.fonts.render(region, 14, self.theme.text_mute)
-                surface.blit(sub, (rect.x + (rect.width - sub.get_width()) // 2,
-                                   rect.y + 25))
+
+            if is_visited or is_current or is_reachable:
+                label = self.fonts.render(n["name"], 18, text_color, bold=True)
+                surface.blit(label, (rect.x + (rect.width - label.get_width()) // 2,
+                                     rect.y + 5))
+                region_display = n.get("region_name") or n.get("region") or ""
+                if region_display:
+                    sub = self.fonts.render(region_display, 14, self.theme.text_mute)
+                    surface.blit(sub, (rect.x + (rect.width - sub.get_width()) // 2,
+                                       rect.y + 25))
+            else:
+                # Unknown location: show "?" to indicate unexplored
+                q = self.fonts.render("?", 22, text_color, bold=True)
+                surface.blit(q, (rect.x + (rect.width - q.get_width()) // 2,
+                                 rect.y + (rect.height - q.get_height()) // 2))
+
+        # Hover tooltip: show description below the hovered node
+        if self._hover_id and self._hover_id in self._node_rects:
+            hovered_node = next((n for n in self.nodes if n["id"] == self._hover_id), None)
+            if hovered_node:
+                desc = hovered_node.get("description") or ""
+                if desc:
+                    hover_rect = self._node_rects[self._hover_id]
+                    tip_surf = self.fonts.render(desc, 14, self.theme.text)
+                    tip_x = max(self.rect.x + 4,
+                                hover_rect.centerx - tip_surf.get_width() // 2)
+                    tip_y = hover_rect.bottom + 6
+                    # clamp to right edge
+                    tip_x = min(tip_x, self.rect.right - tip_surf.get_width() - 4)
+                    bg = pygame.Surface((tip_surf.get_width() + 12,
+                                         tip_surf.get_height() + 8), pygame.SRCALPHA)
+                    bg.fill((*self.theme.bg_overlay[:3], 210))
+                    surface.blit(bg, (tip_x - 6, tip_y - 4))
+                    surface.blit(tip_surf, (tip_x, tip_y))

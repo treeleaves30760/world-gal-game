@@ -23,6 +23,7 @@ import pygame
 
 from ..config import resolve_asset
 from ..core.portrait_spec import PortraitSpec
+from ..core.map_system import Location as _Location
 
 
 class AssetManager:
@@ -153,6 +154,22 @@ class AssetManager:
         if not label:
             self._placeholder_cache[key] = s
         return s
+
+    # ---------- location background ------------------------------------------
+
+    def location_background(self, loc: _Location, time_of_day: str,
+                             size: tuple[int, int] | None = None) -> pygame.Surface | None:
+        """Resolve and load the time-of-day-specific background for a location.
+
+        Returns None when no background is defined (neither time-specific nor default).
+        When size is given, returns a scaled cover-fit surface.
+        """
+        path = loc.background_for(time_of_day)
+        if not path:
+            return None
+        if size is not None:
+            return self.scaled(path, size, fit="cover")
+        return self.image(path)
 
     # ---------- portrait spec ------------------------------------------------
 

@@ -113,6 +113,7 @@ resources:
 詳細欄位：
 - [theme-and-locale.md](theme-and-locale.md) — theme / locale 區塊
 - [resources.md](resources.md) — resources 區塊
+- [locations.md](locations.md) — locations / regions / exits 完整 schema
 
 ## 引擎在哪裡找 pack？
 

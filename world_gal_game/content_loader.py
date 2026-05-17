@@ -30,7 +30,7 @@ from .core.achievements import Achievement
 from .core.affection import AffectionThreshold
 from .core.game_state import GameState, PlayerInfo
 from .core.inventory import Item
-from .core.map_system import MapSystem, Location, NPCPresence, SceneHook
+from .core.map_system import MapSystem, Location, NPCPresence, SceneHook, Exit, Region
 from .core.resources import Resource
 from .core.story_graph import Condition
 from .npc.npc_base import NPC, NPCRegistry
@@ -45,14 +45,36 @@ def _read_yaml(path: Path) -> Any:
         return yaml.safe_load(f)
 
 
+def _parse_exits(raw_exits: list) -> list[Exit]:
+    """Accept both shorthand strings and full dict forms for exits."""
+    out: list[Exit] = []
+    for item in raw_exits:
+        if isinstance(item, str):
+            out.append(Exit(target=item))
+        else:
+            out.append(Exit(**item))
+    return out
+
+
 def load_locations(content_root: Path, state: GameState) -> None:
     data = _read_yaml(content_root / "locations.yaml") or []
-    if isinstance(data, dict) and "locations" in data:
-        data = data["locations"]
+    top: dict = {}
+    if isinstance(data, dict):
+        top = data
+        data = data.get("locations", [])
+
+    # Load regions first so they exist before locations reference them.
+    for raw_region in top.get("regions", []):
+        region = Region(**raw_region)
+        state.map.add_region(region)
+
     for raw in data:
+        raw = dict(raw)
         npc_presences = [NPCPresence(**p) for p in raw.pop("npcs", [])]
         scene_hooks = [SceneHook(**h) for h in raw.pop("scene_hooks", [])]
-        loc = Location(npcs=npc_presences, scene_hooks=scene_hooks, **raw)
+        exits = _parse_exits(raw.pop("exits", []))
+        loc = Location(npcs=npc_presences, scene_hooks=scene_hooks,
+                       exits=exits, **raw)
         state.map.add_location(loc)
 
 
