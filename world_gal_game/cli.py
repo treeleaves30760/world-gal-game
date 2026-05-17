@@ -67,6 +67,13 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Early-exit branch for the `build` subcommand so it does not collide
+    # with the engine's own argparse definitions.
+    _args = argv if argv is not None else sys.argv[1:]
+    if _args[:1] == ["build"]:
+        from world_gal_game.build import main as build_main
+        return build_main(_args[1:])
+
     args = build_parser().parse_args(argv)
 
     from world_gal_game.config import EngineConfig
