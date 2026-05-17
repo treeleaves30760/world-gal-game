@@ -30,7 +30,7 @@ from .core.game_state import GameState
 from .core.localization import Localization
 from .core.time_system import bind_localization as bind_time_localization
 from .dialogue.dialogue_engine import DialogueEngine, ScenePresentation
-from .npc.llm_brain import build_llm_provider, default_brain, EchoBrain, LLMBrain
+from .npc.llm_brain import default_brain, EchoBrain, LLMBrain
 from .npc.npc_base import NPCRegistry
 
 
@@ -68,9 +68,10 @@ class HeadlessSession:
         bind_time_localization(localization)
         state.affection.bind_localization(localization)
         # Headless defaults to EchoBrain so deterministic scripts work.
+        # No live LLM brain is wired up; llm_speaker lines fall back to
+        # `line.text`.
         brain = brain or EchoBrain()
-        provider = build_llm_provider(npcs, brain)
-        dialogue = DialogueEngine(state, llm_provider=provider)
+        dialogue = DialogueEngine(state, llm_provider=None)
         return cls(config=config, state=state, npcs=npcs, brain=brain,
                    dialogue=dialogue, meta=meta, pack=pack)
 
@@ -195,6 +196,13 @@ class HeadlessSession:
         return {"ok": True, "presentation": self.last_presentation}
 
     def chat(self, npc_id: str, message: str) -> dict:
+        """Free-chat with an NPC.
+
+        LLM-backed chat is deferred for this release — the deterministic
+        EchoBrain returns a placeholder line and the +1 affection /
+        event-log side effects still fire. Useful for testing the
+        envelope around the future LLM integration.
+        """
         npc = self.npcs.get(npc_id)
         if npc is None:
             return {"ok": False, "error": f"unknown npc {npc_id}"}

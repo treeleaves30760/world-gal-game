@@ -53,7 +53,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--dev-start", default=None,
                    help="(--screenshot) skip title; start at:  "
                         "explore | scene:<id> | map | affection | log | "
-                        "save | load | settings | achievements | chat:<npc_id>")
+                        "save | load | settings | achievements | npc:<npc_id>")
     p.add_argument("--dev-flags", default=None,
                    help="(--screenshot) JSON dict of flags to pre-set.")
     p.add_argument("--dev-location", default=None,
@@ -169,9 +169,9 @@ def _run_screenshot_mode(app, args) -> int:
         elif ds == "inventory":
             app._start_new_game(); app.manager.commit_pending()
             app._open_inventory()
-        elif ds.startswith("chat:"):
+        elif ds.startswith("npc:"):
             app._start_new_game(); app.manager.commit_pending()
-            app._open_chat(ds.split(":", 1)[1])
+            app._open_npc_actions(ds.split(":", 1)[1])
 
     start = time.monotonic()
     target_path = Path(args.screenshot).resolve()

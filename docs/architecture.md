@@ -33,9 +33,9 @@ world_gal_game/
 │   ├── dialogue_engine.py   # Scene 跑者（line-by-line）
 │   └── script_loader.py     # YAML → Scene/Line/Choice
 │
-├── npc/                     # NPC 與 LLM
+├── npc/                     # NPC（LLM brain v2 deferred）
 │   ├── npc_base.py          # NPC + memory + system_prompt
-│   └── llm_brain.py         # ClaudeBrain / EchoBrain 介面
+│   └── llm_brain.py         # LLMBrain ABC + EchoBrain（為 v2 預留 seam）
 │
 ├── ui/                      # pygame UI 元件
 │   ├── assets.py            # 圖檔 / 聲音快取（含 placeholder）
@@ -59,7 +59,7 @@ world_gal_game/
     ├── settings_scene.py
     ├── shop_scene.py
     ├── save_scene.py
-    ├── chat_scene.py        # LLM 自由對話
+    ├── npc_action_scene.py  # NPC 行動 overlay（送禮 / 看貨）
     └── menu_scene.py        # 主選單（集中 UI）
 ```
 

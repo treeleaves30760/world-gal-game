@@ -1,12 +1,12 @@
 [project]
 name = "world-gal-game"
 version = "0.1.0"
-description = "A pygame Gal-Game engine: map exploration, multi-axis affection, branching scenes, achievements, items, LLM-driven NPCs. Each game is a YAML content pack loaded at runtime; the engine itself ships no game-specific content."
+description = "A pygame Gal-Game engine: map exploration, multi-axis affection, branching scenes, achievements, items, shops, resources. Each game is a YAML content pack loaded at runtime; the engine itself ships no game-specific content."
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
 authors = [{ name = "Hsu Po-Hsiang" }]
-keywords = ["gal-game", "visual-novel", "pygame", "engine", "yaml", "llm"]
+keywords = ["gal-game", "visual-novel", "pygame", "engine", "yaml"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Environment :: MacOS X",
@@ -28,7 +28,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-llm = ["anthropic>=0.40"]
+# LLM-backed NPC brains are deferred — the seam is kept in
+# `world_gal_game/npc/llm_brain.py` but no provider ships in v0.1.
 dev = ["pytest>=8.0"]
 build = ["pyinstaller>=6.5"]
 

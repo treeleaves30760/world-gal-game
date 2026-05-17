@@ -22,7 +22,7 @@ from .core.localization import Localization
 from .core.story_graph import Effect
 from .core.time_system import bind_localization as bind_time_localization
 from .dialogue.dialogue_engine import DialogueEngine
-from .npc.llm_brain import build_llm_provider, default_brain, LLMBrain, EchoBrain
+from .npc.llm_brain import default_brain, LLMBrain, EchoBrain
 from .npc.npc_base import NPCRegistry
 from .scenes.base import SceneManager, SceneContext
 from .scenes.title import TitleScene
@@ -32,7 +32,7 @@ from .scenes.map_scene import MapScene
 from .scenes.affection_scene import AffectionScene
 from .scenes.event_log_scene import EventLogScene
 from .scenes.save_scene import SaveScene
-from .scenes.chat_scene import ChatScene
+from .scenes.npc_action_scene import NPCActionScene
 from .scenes.settings_scene import SettingsScene
 from .scenes.achievements_scene import AchievementsScene
 from .scenes.inventory_scene import InventoryScene
@@ -117,8 +117,9 @@ class GalGameApp:
         self.state.affection.bind_localization(self.localization)
 
         # ----- dialogue engine -----
-        llm_provider = build_llm_provider(self.npcs, self.brain)
-        self.dialogue = DialogueEngine(self.state, llm_provider=llm_provider)
+        # No live LLM brain is wired up in this release; lines marked
+        # `llm_speaker: true` will fall back to their `text:` field.
+        self.dialogue = DialogueEngine(self.state, llm_provider=None)
 
         # ----- scene context -----
         self.ctx = SceneContext(
@@ -178,7 +179,7 @@ class GalGameApp:
             on_achievements=self._open_achievements,
             on_inventory=self._open_inventory,
             on_quit_to_title=self._quit_to_title,
-            on_open_chat=self._open_chat,
+            on_open_npc=self._open_npc_actions,
             on_start_scene=self._start_dialogue,
             on_move_to=self._move_to,
             on_advance_time=self._advance_time,
@@ -281,8 +282,13 @@ class GalGameApp:
             self.manager.replace(ExplorationScene(self.ctx),
                                  **self._exploration_callbacks())
 
-    def _open_chat(self, npc_id: str) -> None:
-        self.manager.push(ChatScene(self.ctx),
+    def _open_npc_actions(self, npc_id: str) -> None:
+        """Show the lightweight NPC overlay (gift + shop).
+
+        Replaces the previous LLM-driven free-chat overlay. When an LLM
+        brain is wired back in this method will also offer a chat entry.
+        """
+        self.manager.push(NPCActionScene(self.ctx),
                           npc_id=npc_id, on_close=self.manager.pop,
                           on_request_gift=(lambda nid, callback:
                                              self._open_gift_picker(nid, callback)),

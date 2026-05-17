@@ -4,8 +4,9 @@ This is the "home" scene the player returns to after every dialogue. It
 shows:
 - the location background,
 - a translucent panel listing description + exits + manual scene hooks,
-- portraits of present NPCs along the bottom (clickable),
-- a top bar with shortcut buttons for map / affection / log / save / chat.
+- portraits of present NPCs along the bottom (clickable: opens the NPC
+  action overlay — gift / shop / examine),
+- a top bar with the consolidated menu button.
 """
 from __future__ import annotations
 
@@ -32,7 +33,7 @@ class ExplorationScene(Scene):
         self.on_settings: Callable[[], None] | None = None
         self.on_menu: Callable[[], None] | None = None
         self.on_quit_to_title: Callable[[], None] | None = None
-        self.on_open_chat: Callable[[str], None] | None = None
+        self.on_open_npc: Callable[[str], None] | None = None
         self.on_start_scene: Callable[[str], None] | None = None
         self.on_move_to: Callable[[str], None] | None = None
         self.on_advance_time: Callable[[], None] | None = None
@@ -41,7 +42,7 @@ class ExplorationScene(Scene):
     def enter(self, *, on_map=None, on_affection=None, on_log=None,
               on_save=None, on_settings=None, on_menu=None,
               on_achievements=None, on_inventory=None,
-              on_quit_to_title=None, on_open_chat=None,
+              on_quit_to_title=None, on_open_npc=None,
               on_start_scene=None, on_move_to=None, on_advance_time=None,
               **_) -> None:
         self.on_map = on_map
@@ -53,7 +54,7 @@ class ExplorationScene(Scene):
         self.on_achievements = on_achievements
         self.on_inventory = on_inventory
         self.on_quit_to_title = on_quit_to_title
-        self.on_open_chat = on_open_chat
+        self.on_open_npc = on_open_npc
         self.on_start_scene = on_start_scene
         self.on_move_to = on_move_to
         self.on_advance_time = on_advance_time
@@ -157,8 +158,8 @@ class ExplorationScene(Scene):
         # NPC card clicks
         if inp.mouse_clicked:
             for rect, nid in self._npc_cards:
-                if rect.collidepoint(inp.mouse_pos) and self.on_open_chat:
-                    self.on_open_chat(nid)
+                if rect.collidepoint(inp.mouse_pos) and self.on_open_npc:
+                    self.on_open_npc(nid)
                     return
         # keyboard shortcuts
         for e in inp.events:

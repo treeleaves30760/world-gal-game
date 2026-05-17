@@ -182,16 +182,23 @@ effects:
 
 ---
 
-## 「LLM 自由對話影響劇情」
+## 「LLM 自由對話影響劇情」(v2 deferred)
 
-目前 LLM 自由對話只能用以下方式影響劇情：
+LLM 接入已 deferred 到 v2。v1 沒有「自由對話」這個介面 — 點 NPC card 只開
+送禮 / 看貨 overlay。要做「玩家承諾某事 → 劇情記得」的耦合，目前唯一
+管道是 **dialogue scene + choice**：
 
-1. **+1 好感度**（每次回覆自動加；機制在 `chat_scene.py:_send` 內）
-2. **NPC 短期記憶**（會持久化到存檔，被未來的 LLM 對話的 system prompt 讀到）
+```yaml
+choices:
+  - id: promise_lake
+    text: "「下週末，要不要一起去成功湖？」"
+    effects:
+      - {kind: set_flag, target: promised_lake_with_qingyi}
+      - {kind: affection, target: qingyi, value: 3}
+```
 
-要做「玩家在自由對話裡承諾某事 → 劇情記得」這種強耦合的東西，目前
-最穩當的做法是：**從一個有 choice 的 dialogue scene 觸發，而不是自由對話**。
-自由對話比較像「點綴」，劇情主線該走的 effects 還是放 scene YAML。
+之後的場景可以用 `requires: [{kind: flag, target: promised_lake_with_qingyi}]`
+鎖門檻、或在後續 line 引用該 flag。
 
 ---
 
@@ -252,21 +259,24 @@ scenes:
 
 ---
 
-## 「對白語氣根據 LLM 介入動態 vs 靜態」
+## 「對白語氣根據 LLM 介入動態 vs 靜態」(v2 deferred)
+
+`llm_speaker` / `llm_directive` 欄位在 v1 仍可寫進 YAML（schema 接受），但
+LLM 接入尚未啟用，所以這類 line 一律會顯示 `text:` 的 fallback：
 
 ```yaml
 lines:
-  # 靜態 — 寫死，可預測
+  # 靜態 — 寫死，可預測（v1 一律走這條路）
   - speaker: "林青衣"
     text: "「你來了。」"
 
-  # 動態 — 給 LLM 一個 directive，每次玩可能不同
+  # 動態 — v2 才會真的問 LLM；v1 直接顯示底下的 text
   - speaker: "林青衣"
     llm_speaker: true
     llm_directive: |
       玩家上次跟你說好下次帶妳去成功湖。
       請以略帶期待但克制的口氣，問他這週末有沒有空。
-    text: "「呃⋯這週末你有空嗎？」"     # 失敗的 fallback
+    text: "「呃⋯這週末你有空嗎？」"
 ```
 
-劇情關鍵句子建議寫死、語氣性的補白可以 LLM 化。
+v1 的劇本撰寫請假設「文字一律寫死」即可。

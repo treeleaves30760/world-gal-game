@@ -21,7 +21,7 @@ showcase 遊戲 [清華異聞錄](../Tsinghua-Strange-Tales/README.md) 就放在
 | [getting-started](docs/getting-started.md) | 安裝、產生第一個 pack、跑起來 |
 | [pack-format](docs/pack-format.md) | pack 目錄結構 + meta.yaml 完整欄位 |
 | [scenes](docs/scenes.md) | 場景 YAML、對白、選項、條件 |
-| [characters](docs/characters.md) | 角色、立繪、LLM brain |
+| [characters](docs/characters.md) | 角色、立繪、送禮、商店 |
 | [affection](docs/affection.md) | 好感度、多軸 stat、門檻 |
 | [resources](docs/resources.md) | 金錢 / 體力 / 學分等自訂資源 |
 | [items](docs/items.md) | 物品、消耗、送禮 |
@@ -43,7 +43,6 @@ showcase 遊戲 [清華異聞錄](../Tsinghua-Strange-Tales/README.md) 就放在
 - **事件記錄 + Flags**：玩家每個選擇、地點、對話都會寫入 timeline，可被條件查詢
 - **成就系統**：宣告式 YAML 設定 requires/forbids，達成時自動觸發、UI 自動掉 toast
 - **物品 + 送禮**：根據角色 likes/dislikes 自動算好感度增減
-- **LLM 接入 NPC**：每個 NPC 可被 Claude 即時驅動，自由聊天會反映在好感度與 NPC 短期記憶上
 - **存讀檔**：多存檔槽，使用者目錄持久化（PyInstaller 打包後仍可寫入）
 - **VN 對話 scrollback**：滾輪上推或按 B 看過去所有對話
 - **完整在地化 / 主題**：每個 pack 可在 `meta.yaml` 蓋掉預設配色、字型、UI 文字、好感度等級命名
@@ -84,7 +83,7 @@ games/my_game/
 ├── content/
 │   ├── meta.yaml          # 標題、起始地點/場景、theme/locale 覆寫
 │   ├── locations.yaml     # 地點 + NPC 出沒 + scene_hooks
-│   ├── characters.yaml    # NPC + 好感度門檻 + LLM 設定
+│   ├── characters.yaml    # NPC + 好感度門檻 + 商店
 │   ├── items.yaml         # （選填）可送的物品
 │   ├── achievements.yaml  # （選填）成就
 │   └── scenes/            # 多檔散裝；全部會被自動載入
@@ -151,11 +150,9 @@ scenes:
         text: "「你也喜歡這本書？」"
         portrait: assets/characters/someone_smile.png
         expression: smile
-      # llm_speaker: true 會讓這一行由 Claude 即時生成
+      # llm_speaker 欄位保留給未來的 LLM 重接（v2）；v1 永遠顯示 text。
       - speaker: "某某"
-        llm_speaker: true
-        llm_directive: "玩家剛剛打翻了你的咖啡，請以驚訝但體貼的語氣回應。"
-        text: "（fallback：如果 LLM 失敗才會顯示這句）"
+        text: "「對不起，我嚇到了。」"
     choices:
       - id: friendly
         text: "「下次我請你喝咖啡？」"
@@ -236,17 +233,14 @@ choices:
 ```
 
 
-## LLM NPC 大腦
+## LLM NPC 大腦（v2 deferred）
 
-```bash
-export ANTHROPIC_API_KEY=sk-ant-...
-uv run python main.py
-```
+LLM 接入已 deferred 到 v2。`Brain` 介面與相關 YAML 欄位（`llm_brain` /
+`llm_speaker` / `llm_directive`）仍保留，方便未來重接 ClaudeBrain 時
+**完全不用改 game pack**。v1 的劇本：
 
-每個被點開「自由對話」的 NPC 會把自己的人設、玩家目前的好感度、最近事件
-歷史串成 system prompt 丟給 Claude；每次回覆都會更新好感度與 NPC 短期記憶。
-沒設 API key 時自動 fallback 到 `EchoBrain`（回固定一句）。
-
+- `llm_speaker: true` 的 line 一律顯示 `text:` fallback
+- 點 NPC card 開出 NPC 行動 overlay（送禮 / 看貨），沒有自由對話
 
 ## 引擎內部架構
 
@@ -271,9 +265,9 @@ engine/
 ├── dialogue/              # 對話引擎
 │   ├── dialogue_engine.py # Scene 跑者
 │   └── script_loader.py   # YAML → Scene/Line/Choice
-├── npc/                   # NPC 與 LLM brain
+├── npc/                   # NPC（LLM brain v2 deferred）
 │   ├── npc_base.py        # NPC 類別 + 短期記憶
-│   └── llm_brain.py       # Claude / Echo brain 介面
+│   └── llm_brain.py       # LLMBrain ABC + EchoBrain（v2 預留 seam）
 ├── ui/                    # pygame UI 元件
 │   ├── assets.py          # 圖檔/聲音快取（含 placeholder fallback）
 │   ├── fonts.py           # CJK 字型偵測 + 快取
@@ -294,7 +288,7 @@ engine/
     ├── scrollback_scene.py
     ├── settings_scene.py
     ├── save_scene.py
-    └── chat_scene.py      # LLM 自由對話
+    └── npc_action_scene.py # NPC 行動 overlay（送禮 / 看貨）
 ```
 
 
@@ -326,8 +320,8 @@ uv run python main.py --headless --script scripts/qingyi_full_route.json
 }
 ```
 
-支援的 op：`start_scene · next · choose · chat · move · advance_time ·
-set_flag · adjust_affection · inspect`
+支援的 op：`start_scene · next · choose · move · advance_time ·
+set_flag · adjust_affection · inspect`（`chat` op 在 LLM 重接後再啟用）
 
 
 ## 截圖模式
@@ -349,7 +343,6 @@ uv run python main.py --screenshot out/ach.png --autoplay 1.0 \
 `--dev-start` 可選值：
 - `explore`、`map`、`affection`、`log`、`save`、`load`、`settings`、`achievements`
 - `scene:<scene_id>` — 開始播某個場景
-- `chat:<npc_id>` — 跟某個 NPC 自由對話
 
 額外調整：
 - `--dev-flags '{...}'` — 預先 set flags
