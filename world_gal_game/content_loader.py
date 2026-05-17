@@ -31,6 +31,7 @@ from .core.affection import AffectionThreshold
 from .core.game_state import GameState, PlayerInfo
 from .core.inventory import Item
 from .core.map_system import MapSystem, Location, NPCPresence, SceneHook
+from .core.quest import Quest, Objective
 from .core.resources import Resource
 from .core.story_graph import Condition
 from .npc.npc_base import NPC, NPCRegistry
@@ -142,6 +143,19 @@ def load_achievements(content_root: Path, state: GameState) -> None:
         state.achievements.register(ach)
 
 
+def load_quests(content_root: Path, state: GameState) -> None:
+    """Read ``content/quests.yaml`` (if present) and register every quest."""
+    data = _read_yaml(content_root / "quests.yaml") or []
+    if isinstance(data, dict) and "quests" in data:
+        data = data["quests"]
+    for raw in data:
+        raw = dict(raw)
+        objs_raw = raw.pop("objectives", [])
+        objectives = [Objective(**o) for o in (objs_raw or [])]
+        quest = Quest(objectives=objectives, **raw)
+        state.quests.register(quest)
+
+
 def load_game_meta(content_root: Path) -> dict[str, Any]:
     meta = _read_yaml(content_root / "meta.yaml") or {}
     return meta
@@ -155,6 +169,7 @@ def load_pack(content_root: Path) -> tuple[GameState, NPCRegistry, dict]:
     load_items(content_root, state)
     load_scenes(content_root, state)
     load_achievements(content_root, state)
+    load_quests(content_root, state)
     meta = load_game_meta(content_root)
     load_resources(content_root, state, meta)
     if "player" in meta:

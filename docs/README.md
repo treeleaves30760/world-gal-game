@@ -20,6 +20,7 @@ Gal-Game / 視覺小說，從這裡開始。
 - [**items.md**](items.md) — 物品、消耗、送禮、分類
 - [**shops.md**](shops.md) — 商店、買賣、回收
 - [**achievements.md**](achievements.md) — 成就（含隱藏成就）
+- [**quests.md**](quests.md) — 任務系統（目標追蹤、Quest Log UI）
 - [**theme-and-locale.md**](theme-and-locale.md) — 換色 / 換語系
 
 進階：
