@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 
 from ..core.game_state import GameState
 from ..core.story_graph import Scene, Line, Choice
+from ..core.portrait_spec import PortraitSpec
 from ..core.text_interpolation import interpolate
 
 
@@ -21,7 +22,8 @@ class LinePresentation:
 
     speaker: str | None
     text: str
-    portrait: str | None = None
+    portrait: "str | PortraitSpec | None" = None
+    portraits: list = field(default_factory=list)   # list[PortraitSpec], multi-character staging
     expression: str | None = None
     cg: str | None = None
     background: str | None = None
@@ -218,8 +220,9 @@ class DialogueEngine:
             speaker=line.speaker,
             text=text,
             portrait=line.portrait,
+            portraits=list(line.portraits),
             expression=line.expression,
-            cg=line.cg,
+            cg=line.cg or scene.cg,
             background=scene.background,
             bgm=line.bgm or self.state.meta.get("current_bgm"),
             sfx=line.sfx,
