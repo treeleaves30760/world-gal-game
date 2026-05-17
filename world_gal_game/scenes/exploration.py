@@ -151,10 +151,15 @@ class ExplorationScene(Scene):
                              theme=self.ctx.theme, font_size=16,
                              on_click=(lambda lid=exit_loc.id: self._move(lid)))
             else:
-                # Disabled style: ghost button, no callback
+                # Disabled style: ghost button, click pushes a toast
+                # explaining why the player can't go there.
+                hint_reason = reason or "目前無法前往"
                 btn = Button(r, display_label, fonts=self.ctx.fonts,
                              theme=self.ctx.theme, font_size=16,
-                             style="ghost", on_click=None)
+                             style="ghost",
+                             on_click=(lambda label=exit_loc.name,
+                                              why=hint_reason:
+                                       self._notify_blocked(label, why)))
             # Store alongside description and availability for draw-time hint rendering
             desc = exit_obj.description or reason
             self._exit_buttons.append((btn, desc, available))
@@ -179,6 +184,12 @@ class ExplorationScene(Scene):
     def _move(self, loc_id: str) -> None:
         if self.on_move_to:
             self.on_move_to(loc_id)
+
+    def _notify_blocked(self, location_name: str, reason: str) -> None:
+        """Queue a toast when a disabled exit is clicked, so the player
+        knows the click registered and *why* it can't go through."""
+        queue = self.ctx.state.meta.setdefault("__pending_toasts__", [])
+        queue.append(("notice", location_name, reason))
 
     def update(self, dt: float, inp) -> None:
         for b in self._top_buttons:
@@ -244,12 +255,14 @@ class ExplorationScene(Scene):
         )
         surface.blit(time_label, (24, (62 - time_label.get_height()) // 2))
         # Resources (e.g. money, energy) shown right of the time label.
-        rx = 24 + time_label.get_width() + 32
+        # Single-line layout: "錢包 $500   體力 100   學識 0" — labels and
+        # values share the row, with a thin vertical divider between
+        # different resources for legibility.
+        rx = 24 + time_label.get_width() + 40
         resources = self.ctx.state.resources.visible_snapshot()
-        for r in resources:
+        for i, r in enumerate(resources):
             value_text = f"{r['symbol']}{r['value']}" if r["symbol"] \
                 else str(r["value"])
-            # name in mute, value in accent_warm — same visual rhythm.
             lbl = self.ctx.fonts.render(
                 r["name"], self.ctx.config.font_size_small,
                 self.ctx.theme.text_mute,
@@ -258,11 +271,21 @@ class ExplorationScene(Scene):
                 value_text, self.ctx.config.font_size_menu,
                 self.ctx.theme.accent_warm, bold=True,
             )
-            lbl_y = (62 - lbl.get_height()) // 2 - 8
-            val_y = (62 - val.get_height()) // 2 + 8
+            row_h = max(lbl.get_height(), val.get_height())
+            row_y = (62 - row_h) // 2
+            # Vertical baseline-ish align: name a touch higher than value
+            # since fonts have different cap heights.
+            lbl_y = row_y + (row_h - lbl.get_height()) // 2
+            val_y = row_y + (row_h - val.get_height()) // 2
             surface.blit(lbl, (rx, lbl_y))
+            rx += lbl.get_width() + 6
             surface.blit(val, (rx, val_y))
-            rx += max(lbl.get_width(), val.get_width()) + 28
+            rx += val.get_width() + 24
+            # Thin separator before next resource
+            if i < len(resources) - 1:
+                pygame.draw.line(surface,
+                                 (*self.ctx.theme.text_mute[:3], 110),
+                                 (rx - 12, 18), (rx - 12, 44), 1)
         for b in self._top_buttons:
             b.draw(surface)
 

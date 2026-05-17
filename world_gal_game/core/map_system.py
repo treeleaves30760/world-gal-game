@@ -72,6 +72,10 @@ class Exit(BaseModel):
     requires_flags: list[str] = Field(default_factory=list)
     forbids_flags: list[str] = Field(default_factory=list)
     requires_time: list[str] = Field(default_factory=list)  # e.g. ["night","midnight"]
+    # Time-of-day phases consumed by walking this exit. 0 (default) means
+    # local move within the same area — players can wander campus without
+    # the clock ticking. Long trips (cross-region, off-campus) opt in.
+    travel_cost: int = 0
 
     def is_available(self, time_of_day: str, flags: dict[str, Any]) -> bool:
         """Return True when this exit is usable given the current state."""

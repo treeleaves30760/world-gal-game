@@ -330,8 +330,18 @@ class GalGameApp:
         flags = self.state.events.flags
         if not self.state.map.can_move_to(loc_id, flags):
             return
+        # Look up the exit (from current to target) BEFORE moving so we
+        # can read its travel_cost. Local moves cost 0 phases; long trips
+        # opt in via Exit.travel_cost.
+        cur = self.state.map.current
+        cost = 0
+        if cur is not None:
+            ex = next((e for e in cur.exits if e.target == loc_id), None)
+            if ex is not None:
+                cost = ex.travel_cost
         loc = self.state.map.move_to(loc_id)
-        self.state.time.advance(1)
+        if cost > 0:
+            self.state.time.advance(cost)
         self.state.events.record(kind="location",
                                  title=f"前往 {loc.name}",
                                  location=loc.id)
@@ -439,6 +449,11 @@ class GalGameApp:
                         title=label,
                         detail=f"{sign}{sym}{delta}",
                         icon=d.icon if d else None,
+                    ))
+                elif kind == "notice":
+                    # `key` is the title, `delta` is the detail text.
+                    self.toast_stack.push(Toast(
+                        title=str(key), detail=str(delta), icon=None,
                     ))
 
     # ----------- screenshot + inspect ------------------------------------

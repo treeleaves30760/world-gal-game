@@ -335,3 +335,46 @@ class TestContentLoaderParsing:
         assert loc.background == "assets/bg/old.png"
         assert loc.background_for("night") == "assets/bg/old.png"
         assert loc.backgrounds == {}
+
+
+# ---------- travel_cost --------------------------------------------------
+
+
+def test_exit_travel_cost_default_zero():
+    from world_gal_game.core.map_system import Exit
+    e = Exit(target="b")
+    assert e.travel_cost == 0
+
+
+def test_exit_travel_cost_set_via_yaml_shape():
+    from world_gal_game.core.map_system import Exit
+    e = Exit(target="b", travel_cost=3)
+    assert e.travel_cost == 3
+
+
+def test_move_to_zero_cost_does_not_advance_time():
+    """Local moves (default travel_cost=0) keep the clock still."""
+    import os
+    os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
+    os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
+    from world_gal_game.dev.driver import GameDriver
+    d = GameDriver(pack="tsing_hua_strange_tales")
+    d.new_game()
+    d.skip_dialogue(800)
+    d.advance_frames(5)
+    snap = d.snapshot()
+    time_before = snap["time"]
+    location_before = snap["location"]
+    btn = d.find_widget(label="校門口")
+    assert btn is not None, "main_gate exit should be available"
+    d.click(tuple(btn["rect_center"]))
+    d.advance_frames(20)
+    snap2 = d.snapshot()
+    assert snap2["location"] != location_before
+    # main_gate is in same region (campus); travel_cost defaults 0, so time
+    # of day must NOT have advanced.
+    assert snap2["time"] == time_before, (
+        f"time should not have advanced for an in-region move "
+        f"(was {time_before}, now {snap2['time']})"
+    )
+    d.quit()

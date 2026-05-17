@@ -95,10 +95,29 @@ Valid time-of-day keys match `TimeOfDay` values:
 | `requires_flags` | list[str] | `[]` | Exit only usable when all flags are truthy |
 | `forbids_flags` | list[str] | `[]` | Exit blocked when any flag is truthy |
 | `requires_time` | list[str] | `[]` | Exit only usable during these time slots |
+| `travel_cost` | int | `0` | Time-of-day phases consumed by this trip. Default 0 keeps the clock still for in-region moves; set 1+ for long trips |
 
 Exits that are time-restricted but currently unavailable are shown in grey in the
 exploration UI rather than hidden, so players understand why they cannot proceed.
-Hovering (or reading the description field) gives the reason.
+Clicking a greyed-out exit now pops a toast explaining the reason instead of
+silently doing nothing.
+
+#### Why `travel_cost` matters
+
+By default moves are free — wandering campus all morning shouldn't auto-fast-
+forward to evening. Reserve `travel_cost: 1+` for trips that *should* feel like
+they take time:
+
+```yaml
+- id: main_gate
+  exits:
+    - player_dorm                    # local, 0 cost
+    - cafeteria                      # local, 0 cost
+    - target: night_market
+      label: "騎車去夜市"
+      requires_time: [afternoon, evening, night]
+      travel_cost: 2                 # crossing town takes a chunk of the day
+```
 
 ### NPCPresence
 
