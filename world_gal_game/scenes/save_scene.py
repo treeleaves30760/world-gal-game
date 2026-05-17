@@ -151,9 +151,14 @@ class SaveScene(Scene):
                 except Exception:
                     thumbnail = None
 
+            # mode='json' is critical: pydantic converts set[] -> list[],
+            # tuple -> list, etc, so the JSON round-trip can validate back
+            # into GameState. Without it, default model_dump() leaves sets
+            # as Python sets and json.dump(default=str) writes them as repr
+            # strings that pydantic refuses to validate.
             self.sm.save(
                 slot,
-                self.ctx.state.model_dump(),
+                self.ctx.state.model_dump(mode="json"),
                 label=label,
                 summary=summary,
                 thumbnail=thumbnail,

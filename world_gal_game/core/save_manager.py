@@ -34,6 +34,25 @@ class SaveSchemaError(SaveError):
 CURRENT_SCHEMA_VERSION = 1
 
 
+def _json_default(obj):
+    """Make json.dump tolerate the types our state actually contains.
+
+    Pydantic state ships with bare Python sets (story.played, map.visited,
+    affection.*.unlocked, achievements.seen, read_log.*). Without this
+    helper they'd hit `default=str` and serialize to repr like
+    `"{'a','b'}"` — which round-trips back as a string, not a set.
+    """
+    if isinstance(obj, (set, frozenset)):
+        # Sort string sets for deterministic diffs; fall back to list().
+        try:
+            return sorted(obj)
+        except TypeError:
+            return list(obj)
+    if hasattr(obj, "__fspath__"):
+        return str(obj)
+    return str(obj)
+
+
 def _migrate_0_to_1(data: dict) -> dict:
     """Bring a pre-versioned save up to v1.
 
@@ -155,7 +174,8 @@ class SaveManager:
 
         path = self._json_path(slot)
         with open(path, "w", encoding="utf-8") as f:
-            json.dump(payload, f, ensure_ascii=False, indent=2, default=str)
+            json.dump(payload, f, ensure_ascii=False, indent=2,
+                      default=_json_default)
         return path
 
     def load(self, slot: str) -> dict[str, Any]:

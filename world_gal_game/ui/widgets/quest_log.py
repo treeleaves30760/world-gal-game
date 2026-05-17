@@ -222,9 +222,11 @@ class QuestLog(Widget):
     # Lifecycle
 
     def update(self, dt: float, inp) -> None:
-        # Check for list click before passing to scroll areas.
-        if inp.click_pos is not None:
-            hit = self._list_hit_test(inp.click_pos)
+        # Check for list click before passing to scroll areas. InputState
+        # exposes mouse_clicked (bool) + mouse_pos (the cursor position
+        # this frame); there is no `click_pos` attribute.
+        if inp.mouse_clicked:
+            hit = self._list_hit_test(inp.mouse_pos)
             if hit is not None:
                 self._selected_id = hit
                 self._detail_scroll.scroll_y = 0
