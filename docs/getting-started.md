@@ -54,6 +54,10 @@ games/my_first_game/
     └── bgm/
 ```
 
+> 第一次寫 pack 的話，建議先讀
+> [**tutorial-build-a-game.md**](tutorial-build-a-game.md)，
+> 那是從 0 到一個可玩 demo 的完整 walk-through。
+
 ## 3. 跑起來
 
 ```bash
