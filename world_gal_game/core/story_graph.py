@@ -12,6 +12,8 @@ from __future__ import annotations
 from typing import Any, Literal
 from pydantic import BaseModel, Field
 
+from .portrait_spec import PortraitSpec
+
 
 class Effect(BaseModel):
     """A single state change produced by a line or choice."""
@@ -82,7 +84,8 @@ class Line(BaseModel):
 
     speaker: str | None = None       # None = narration
     text: str
-    portrait: str | None = None      # path to character portrait
+    portrait: str | PortraitSpec | None = None   # old: path; new: spec dict
+    portraits: list[PortraitSpec] = Field(default_factory=list)  # multi-slot; overrides portrait when non-empty
     expression: str | None = None    # e.g. "smile", "scared"
     cg: str | None = None            # full-screen CG to display
     sfx: str | None = None

@@ -7,6 +7,8 @@ import pygame
 
 from .base import Scene, SceneContext
 from ..ui.widgets import DialogueBox, ChoiceMenu, PortraitView
+from ..ui.transitions import PortraitCrossfade, BackgroundFade
+from ..core.portrait_spec import PortraitSpec
 
 
 class DialogueScene(Scene):
@@ -23,6 +25,19 @@ class DialogueScene(Scene):
         self._current_line = None
         self._scene_started = False
         self._pending_choices = False
+
+        # Portrait state: per-slot surface + active crossfade.
+        # Slots: "left", "center", "right"
+        self._slot_surfaces: dict[str, pygame.Surface | None] = {
+            "left": None, "center": None, "right": None,
+        }
+        self._slot_fades: dict[str, PortraitCrossfade | None] = {
+            "left": None, "center": None, "right": None,
+        }
+
+        # Background transition.
+        self._bg_surface: pygame.Surface | None = None
+        self._bg_fade: BackgroundFade | None = None
 
     def enter(self, *, scene_id: str | None = None,
               on_done: Callable[[], None] | None = None,
@@ -70,11 +85,78 @@ class DialogueScene(Scene):
         pres = self.ctx.dialogue.next_line()
         self._render_presentation(pres)
 
+    # ------------------------------------------------------------------
+    # Portrait helpers
+    # ------------------------------------------------------------------
+
+    def _surface_for_portrait(self, portrait: str | PortraitSpec | None,
+                               speaker: str | None,
+                               expression: str | None) -> pygame.Surface | None:
+        """Resolve a portrait field (str path, spec, or None) to a Surface."""
+        sw, sh = self.ctx.screen_size
+        portrait_h = sh - 230 - 32 - 60   # same as enter()
+        fallback = (480, portrait_h)
+        if isinstance(portrait, PortraitSpec):
+            return self.ctx.assets.resolve_portrait(portrait, fallback_size=fallback)
+        if isinstance(portrait, str):
+            return self.ctx.assets.image(portrait, fallback_size=fallback)
+        # Fall back to NPC default.
+        npc = self.ctx.npcs.get(speaker) if speaker else None
+        if npc is not None:
+            path = npc.portrait_for(expression)
+            return self.ctx.assets.image(path, fallback_size=fallback)
+        return None
+
+    def _start_portrait_fade(self, slot: str, new_surf: pygame.Surface | None) -> None:
+        """Begin a crossfade on a slot from current surface to new_surf."""
+        old = self._slot_surfaces.get(slot)
+        if old is new_surf:
+            return
+        self._slot_fades[slot] = PortraitCrossfade(old, new_surf, duration=0.25)
+        self._slot_surfaces[slot] = new_surf
+
+    def _update_portraits(self, line) -> None:
+        """Compute which slots change this line and start fades."""
+        if line.portraits:
+            # Multi-slot: clear all then populate from the spec list.
+            wanted: dict[str, pygame.Surface | None] = {
+                "left": None, "center": None, "right": None,
+            }
+            for spec in line.portraits:
+                surf = self.ctx.assets.resolve_portrait(spec)
+                wanted[spec.slot] = surf
+            for slot, surf in wanted.items():
+                self._start_portrait_fade(slot, surf)
+        else:
+            # Single-portrait / legacy path goes to center; clear other slots.
+            center_surf = self._surface_for_portrait(
+                line.portrait, line.speaker, line.expression)
+            self._start_portrait_fade("center", center_surf)
+            self._start_portrait_fade("left", None)
+            self._start_portrait_fade("right", None)
+
+    # ------------------------------------------------------------------
+    # Background helper
+    # ------------------------------------------------------------------
+
+    def _update_background(self, new_path: str) -> None:
+        """Start a BackgroundFade when the background changes."""
+        if new_path == self.background_path:
+            return
+        sw, sh = self.ctx.screen_size
+        old_surf = self._bg_surface
+        new_surf = self.ctx.assets.scaled(new_path, (sw, sh), fit="cover")
+        self._bg_fade = BackgroundFade(old_surf, new_surf, duration=0.6)
+        self._bg_surface = new_surf
+        self.background_path = new_path
+
+    # ------------------------------------------------------------------
+
     def _render_presentation(self, pres) -> None:
         if pres is None:
             return
         if pres.background:
-            self.background_path = pres.background
+            self._update_background(pres.background)
         if pres.kind == "line":
             line = pres.line
             self._current_line = line
@@ -86,11 +168,13 @@ class DialogueScene(Scene):
                 self.ctx.assets.play_sound(line.sfx)
             # CG
             self.cg_surface_path = line.cg
-            # Portrait
-            if line.portrait:
-                self.portrait.show(line.portrait)
+            # Portrait (multi-slot or single)
+            self._update_portraits(line)
+            # Legacy single PortraitView still used for NPC fallback display
+            # when no portraits/portrait field is set; sync it too.
+            if line.portrait or line.portraits:
+                self.portrait.show(None)   # suppress legacy widget
             else:
-                # If speaker is a known NPC, use their default portrait.
                 npc = self.ctx.npcs.get(line.speaker) if line.speaker else None
                 if npc is not None:
                     self.portrait.show(npc.portrait_for(line.expression))
@@ -119,6 +203,20 @@ class DialogueScene(Scene):
             cb()
 
     def update(self, dt: float, inp) -> None:
+        # Tick portrait crossfades.
+        for slot in ("left", "center", "right"):
+            fade = self._slot_fades.get(slot)
+            if fade is not None:
+                fade.update(dt)
+                if fade.done:
+                    self._slot_fades[slot] = None
+
+        # Tick background fade.
+        if self._bg_fade is not None:
+            self._bg_fade.update(dt)
+            if self._bg_fade.done:
+                self._bg_fade = None
+
         # Open scrollback on wheel-up or B key.
         if inp.mouse_wheel > 0 and self.on_scrollback:
             self.on_scrollback()
@@ -149,23 +247,63 @@ class DialogueScene(Scene):
                         break
                     self._advance()
 
+    def _slot_rect(self, slot: str, sw: int, sh: int) -> pygame.Rect:
+        """Return the bounding rect for a portrait slot, anchored at bottom."""
+        box_h = 230
+        margin = 32
+        portrait_h = sh - box_h - margin - 60
+        portrait_w = 480
+        anchor_x = {
+            "left":   int(sw * 0.20),
+            "center": int(sw * 0.50),
+            "right":  int(sw * 0.80),
+        }[slot]
+        x = anchor_x - portrait_w // 2
+        y = 30
+        return pygame.Rect(x, y, portrait_w, portrait_h)
+
     def draw(self, surface: pygame.Surface) -> None:
         sw, sh = surface.get_size()
-        if self.background_path:
-            bg = self.ctx.assets.scaled(self.background_path, (sw, sh), fit="cover")
-            surface.blit(bg, (0, 0))
+
+        # Background: use fade if active, else static surface or solid fill.
+        if self._bg_fade is not None and not self._bg_fade.done:
+            surface.fill(self.ctx.theme.bg_deep)
+            self._bg_fade.draw(surface)
+        elif self._bg_surface is not None:
+            surface.blit(self._bg_surface, (0, 0))
         else:
             surface.fill(self.ctx.theme.bg_deep)
+
         # dim the bg for text readability
         veil = pygame.Surface((sw, sh), pygame.SRCALPHA)
         veil.fill((0, 0, 0, 70))
         surface.blit(veil, (0, 0))
+
         # CG (full-screen) takes over the background
         if self.cg_surface_path:
             cg = self.ctx.assets.scaled(self.cg_surface_path, (sw, sh), fit="contain")
             surface.blit(cg, (0, 0))
-        if self.portrait and not self.cg_surface_path:
-            self.portrait.draw(surface)
+
+        # Slot-based portrait rendering (new system).
+        if not self.cg_surface_path:
+            any_slot_active = any(
+                self._slot_surfaces.get(s) is not None or self._slot_fades.get(s) is not None
+                for s in ("left", "center", "right")
+            )
+            if any_slot_active:
+                for slot in ("left", "center", "right"):
+                    fade = self._slot_fades.get(slot)
+                    rect = self._slot_rect(slot, sw, sh)
+                    if fade is not None:
+                        fade.draw(surface, rect)
+                    elif self._slot_surfaces.get(slot) is not None:
+                        surf = pygame.transform.smoothscale(
+                            self._slot_surfaces[slot], (rect.width, rect.height))
+                        surface.blit(surf, rect.topleft)
+            elif self.portrait:
+                # Legacy fallback: no slot surfaces active, use PortraitView.
+                self.portrait.draw(surface)
+
         if self.box:
             self.box.draw(surface)
         if self.choices and self.choices.visible:
