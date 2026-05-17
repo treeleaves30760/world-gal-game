@@ -33,6 +33,7 @@ class MenuScene(Scene):
         self.on_log: Callable[[], None] | None = None
         self.on_achievements: Callable[[], None] | None = None
         self.on_inventory: Callable[[], None] | None = None
+        self.on_quest_log: Callable[[], None] | None = None
         self.on_save: Callable[[], None] | None = None
         self.on_load: Callable[[], None] | None = None
         self.on_quit_to_title: Callable[[], None] | None = None
@@ -41,6 +42,7 @@ class MenuScene(Scene):
 
     def enter(self, *, on_close=None, on_map=None, on_affection=None,
               on_log=None, on_achievements=None, on_inventory=None,
+              on_quest_log=None,
               on_save=None, on_load=None,
               on_quit_to_title=None, on_quit_app=None, **_) -> None:
         self.on_close = on_close
@@ -49,6 +51,7 @@ class MenuScene(Scene):
         self.on_log = on_log
         self.on_achievements = on_achievements
         self.on_inventory = on_inventory
+        self.on_quest_log = on_quest_log
         self.on_save = on_save
         self.on_load = on_load
         self.on_quit_to_title = on_quit_to_title
@@ -85,6 +88,7 @@ class MenuScene(Scene):
             ("事件 (L)",       self.on_log,          "view"),
             ("成就 (T)",       self.on_achievements, "view"),
             ("物品 (I)",       self.on_inventory,    "view"),
+            ("任務記錄",       self.on_quest_log,    "view"),
             ("存檔",           self.on_save,         "save"),
             ("載入存檔",       self.on_load,         "save"),
             ("回標題畫面",     self.on_quit_to_title,"exit"),

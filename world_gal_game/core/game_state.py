@@ -13,6 +13,7 @@ from .affection import AffectionTracker
 from .event_log import EventLog, DialogueHistory
 from .inventory import Inventory, ItemRegistry, evaluate_gift
 from .map_system import MapSystem
+from .quest import QuestTracker
 from .read_log import ReadLog
 from .resources import ResourceTracker
 from .story_graph import StoryGraph, Condition, Effect
@@ -41,6 +42,7 @@ class GameState(BaseModel):
     inventory: Inventory = Field(default_factory=Inventory)
     resources: ResourceTracker = Field(default_factory=ResourceTracker)
     read_log: ReadLog = Field(default_factory=ReadLog)
+    quests: QuestTracker = Field(default_factory=QuestTracker)
     route: str | None = None    # which heroine route is currently dominant
     meta: dict[str, Any] = Field(default_factory=dict)
 
@@ -77,6 +79,12 @@ class GameState(BaseModel):
             return self.resources.get(cond.target) < int(cond.value or 0)
         if k == "resource_eq":
             return self.resources.get(cond.target) == int(cond.value or 0)
+        if k == "quest_active":
+            return self.quests.is_active(cond.target)
+        if k == "quest_completed":
+            return self.quests.is_completed(cond.target)
+        if k == "objective_completed":
+            return self.quests.objective_completed(cond.target, cond.stat or "")
         return False
 
     def evaluate_all(self, conds: list[Condition]) -> bool:
@@ -274,6 +282,24 @@ class GameState(BaseModel):
             )
             return {"kind": k, "item": item_id, "target": eff.target,
                     "delta": delta, "new": new_val, "unlocked": unlocked}
+        if k == "start_quest":
+            started = self.quests.start(eff.target)
+            return {"kind": k, "quest": eff.target, "started": started}
+        if k == "complete_objective":
+            obj_id = eff.stat or ""
+            ok = self.quests.complete_objective(eff.target, obj_id)
+            # Auto-complete the quest when all required objectives are done.
+            auto_completed = False
+            if ok and self.quests._all_required_done(eff.target):
+                auto_completed = self.quests.complete(eff.target)
+            return {"kind": k, "quest": eff.target, "objective": obj_id,
+                    "ok": ok, "auto_completed": auto_completed}
+        if k == "complete_quest":
+            done = self.quests.complete(eff.target)
+            return {"kind": k, "quest": eff.target, "done": done}
+        if k == "fail_quest":
+            failed = self.quests.fail(eff.target)
+            return {"kind": k, "quest": eff.target, "failed": failed}
         return {"kind": k, "error": "unknown effect"}
 
     def apply_all(self, effs: list[Effect]) -> list[dict[str, Any]]:

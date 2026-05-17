@@ -250,3 +250,46 @@ on_end:
 編輯 `world_gal_game/core/story_graph.py` 的 `Effect.kind` Literal +
 `world_gal_game/core/game_state.py` 的 `apply()` 加新 branch。
 寫一個 pytest 鎖死它。
+
+---
+
+## 任務（Quest）
+
+### `start_quest` — 啟動任務
+
+```yaml
+- {kind: start_quest, target: find_ghost_book}
+```
+
+把 quest 從 `inactive` → `active`。若 quest 已不是 `inactive`，靜默無效。
+回傳 `{kind, quest, started: True/False}`。
+
+### `complete_objective` — 完成一個目標
+
+```yaml
+- {kind: complete_objective, target: find_ghost_book, stat: visit_stacks}
+```
+
+`target` = quest id，`stat` = objective id。
+標記指定 objective 完成。若所有 non-optional objectives 全部完成，
+自動把 quest 升為 `completed`（`auto_completed: true`）。
+回傳 `{kind, quest, objective, ok, auto_completed}`。
+
+### `complete_quest` — 直接完成任務
+
+```yaml
+- {kind: complete_quest, target: find_ghost_book}
+```
+
+不管 objectives 狀態，直接把 quest 設為 `completed`。
+適合「劇情強制結束」的情況。
+回傳 `{kind, quest, done: True/False}`。
+
+### `fail_quest` — 任務失敗
+
+```yaml
+- {kind: fail_quest, target: find_ghost_book}
+```
+
+把 quest 設為 `failed`。已 `completed` 的 quest 無效（回 `failed: False`）。
+回傳 `{kind, quest, failed: True/False}`。

@@ -38,6 +38,7 @@ from .scenes.achievements_scene import AchievementsScene
 from .scenes.inventory_scene import InventoryScene
 from .scenes.scrollback_scene import ScrollbackScene
 from .scenes.menu_scene import MenuScene
+from .scenes.quest_log_scene import QuestLogScene
 from .scenes.shop_scene import ShopScene
 from .ui.assets import AssetManager
 from .ui.fonts import FontRegistry
@@ -225,11 +226,16 @@ class GalGameApp:
             on_log=from_menu(self._open_event_log),
             on_achievements=from_menu(self._open_achievements),
             on_inventory=from_menu(self._open_inventory),
+            on_quest_log=from_menu(self._open_quest_log),
             on_save=from_menu(self._open_save_menu),
             on_load=from_menu(self._open_load_menu),
             on_quit_to_title=from_menu(self._quit_to_title),
             on_quit_app=self._quit_app,
         )
+
+    def _open_quest_log(self) -> None:
+        self.manager.push(QuestLogScene(self.ctx),
+                          on_close=self.manager.pop)
 
     def _open_settings(self) -> None:
         self.manager.push(SettingsScene(self.ctx),

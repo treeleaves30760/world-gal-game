@@ -40,6 +40,10 @@ class Effect(BaseModel):
         "set_resource",      # set a resource to an absolute value
         "buy_item",          # spend currency, gain item (from a shop)
         "sell_item",         # consume item, gain currency
+        "start_quest",       # activate a quest (inactive -> active)
+        "complete_objective",# mark one objective done; stat = objective_id
+        "complete_quest",    # directly complete a quest
+        "fail_quest",        # mark quest as failed
     ]
     target: str = ""
     value: Any = None
@@ -65,6 +69,9 @@ class Condition(BaseModel):
         "resource_gte",    # resource value >= value
         "resource_lt",
         "resource_eq",
+        "quest_active",        # quest is currently active
+        "quest_completed",     # quest has been completed
+        "objective_completed", # one objective done; stat = objective_id
     ]
     target: str = ""
     value: Any = None

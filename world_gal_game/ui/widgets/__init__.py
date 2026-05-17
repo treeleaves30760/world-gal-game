@@ -13,6 +13,7 @@ from .map_view import MapView
 from .scrollable import ScrollArea
 from .toast import Toast, ToastStack
 from .debug_overlay import DebugOverlay
+from .quest_log import QuestLog
 
 __all__ = [
     "Widget", "Rect",
@@ -21,4 +22,5 @@ __all__ = [
     "ScrollArea",
     "Toast", "ToastStack",
     "DebugOverlay",
+    "QuestLog",
 ]

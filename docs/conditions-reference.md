@@ -158,6 +158,37 @@ choices:
 
 ---
 
+---
+
+## 任務（Quest）
+
+### `quest_active` — 任務進行中
+
+```yaml
+- {kind: quest_active, target: find_ghost_book}
+```
+
+quest 目前是 `active` 時成立。`inactive`、`completed`、`failed` 都是 false。
+
+### `quest_completed` — 任務已完成
+
+```yaml
+- {kind: quest_completed, target: find_ghost_book}
+```
+
+quest 狀態為 `completed` 時成立。
+
+### `objective_completed` — 某個目標已完成
+
+```yaml
+- {kind: objective_completed, target: find_ghost_book, stat: visit_stacks}
+```
+
+`target` = quest id，`stat` = objective id。
+只要該 objective 被標記完成，不論 quest 整體狀態為何都成立。
+
+---
+
 ## 加新 condition kind
 
 編輯：
