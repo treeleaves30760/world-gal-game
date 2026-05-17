@@ -27,6 +27,7 @@ Gal-Game / 視覺小說，從這裡開始。
 進階：
 
 - [**headless.md**](headless.md) — 無視窗驅動，給 CI / AI agent 用
+- [**ai-debug.md**](ai-debug.md) — `wgg debug`：注入點擊、抓快照，給 AI agent 重現 bug 用
 - [**effects-reference.md**](effects-reference.md) — 全部 effect kind 完整參考
 - [**conditions-reference.md**](conditions-reference.md) — 全部 condition kind 完整參考
 - [**cookbook.md**](cookbook.md) — 常見模式（鎖路線、店家折扣、時段限定…）

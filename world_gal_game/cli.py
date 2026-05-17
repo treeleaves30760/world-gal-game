@@ -124,6 +124,9 @@ def main(argv: list[str] | None = None) -> int:
         return build_main(_args[1:])
     if _args[:1] == ["validate"]:
         return validate_main(_args[1:])
+    if _args[:1] == ["debug"]:
+        from world_gal_game.dev.driver import _cli_main as debug_main
+        return debug_main(_args[1:])
 
     args = build_parser().parse_args(argv)
 
