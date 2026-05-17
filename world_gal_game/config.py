@@ -110,6 +110,22 @@ class EngineConfig:
     # text speed (chars/sec); 0 = instant
     text_speed: float = 45.0
 
+    # dev-mode toggles — populated by from_env(); all off by default
+    dev_mode: bool = False
+    debug_overlay_enabled: bool = False
+    hot_reload_enabled: bool = False
+
+    @classmethod
+    def from_env(cls, **overrides) -> "EngineConfig":
+        """Construct an EngineConfig, auto-enabling dev tools when WGG_DEV=1."""
+        dev = bool(os.environ.get("WGG_DEV"))
+        return cls(
+            dev_mode=dev,
+            debug_overlay_enabled=dev,
+            hot_reload_enabled=dev,
+            **overrides,
+        )
+
     def save_dir(self) -> Path:
         d = writable_root() / self.save_subdir
         d.mkdir(parents=True, exist_ok=True)

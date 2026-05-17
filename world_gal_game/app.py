@@ -154,6 +154,27 @@ class GalGameApp:
         for ach_id in list(self.state.achievements.unlocked):
             self.state.achievements.mark_seen(ach_id)
 
+        # Dev tools (no-op if WGG_DEV not set)
+        self._dev_mode = bool(os.environ.get("WGG_DEV"))
+        if self._dev_mode:
+            try:
+                from .ui.widgets.debug_overlay import DebugOverlay
+                from .dev.hot_reload import HotReloader
+                self._debug_overlay = DebugOverlay(
+                    pygame.Rect(self.config.screen_size[0] - 360, 8, 350,
+                                self.config.screen_size[1] - 100),
+                    fonts=self.fonts, theme=self.theme,
+                )
+                self._hot_reloader = HotReloader(pack_root)
+            except Exception as _dev_exc:
+                import sys as _sys
+                print(f"[dev] init failed: {_dev_exc}", file=_sys.stderr)
+                self._debug_overlay = None
+                self._hot_reloader = None
+        else:
+            self._debug_overlay = None
+            self._hot_reloader = None
+
     # ----------- scene navigation helpers -------------------------------
 
     def _start_new_game(self) -> None:
@@ -349,10 +370,27 @@ class GalGameApp:
                     self.take_screenshot()
                 elif e.type == pygame.KEYDOWN and e.key == pygame.K_F11:
                     self.dump_state(verbose=True)
+            # Dev-mode key handling (F1 overlay toggle, F5 hot reload)
+            if self._dev_mode:
+                for e in inp.events:
+                    if e.type == pygame.KEYDOWN:
+                        if e.key == pygame.K_F1 and self._debug_overlay:
+                            self._debug_overlay.toggle()
+                        elif e.key == pygame.K_F5 and self._hot_reloader:
+                            self._do_hot_reload()
             self.manager.update(dt, inp)
             self._poll_achievement_toasts()
             self.toast_stack.update(dt, inp)
             self.manager.draw(self.screen)
+            # Dev overlay drawn after scene stack, before toasts.
+            if self._dev_mode and self._debug_overlay:
+                try:
+                    self._debug_overlay.set_state(self.state)
+                    self._debug_overlay.update(dt, inp)
+                    self._debug_overlay.draw(self.screen)
+                except Exception as _ov_exc:
+                    import sys as _sys
+                    print(f"[dev] overlay error: {_ov_exc}", file=_sys.stderr)
             self.toast_stack.draw(self.screen)
             self._maybe_take_pending_screenshot()
             if self._inspect_pending:
@@ -484,6 +522,24 @@ class GalGameApp:
                     if k not in ("recent_events", "flags", "scenes_played")}
             print(json.dumps(slim, ensure_ascii=False, indent=2),
                   file=sys.stderr)
+
+    def _do_hot_reload(self) -> None:
+        """Reload pack YAML, keeping player progress. Called on F5."""
+        if self._hot_reloader is None:
+            return
+        try:
+            new_state, new_npcs, new_meta = self._hot_reloader.reload(
+                self.state, self.npcs
+            )
+            self.state = new_state
+            self.npcs = new_npcs
+            self.meta = new_meta
+            # Propagate to scene context so scenes read updated data.
+            self.ctx.state = new_state
+            self.ctx.npcs = new_npcs
+            print("[dev] hot reload OK", file=sys.stderr)
+        except Exception as exc:
+            print(f"[dev] hot reload failed: {exc}", file=sys.stderr)
 
     def _do_inspect_dump(self) -> None:
         self._last_inspect = self.inspect()
