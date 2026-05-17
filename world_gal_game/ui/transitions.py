@@ -37,3 +37,68 @@ class FadeTransition:
         overlay = pygame.Surface(surface.get_size(), pygame.SRCALPHA)
         overlay.fill((*self.color, int(alpha * 255)))
         surface.blit(overlay, (0, 0))
+
+
+class PortraitCrossfade:
+    """Tracks old + new surfaces with an alpha mix over `duration` seconds."""
+
+    def __init__(self, old: pygame.Surface | None, new: pygame.Surface | None,
+                 duration: float = 0.25) -> None:
+        self.old = old
+        self.new = new
+        self.duration = max(0.01, duration)
+        self.t = 0.0
+
+    def update(self, dt: float) -> None:
+        # Clamp so we never exceed duration regardless of frame-rate spikes.
+        self.t = min(self.t + dt, self.duration)
+
+    @property
+    def done(self) -> bool:
+        return self.t >= self.duration
+
+    def draw(self, surface: pygame.Surface, dest_rect: pygame.Rect) -> None:
+        progress = self.t / self.duration
+        size = (dest_rect.width, dest_rect.height)
+
+        if self.old is not None and progress < 1.0:
+            old_copy = pygame.transform.smoothscale(self.old, size)
+            old_copy.set_alpha(int((1.0 - progress) * 255))
+            surface.blit(old_copy, dest_rect.topleft)
+
+        if self.new is not None:
+            new_copy = pygame.transform.smoothscale(self.new, size)
+            new_copy.set_alpha(int(progress * 255))
+            surface.blit(new_copy, dest_rect.topleft)
+
+
+class BackgroundFade:
+    """Crossfades between two background surfaces (typically ~0.6 s)."""
+
+    def __init__(self, old: pygame.Surface | None, new: pygame.Surface | None,
+                 duration: float = 0.6) -> None:
+        self.old = old
+        self.new = new
+        self.duration = max(0.01, duration)
+        self.t = 0.0
+
+    def update(self, dt: float) -> None:
+        self.t = min(self.t + dt, self.duration)
+
+    @property
+    def done(self) -> bool:
+        return self.t >= self.duration
+
+    def draw(self, surface: pygame.Surface) -> None:
+        size = surface.get_size()
+        progress = self.t / self.duration
+
+        if self.old is not None and progress < 1.0:
+            old_copy = pygame.transform.smoothscale(self.old, size)
+            old_copy.set_alpha(int((1.0 - progress) * 255))
+            surface.blit(old_copy, (0, 0))
+
+        if self.new is not None:
+            new_copy = pygame.transform.smoothscale(self.new, size)
+            new_copy.set_alpha(int(progress * 255))
+            surface.blit(new_copy, (0, 0))

@@ -22,6 +22,7 @@ from pathlib import Path
 import pygame
 
 from ..config import resolve_asset
+from ..core.portrait_spec import PortraitSpec
 
 
 class AssetManager:
@@ -152,6 +153,18 @@ class AssetManager:
         if not label:
             self._placeholder_cache[key] = s
         return s
+
+    # ---------- portrait spec ------------------------------------------------
+
+    def resolve_portrait(self, spec: PortraitSpec,
+                         fallback_size: tuple[int, int] = (320, 640)) -> pygame.Surface:
+        """Walk candidate_paths until one exists; return placeholder if none found."""
+        for path in spec.candidate_paths():
+            abs_path = self._resolve(path)
+            if abs_path is not None and Path(abs_path).exists():
+                return self.image(path, fallback_size=fallback_size)
+        # All candidates missing — return placeholder labelled with character name.
+        return self._placeholder(fallback_size, (40, 30, 60), label=spec.character)
 
     # ---------- sound --------------------------------------------------------
 
