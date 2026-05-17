@@ -95,7 +95,7 @@ class EngineConfig:
 
     # paths (relative to resource_root); content/asset roots per game pack
     game_pack_dir: Path = field(default_factory=lambda: Path("games"))
-    default_pack: str = "tsinghua_strange_tales"
+    default_pack: str = "tsing_hua_strange_tales"
     save_subdir: str = "saves"
     # Extra directories to scan when resolving a pack name. The engine
     # always also checks the in-repo games/ directory; this list lets a
@@ -174,7 +174,7 @@ def _name_variants(name: str) -> list[str]:
     out = {name}
     out.add(name.replace("_", "-"))
     out.add(name.replace("-", "_"))
-    # Title-cased variants: "tsinghua_strange_tales" -> "Tsinghua-Strange-Tales"
+    # Title-cased variants: "tsing_hua_strange_tales" -> "Tsing-Hua-Strange-Tales"
     for sep_in in ("_", "-"):
         parts = [p.capitalize() for p in name.split(sep_in)]
         for sep_out in ("-", "_"):

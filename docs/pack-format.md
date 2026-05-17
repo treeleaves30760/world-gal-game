@@ -124,7 +124,7 @@ resources:
 ```
 
 `<name>` 會自動嘗試 snake_case、kebab-case、Title-Case 變體。
-所以 `--pack tsinghua_strange_tales` 也會找到 `Tsinghua-Strange-Tales/`。
+所以 `--pack tsing_hua_strange_tales` 也會找到 `Tsing-Hua-Strange-Tales/`。
 
 ## 讓 pack 變成 pip-installable
 

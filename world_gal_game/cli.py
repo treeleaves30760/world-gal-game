@@ -23,7 +23,7 @@ def build_parser() -> argparse.ArgumentParser:
                     "games/<pack>/, a sibling directory, or any path "
                     "passed to --pack.",
     )
-    p.add_argument("--pack", default="tsinghua_strange_tales",
+    p.add_argument("--pack", default="tsing_hua_strange_tales",
                    help="game pack name or path")
     p.add_argument("--list-packs", action="store_true",
                    help="list discovered game packs and exit.")

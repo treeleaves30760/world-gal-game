@@ -1,10 +1,10 @@
-"""Smoke test: the shipped Tsinghua Strange Tales pack still plays through."""
+"""Smoke test: the shipped Tsing Hua Strange Tales pack still plays through."""
 from world_gal_game.config import EngineConfig
 from world_gal_game.headless import HeadlessSession
 
 
 def test_pack_loads_and_qingyi_route_completes():
-    sess = HeadlessSession.open(EngineConfig(), pack="tsinghua_strange_tales")
+    sess = HeadlessSession.open(EngineConfig(), pack="tsing_hua_strange_tales")
     sess.start_scene("prologue_arrival")
     sess.next_line(20)
     sess.move_to("main_gate")
@@ -36,7 +36,7 @@ def test_pack_loads_and_qingyi_route_completes():
 
 
 def test_pack_loads_and_yuening_route_completes():
-    sess = HeadlessSession.open(EngineConfig(), pack="tsinghua_strange_tales")
+    sess = HeadlessSession.open(EngineConfig(), pack="tsing_hua_strange_tales")
     # We skip to met_yuening directly and drive only her arc.
     sess.set_flag("met_yuening", True)
     sess.set_flag("yuening_oscilloscope_done", False)
