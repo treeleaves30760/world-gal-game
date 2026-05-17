@@ -110,6 +110,9 @@ class EngineConfig:
     # text speed (chars/sec); 0 = instant
     text_speed: float = 45.0
 
+    # seconds between auto-advances when auto-play mode is on
+    auto_play_delay: float = 2.5
+
     def save_dir(self) -> Path:
         d = writable_root() / self.save_subdir
         d.mkdir(parents=True, exist_ok=True)

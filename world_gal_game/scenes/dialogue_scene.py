@@ -23,6 +23,9 @@ class DialogueScene(Scene):
         self._current_line = None
         self._scene_started = False
         self._pending_choices = False
+        # Skip / auto-play state
+        self.auto_play_enabled: bool = False
+        self._auto_play_timer: float = 0.0
 
     def enter(self, *, scene_id: str | None = None,
               on_done: Callable[[], None] | None = None,
@@ -118,6 +121,28 @@ class DialogueScene(Scene):
             self.on_done = None
             cb()
 
+    # ------------------------------------------------------------------
+    # Skip / auto-play helpers
+
+    def _toggle_auto_play(self) -> None:
+        self.auto_play_enabled = not self.auto_play_enabled
+        self._auto_play_timer = 0.0
+
+    def _trigger_skip(self) -> None:
+        """Skip-mode: jump past already-read lines, stop at unread or choice."""
+        if self.choices and self.choices.visible:
+            return  # never skip choices
+        if not self._current_line:
+            return
+        if self.box and not self.box.fully_revealed():
+            self.box.force_reveal()
+            return
+        pres = self.ctx.dialogue.skip_to_next_unread()
+        if pres is not None:
+            self._render_presentation(pres)
+
+    # ------------------------------------------------------------------
+
     def update(self, dt: float, inp) -> None:
         # Open scrollback on wheel-up or B key.
         if inp.mouse_wheel > 0 and self.on_scrollback:
@@ -127,7 +152,19 @@ class DialogueScene(Scene):
             if e.type == pygame.KEYDOWN and e.key == pygame.K_b and self.on_scrollback:
                 self.on_scrollback()
                 return
+
+        # Check for Skip (Ctrl held) and Auto toggle.
+        for e in inp.events:
+            if e.type == pygame.KEYDOWN:
+                if e.key in (pygame.K_LCTRL, pygame.K_RCTRL):
+                    self._trigger_skip()
+                # [A] key toggles auto-play
+                if e.key == pygame.K_a and not (e.mod & pygame.KMOD_CTRL):
+                    self._toggle_auto_play()
+
         if self.choices and self.choices.visible:
+            self.auto_play_enabled = False   # stop auto-play at choices
+            self._auto_play_timer = 0.0
             self.choices.update(dt, inp)
             return
         if self.box:
@@ -140,13 +177,15 @@ class DialogueScene(Scene):
                 self.box.force_reveal()
             else:
                 self._advance()
-        # skip
-        for e in inp.events:
-            if e.type == pygame.KEYDOWN and e.key == pygame.K_LCTRL:
-                # hold-to-fast-forward: advance multiple times this frame
-                for _ in range(3):
-                    if not self._current_line:
-                        break
+                self._auto_play_timer = 0.0   # reset timer on manual advance
+
+        # Auto-play: wait until text is fully revealed, then count down.
+        if self.auto_play_enabled and self._current_line is not None:
+            if self.box and self.box.fully_revealed():
+                self._auto_play_timer += dt
+                delay = getattr(self.ctx.config, "auto_play_delay", 2.5)
+                if self._auto_play_timer >= delay:
+                    self._auto_play_timer = 0.0
                     self._advance()
 
     def draw(self, surface: pygame.Surface) -> None:
