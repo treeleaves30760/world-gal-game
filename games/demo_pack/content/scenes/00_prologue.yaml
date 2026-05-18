@@ -1,18 +1,26 @@
 scenes:
 
   - id: prologue
-    title: "序章"
+    title: "序章 · 搬家當天"
     location: starting_room
     background: assets/backgrounds/starting_room.png
     lines:
       - text: |
-          這是你遊戲的第一段文字。
-          改寫它，介紹你的世界。
+          搬家當天。
+          你終於把最後一個紙箱塞進新租的小房間。
       - text: |
-          你呼吸了一口氣，準備推開門。
+          這個小鎮你只來過一次 — 是當初看房子那天。
+          除此之外，這裡的一切都還是陌生的。
       - speaker: "玩家"
-        text: "「該出發了。」"
+        text: "「總之，先出去走走吧。」"
+      - text: |
+          （提示：之後可以按 M 開啟地圖、I 看物品、Q 看任務。
+            現在先離開房間，走到鎮中廣場看看。）
     on_end:
       - kind: set_flag
         target: prologue_done
         value: true
+      - kind: advance_time
+        value: 1
+      - kind: log_event
+        target: "離開出租房間，正式開始小鎮的生活。"

@@ -1,0 +1,18 @@
+{
+  "_comment": "Walks the alone route: player chooses to leave after returning sketchbook. Verifies ending_alone flag set, no friend/lover flag.",
+  "commands": [
+    {"op": "start_scene", "scene": "prologue"},
+    {"op": "next", "count": 8},
+    {"op": "move", "location": "town_square"},
+    {"op": "start_scene", "scene": "meet_heroine"},
+    {"op": "next", "count": 8},
+    {"op": "choose", "choice": "shy_accept"},
+    {"op": "move", "location": "park"},
+    {"op": "start_scene", "scene": "find_sketchbook_park"},
+    {"op": "next", "count": 10},
+    {"op": "next", "count": 10},
+    {"op": "choose", "choice": "leave_alone"},
+    {"op": "next", "count": 8},
+    {"op": "inspect"}
+  ]
+}

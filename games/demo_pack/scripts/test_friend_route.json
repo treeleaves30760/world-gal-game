@@ -1,0 +1,21 @@
+{
+  "_comment": "Walks the friend route: affection ends in friend tier (>=25, <80). Verifies ending_friend flag + ach_heroine_1_friend not unlocked (achievement requires heroine_1_friend flag).",
+  "commands": [
+    {"op": "start_scene", "scene": "prologue"},
+    {"op": "next", "count": 8},
+    {"op": "move", "location": "town_square"},
+    {"op": "start_scene", "scene": "meet_heroine"},
+    {"op": "next", "count": 8},
+    {"op": "choose", "choice": "accept_quest"},
+    {"op": "adjust_affection", "npc": "heroine_1", "delta": 20},
+    {"op": "move", "location": "park"},
+    {"op": "start_scene", "scene": "find_sketchbook_park"},
+    {"op": "next", "count": 10},
+    {"op": "next", "count": 10},
+    {"op": "choose", "choice": "walk_park"},
+    {"op": "next", "count": 12},
+    {"op": "choose", "choice": "listen_more"},
+    {"op": "next", "count": 8},
+    {"op": "inspect"}
+  ]
+}

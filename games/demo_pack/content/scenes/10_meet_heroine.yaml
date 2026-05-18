@@ -1,37 +1,59 @@
 scenes:
 
   - id: meet_heroine
-    title: "初遇 · 女主角A"
-    location: town
-    background: assets/backgrounds/town.png
+    title: "初遇 · 林清雪"
+    location: town_square
+    background: assets/backgrounds/town_square.png
     lines:
       - text: |
-          街上突然有人叫住你。
-      - speaker: "女主角A"
-        text: "「等等！你是新來的對吧？」"
+          你走到廣場。
+          佈告欄前有個女生正踮著腳，貼著一張手寫的紙。
+      - text: |
+          她注意到你，回過頭。
+      - speaker: "林清雪"
+        text: "「不好意思，可以幫我看看這張上面寫得清楚嗎？」"
         portrait: assets/characters/heroine_1_normal.png
         expression: smile
-      - speaker: "女主角A"
+      - text: |
+          紙上寫著：「拾獲素描本請聯絡 — 清雪。」
+      - speaker: "林清雪"
+        text: "「我昨天弄丟了一本素描本。」"
+        expression: sad
+      - speaker: "林清雪"
         text: |
-          「我叫A。
-          下次來找我，我可以帶你逛這個小鎮。」
-        expression: smile
+          「裡面有滿多畫了一半的東西。
+          如果方便的話 — 你也幫我留意一下吧？」
+        expression: shy
     choices:
-      - id: friendly
-        text: "「好啊，謝謝妳！」"
+      - id: accept_quest
+        text: "「沒問題，我幫你找。」"
         effects:
           - kind: affection
             target: heroine_1
-            value: 5
+            value: 8
           - kind: set_flag
-            target: met_heroine
+            target: met_heroine_1
             value: true
-      - id: shy
-        text: "「呃，下次再說吧。」"
+          - kind: start_quest
+            target: find_sketchbook
+          - kind: set_flag
+            target: quest_started
+            value: true
+          - kind: log_event
+            target: "接下了尋找素描本的委託。"
+      - id: shy_accept
+        text: "「我盡量試試看。」"
         effects:
           - kind: affection
             target: heroine_1
-            value: 1
+            value: 4
           - kind: set_flag
-            target: met_heroine
+            target: met_heroine_1
             value: true
+          - kind: start_quest
+            target: find_sketchbook
+          - kind: set_flag
+            target: quest_started
+            value: true
+          - kind: log_event
+            target: "接下了尋找素描本的委託。"

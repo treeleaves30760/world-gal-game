@@ -1,0 +1,75 @@
+scenes:
+
+  - id: return_to_heroine
+    title: "歸還 · 林清雪"
+    location: town_square
+    background: assets/backgrounds/town_square.png
+    lines:
+      - text: |
+          你回到廣場。
+          清雪還站在佈告欄旁邊，看到你走近，馬上轉過頭來。
+      - speaker: "玩家"
+        text: "「找到了。在公園湖邊的石椅上。」"
+      - speaker: "林清雪"
+        text: "「真的嗎 — 太好了。」"
+        portrait: assets/characters/heroine_1_normal.png
+        expression: smile
+      - text: |
+          她接過素描本，輕輕地翻了一下，
+          像在確認每一張都還在。
+      - speaker: "林清雪"
+        text: |
+          「謝謝你。
+          其實裡面有一些東西，我不太想被別人看見。」
+        expression: shy
+      - speaker: "林清雪"
+        text: |
+          「那個 — 如果你不嫌麻煩的話，
+          要不要再多聊一下？」
+        expression: shy
+    choices:
+      - id: chat_more
+        text: "「想多了解妳一些。」"
+        requires:
+          - kind: affection_gte
+            target: heroine_1
+            value: 80
+        effects:
+          - kind: set_flag
+            target: heroine_1_lover
+            value: true
+          - kind: complete_quest
+            target: find_sketchbook
+          - kind: set_flag
+            target: quest_done
+            value: true
+        next_scene: lover_event
+      - id: walk_park
+        text: "「要不要一起去公園走走？」"
+        requires:
+          - kind: affection_gte
+            target: heroine_1
+            value: 25
+        forbids:
+          - kind: affection_gte
+            target: heroine_1
+            value: 80
+        effects:
+          - kind: set_flag
+            target: heroine_1_friend
+            value: true
+          - kind: complete_quest
+            target: find_sketchbook
+          - kind: set_flag
+            target: quest_done
+            value: true
+        next_scene: friend_event
+      - id: leave_alone
+        text: "「東西還你，我先走了。」"
+        effects:
+          - kind: complete_quest
+            target: find_sketchbook
+          - kind: set_flag
+            target: quest_done
+            value: true
+        next_scene: ending_alone

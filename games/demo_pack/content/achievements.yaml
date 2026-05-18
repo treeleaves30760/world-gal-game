@@ -1,0 +1,25 @@
+achievements:
+
+  - id: ach_first_step
+    title: "踏出房門"
+    description: "終於離開出租房間，開始小鎮的生活。"
+    icon: assets/ui/ach_first_step.png
+    hidden: false
+    requires:
+      - {kind: flag, target: prologue_done}
+
+  - id: ach_heroine_1_friend
+    title: "已是朋友"
+    description: "與林清雪的好感達到朋友門檻。"
+    icon: assets/ui/ach_heroine_1_friend.png
+    hidden: false
+    requires:
+      - {kind: flag, target: heroine_1_friend}
+
+  - id: ach_heroine_1_lover
+    title: "湖畔的承諾"
+    description: "與林清雪的故事，走到了戀人結局。"
+    icon: assets/ui/ach_heroine_1_lover.png
+    hidden: true
+    requires:
+      - {kind: flag, target: ending_lover}

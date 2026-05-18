@@ -1,0 +1,27 @@
+scenes:
+
+  - id: find_sketchbook_square
+    title: "查看 · 鎮中廣場"
+    location: town_square
+    background: assets/backgrounds/town_square.png
+    lines:
+      - text: |
+          你回到廣場，沿著佈告欄一路往下找。
+      - text: |
+          長椅底下、垃圾桶旁邊、甚至花圃的縫隙 — 你都蹲下來看了一遍。
+      - text: |
+          只有幾張被風吹皺的傳單，沒有素描本的影子。
+      - text: |
+          廣場上人來人往，要是真的掉在這，
+          大概早就被人撿走了吧。
+      - speaker: "玩家"
+        text: "「不在這裡。換個地方看看。」"
+    on_end:
+      - kind: complete_objective
+        target: find_sketchbook
+        stat: obj_square
+      - kind: set_flag
+        target: obj_square_done
+        value: true
+      - kind: log_event
+        target: "查看了廣場，但素描本不在這裡。"

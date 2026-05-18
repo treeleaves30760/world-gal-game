@@ -1,0 +1,48 @@
+scenes:
+
+  - id: friend_event
+    title: "朋友 · 湖邊散步"
+    location: park
+    background: assets/backgrounds/park.png
+    requires:
+      - kind: flag
+        target: heroine_1_friend
+    lines:
+      - text: |
+          午後的廣場太亮，你提議換個地方走走。
+          清雪想了一下，點點頭。
+      - text: |
+          兩個人沿著湖畔的步道慢慢走。
+          風從水面上吹過來，比鎮上涼一些。
+      - speaker: "林清雪"
+        text: "「我之前都自己一個人來這裡畫。」"
+        portrait: assets/characters/heroine_1_normal.png
+        expression: smile
+      - speaker: "林清雪"
+        text: |
+          「畫長椅、畫鴨子、畫對岸那排路燈 —
+          畫什麼其實不太重要，重要的是會慢下來。」
+        expression: smile
+      - text: |
+          她邊說邊用手比劃，像是在空氣裡描一條線。
+      - speaker: "林清雪"
+        text: "「今天有人陪著走，感覺不太一樣。」"
+        expression: shy
+      - text: |
+          你沒接話，只是把腳步放慢，配合她的節奏。
+    choices:
+      - id: listen_more
+        text: "「妳之後還會畫嗎？」"
+        effects:
+          - kind: affection
+            target: heroine_1
+            value: 10
+          - kind: log_event
+            target: "在湖邊聽清雪聊她的畫。"
+        next_scene: ending_friend
+      - id: say_goodbye
+        text: "「該回去了，明天還要早起。」"
+        effects:
+          - kind: log_event
+            target: "陪清雪走完一段湖邊，準備回去。"
+        next_scene: ending_friend

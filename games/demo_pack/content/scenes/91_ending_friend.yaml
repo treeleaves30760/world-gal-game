@@ -1,0 +1,30 @@
+scenes:
+
+  - id: ending_friend
+    title: "結局 · 朋友"
+    location: town_square
+    background: assets/backgrounds/town_square.png
+    lines:
+      - text: |
+          你們從公園走回廣場。
+          天還沒完全黑，佈告欄前的燈剛亮起來。
+      - text: |
+          清雪把帆布包揹好，朝你揮了揮手。
+      - speaker: "林清雪"
+        text: "「下次在書店遇到，再聊。」"
+        portrait: assets/characters/heroine_1_normal.png
+        expression: smile
+      - text: |
+          她轉身走進巷子，腳步很輕。
+      - text: |
+          不算多熱鬧，也不算冷清 —
+          這樣的距離，剛剛好。
+    on_end:
+      - kind: set_flag
+        target: ending_friend
+        value: true
+      - kind: log_event
+        target: "與林清雪以朋友身分繼續往來。"
+      - kind: advance_time
+        value: 1
+      - kind: end_scene

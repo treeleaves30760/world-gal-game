@@ -1,0 +1,29 @@
+scenes:
+
+  - id: ending_alone
+    title: "結局 · 一個人"
+    location: town_square
+    background: assets/backgrounds/town_square.png
+    lines:
+      - text: |
+          你把素描本遞過去，沒多說什麼，
+          就轉身往廣場的另一頭走。
+      - text: |
+          身後傳來她想開口的聲音，但你沒回頭。
+      - text: |
+          廣場上的人潮慢慢散開，
+          佈告欄前剩下幾張被風吹皺的紙。
+      - text: |
+          有些故事到這裡停住，是因為還沒準備好往下走。
+      - text: |
+          小鎮的故事還有別的可能 —
+          那要等下次了。
+    on_end:
+      - kind: set_flag
+        target: ending_alone
+        value: true
+      - kind: log_event
+        target: "離開了廣場，沒有再回頭。"
+      - kind: advance_time
+        value: 1
+      - kind: end_scene

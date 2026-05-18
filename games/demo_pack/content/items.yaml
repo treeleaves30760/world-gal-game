@@ -1,0 +1,48 @@
+items:
+
+  - id: pocket_notebook
+    name: "口袋筆記本"
+    description: "搬家時帶來的舊筆記本。沒什麼用處，但摸著踏實。"
+    icon: assets/ui/item_notebook.png
+    category: misc
+    value: 0
+    locked: true
+    stackable: false
+
+  - id: jasmine_tea
+    name: "茉莉花茶"
+    description: |
+      雜貨鋪角落最後一罐。
+      送給喜歡安靜的人應該不會錯。
+    icon: assets/ui/item_tea.png
+    category: gift
+    value: 80
+    matches_tags: ["茉莉花茶"]
+    gift_modifier:
+      heroine_1: 12
+    consumed_on_gift: true
+
+  - id: rice_box
+    name: "便當"
+    description: "雜貨鋪阿嬤每天現做的便當。份量很實在。"
+    icon: assets/ui/item_rice_box.png
+    category: consumable
+    value: 60
+    consumable: true
+    use_effects:
+      - kind: gain_resource
+        target: energy
+        value: 30
+      - kind: log_event
+        target: "吃了一份便當，恢復了一些體力。"
+
+  - id: sketchbook
+    name: "清雪的素描本"
+    description: |
+      她遺失的私人物品。封面有手寫的名字「清雪」。
+      不能賣、不能當禮物送出。
+    icon: assets/ui/item_sketchbook.png
+    category: quest
+    value: 0
+    locked: true
+    consumed_on_gift: false

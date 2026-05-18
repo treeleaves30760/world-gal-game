@@ -1,0 +1,21 @@
+{
+  "_comment": "Walks through the lover route: prologue → meet_heroine → find park → return → lover_event → ending_lover. Verifies ending_lover flag + ach_heroine_1_lover via the final inspect.",
+  "commands": [
+    {"op": "start_scene", "scene": "prologue"},
+    {"op": "next", "count": 8},
+    {"op": "move", "location": "town_square"},
+    {"op": "start_scene", "scene": "meet_heroine"},
+    {"op": "next", "count": 8},
+    {"op": "choose", "choice": "accept_quest"},
+    {"op": "adjust_affection", "npc": "heroine_1", "delta": 75},
+    {"op": "move", "location": "park"},
+    {"op": "start_scene", "scene": "find_sketchbook_park"},
+    {"op": "next", "count": 10},
+    {"op": "next", "count": 10},
+    {"op": "choose", "choice": "chat_more"},
+    {"op": "next", "count": 15},
+    {"op": "choose", "choice": "confess"},
+    {"op": "next", "count": 10},
+    {"op": "inspect"}
+  ]
+}

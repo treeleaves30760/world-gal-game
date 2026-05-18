@@ -1,0 +1,17 @@
+quests:
+
+  - id: find_sketchbook
+    title: "尋找清雪的素描本"
+    description: |
+      林清雪的素描本不見了。
+      她說可能掉在廣場、湖畔公園、或雜貨鋪那條巷子。
+    giver: heroine_1
+    objectives:
+      - id: obj_square
+        text: "查看鎮中廣場"
+      - id: obj_park
+        text: "查看湖畔公園"
+      - id: obj_alley
+        text: "查看雜貨鋪小巷（可略過）"
+        optional: true
+    rewards_text: "與林清雪的關係加深。"

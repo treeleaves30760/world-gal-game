@@ -1,0 +1,35 @@
+scenes:
+
+  - id: ending_lover
+    title: "結局 · 戀人"
+    location: park
+    background: assets/backgrounds/park.png
+    lines:
+      - text: |
+          天色慢慢暗下來，湖面映著最後一點橘色。
+      - text: |
+          她沒有立刻回答你的話，
+          只是把素描本闔上，輕輕放回包裡。
+      - speaker: "林清雪"
+        text: "「下次。」"
+        portrait: assets/characters/heroine_1_normal.png
+        expression: smile
+      - speaker: "林清雪"
+        text: |
+          「下次見面之前，
+          我會把那一頁留著。」
+        expression: shy
+      - text: |
+          兩個人沒再多說什麼。
+          肩膀靠得不近也不遠，但比一開始近了一點。
+      - text: |
+          這個小鎮的故事，從這裡開始有了不一樣的形狀。
+    on_end:
+      - kind: set_flag
+        target: ending_lover
+        value: true
+      - kind: log_event
+        target: "與林清雪的故事，走到了戀人結局。"
+      - kind: advance_time
+        value: 2
+      - kind: end_scene

@@ -1,0 +1,32 @@
+scenes:
+
+  - id: find_sketchbook_alley
+    title: "查看 · 雜貨鋪小巷"
+    location: shop_alley
+    background: assets/backgrounds/shop_alley.png
+    lines:
+      - text: |
+          你走進雜貨鋪小巷。
+          老闆正靠在門框上抽煙，看到你便揚了揚下巴。
+      - speaker: "雜貨鋪老闆"
+        text: "「素描本？這幾天沒人撿到過那種東西哦。」"
+      - speaker: "雜貨鋪老闆"
+        text: |
+          「不過你說清雪嘛，
+          她常去公園湖邊那張石椅上畫畫。
+          要找她的東西，去那邊看看比較有譜。」
+      - text: |
+          你謝過老闆，離開了小巷。
+          至少多了一個方向。
+    on_end:
+      - kind: complete_objective
+        target: find_sketchbook
+        stat: obj_alley
+      - kind: set_flag
+        target: obj_alley_done
+        value: true
+      - kind: affection
+        target: heroine_1
+        value: 2
+      - kind: log_event
+        target: "雜貨鋪老闆提到清雪常去湖邊畫畫。"

@@ -1,0 +1,15 @@
+resources:
+
+  - id: money
+    name: "零錢"
+    symbol: "$"
+    description: "搬家後身上剩下的現金。"
+    starting: 150
+    min: 0
+
+  - id: energy
+    name: "體力"
+    description: "走太多路會疲勞。"
+    starting: 80
+    min: 0
+    max: 100

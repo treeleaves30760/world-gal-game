@@ -1,0 +1,44 @@
+scenes:
+
+  - id: find_sketchbook_park
+    title: "查看 · 湖畔公園"
+    location: park
+    background: assets/backgrounds/park.png
+    lines:
+      - text: |
+          下午的湖畔公園很安靜。
+          風從水面拂過來，帶著一點青草的味道。
+      - text: |
+          你沿著湖邊的小徑慢慢走。
+          走到一張靠湖的石椅前，腳步停了下來。
+      - text: |
+          石椅上放著一本封面沾了水珠的素描本。
+      - text: |
+          你伸手翻開封面 — 內頁是清雪那種偏細偏輕的鉛筆字跡。
+          沒有錯，就是這本。
+      - text: |
+          隨手翻了幾頁。
+          畫的多半是小鎮的角落 — 街口的貓、書店的窗、
+          清晨剛開門的雜貨鋪。
+      - text: |
+          翻到最後一張，是這個小鎮的廣場。
+          畫面正中央留了一塊空白，像是還沒有畫完。
+      - speaker: "玩家"
+        text: "「找到了。先還給她吧。」"
+    on_end:
+      - kind: complete_objective
+        target: find_sketchbook
+        stat: obj_park
+      - kind: set_flag
+        target: obj_park_done
+        value: true
+      - kind: give_item
+        target: sketchbook
+        value: 1
+      - kind: affection
+        target: heroine_1
+        value: 10
+      - kind: log_event
+        target: "在湖邊石椅上找到了素描本！"
+      - kind: play_scene
+        target: return_to_heroine

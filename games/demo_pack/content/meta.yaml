@@ -1,6 +1,12 @@
 # Pack metadata for demo_pack.
-title: "範例遊戲"
-subtitle: "Demo Pack"
+#
+# This is the engine's built-in showcase. A 5-10 minute playable demo
+# that exercises most subsystems (dialogue, quest, shop, inventory,
+# affection, achievements, multi-time backgrounds). All assets are
+# .gitkeep stubs — the engine renders purple placeholders for missing
+# images, so the demo runs even with no art.
+title: "小鎮的午後"
+subtitle: "Demo Pack — Engine Showcase"
 
 text_speed: 45
 
@@ -15,6 +21,9 @@ intro_scene: prologue
 player:
   name: "玩家"
   pronouns: "他"
+
+starting_inventory:
+  pocket_notebook: 1
 
 # Optionally override the engine's defaults. Comment out keys you don't
 # care about — the engine will keep its bundled defaults for those.

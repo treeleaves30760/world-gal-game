@@ -1,39 +1,87 @@
+regions:
+  - id: town
+    name: "小鎮"
+    color: [180, 140, 110]
+
 locations:
 
   - id: starting_room
-    name: "起點的房間"
-    region: "序章"
+    name: "出租房間"
+    region: town
     description: |
-      故事開始的地方。把這段文字改成你的遊戲第一個場景的描述。
+      你剛搬進來的小房間。窗外是廣場。
     background: assets/backgrounds/starting_room.png
+    backgrounds:
+      morning: assets/backgrounds/starting_room_morning.png
+      night: assets/backgrounds/starting_room_night.png
     map_x: 10
     map_y: 50
-    exits: [town]
+    exits:
+      - target: town_square
+        travel_cost: 1
+    scene_hooks:
+      - scene_id: prologue
+        trigger: auto
+        forbids_flags: [prologue_done]
+        once: true
 
-  - id: town
-    name: "街上"
-    region: "城市"
+  - id: town_square
+    name: "鎮中廣場"
+    region: town
     description: |
-      一個熱鬧的小鎮街道。試著想像主角第一次走出家門的感覺。
-    background: assets/backgrounds/town.png
+      佈告欄、長椅、人潮。下午的時候特別熱鬧。
+    background: assets/backgrounds/town_square.png
     map_x: 30
     map_y: 50
-    exits: [starting_room, park]
+    exits:
+      - target: starting_room
+      - target: park
+      - target: shop_alley
     npcs:
       - npc_id: heroine_1
         times: [afternoon, evening]
     scene_hooks:
       - scene_id: meet_heroine
-        trigger: examine
-        forbids_flags: [met_heroine]
+        trigger: auto
+        requires_flags: [prologue_done]
+        forbids_flags: [met_heroine_1]
         once: true
+      - scene_id: find_sketchbook_square
+        trigger: examine
+        requires_flags: [quest_started]
+        forbids_flags: [obj_square_done]
 
   - id: park
-    name: "公園"
-    region: "城市"
+    name: "湖畔公園"
+    region: town
     description: |
-      安靜的小公園。湖邊偶爾會有意外的相遇。
+      安靜的小公園。湖邊偶爾有人在練習素描。
     background: assets/backgrounds/park.png
-    map_x: 45
-    map_y: 50
-    exits: [town]
+    map_x: 50
+    map_y: 45
+    exits:
+      - target: town_square
+    scene_hooks:
+      - scene_id: find_sketchbook_park
+        trigger: examine
+        requires_flags: [quest_started]
+        forbids_flags: [obj_park_done]
+
+  - id: shop_alley
+    name: "雜貨鋪小巷"
+    region: town
+    description: |
+      巷底有一間老雜貨鋪，老闆通常都在。
+    background: assets/backgrounds/shop_alley.png
+    map_x: 35
+    map_y: 70
+    exits:
+      - target: town_square
+    npcs:
+      - npc_id: shopkeeper_uncle
+        times: [morning, noon, afternoon, evening]
+    scene_hooks:
+      - scene_id: find_sketchbook_alley
+        trigger: examine
+        requires_flags: [quest_started]
+        forbids_flags: [obj_alley_done]

@@ -1,0 +1,81 @@
+scenes:
+
+  - id: lover_event
+    title: "戀人 · 翻開素描本"
+    location: park
+    background: assets/backgrounds/park.png
+    requires:
+      - kind: flag
+        target: heroine_1_lover
+    lines:
+      - text: |
+          清雪說想去湖邊坐一下。
+          你陪她走過那條熟悉的步道。
+      - text: |
+          兩個人在湖邊的長椅坐下。
+          她把背包放在膝蓋上，拉開拉鍊，動作很慢。
+      - speaker: "林清雪"
+        text: "「這本，給你看一下。」"
+        portrait: assets/characters/heroine_1_normal.png
+        expression: shy
+      - text: |
+          她遞過來的，是那本你幫她找回的素描本。
+      - text: |
+          一頁、兩頁 — 廣場、鴨子、雜貨鋪門口的招牌。
+          她畫的東西比你想像中多。
+      - speaker: "林清雪"
+        text: "「最後一頁我留著沒畫。」"
+        expression: smile
+      - text: |
+          翻到最後一頁，果然是空白的。
+      - speaker: "玩家"
+        text: "「在等什麼題材？」"
+      - speaker: "林清雪"
+        text: |
+          「在等一個我自己也想再來看一次的場景。
+          現在大概有了。」
+        expression: shy
+      - speaker: "玩家"
+        text: "「等等 — 我這裡剛好有東西。」"
+        requires:
+          - kind: has_item
+            target: jasmine_tea
+            value: 1
+      - text: |
+          你從口袋裡拿出那罐茉莉花茶，遞過去。
+          她愣了一下，接過罐子，輕輕笑了出來。
+        requires:
+          - kind: has_item
+            target: jasmine_tea
+            value: 1
+        effects:
+          - kind: gift
+            target: heroine_1
+            stat: jasmine_tea
+          - kind: log_event
+            target: "送了茉莉花茶給清雪。"
+          - kind: affection
+            target: heroine_1
+            value: 8
+      - text: |
+          她把茶罐握在手裡，沒急著打開。
+          風從湖面上吹過來，畫紙微微翻動。
+    choices:
+      - id: confess
+        text: "「下次一起來這裡好嗎？」"
+        effects:
+          - kind: affection
+            target: heroine_1
+            value: 15
+          - kind: log_event
+            target: "在湖邊向清雪提了下一次的約。"
+        next_scene: ending_lover
+      - id: quiet_close
+        text: "「謝謝妳給我看這些。」"
+        effects:
+          - kind: affection
+            target: heroine_1
+            value: 5
+          - kind: log_event
+            target: "靜靜地陪清雪看完整本素描。"
+        next_scene: ending_lover
