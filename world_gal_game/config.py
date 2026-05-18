@@ -95,7 +95,7 @@ class EngineConfig:
 
     # paths (relative to resource_root); content/asset roots per game pack
     game_pack_dir: Path = field(default_factory=lambda: Path("games"))
-    default_pack: str = "tsing_hua_strange_tales"
+    default_pack: str = "demo_pack"
     save_subdir: str = "saves"
     # Extra directories to scan when resolving a pack name. The engine
     # always also checks the in-repo games/ directory; this list lets a
