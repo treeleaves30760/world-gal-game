@@ -45,7 +45,7 @@ def unicode_pack(tmp_path: Path) -> Path:
     content_dir = tmp_path / "content"
     content_dir.mkdir()
     (content_dir / "meta.yaml").write_text(
-        'title: "清華異聞錄"\n',
+        'title: "小鎮的午後"\n',
         encoding="utf-8",
     )
     return tmp_path
@@ -91,7 +91,7 @@ class TestSafeName:
         assert _safe_name("My Game") == "My_Game"
 
     def test_non_ascii_becomes_underscores(self) -> None:
-        result = _safe_name("清華異聞錄")
+        result = _safe_name("小鎮的午後")
         # All chars are non-ASCII, so the result must be underscores only,
         # then collapsed and stripped to a fallback.
         assert result == "MyGame" or set(result) <= {"_"}

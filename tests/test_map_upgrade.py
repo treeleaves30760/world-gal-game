@@ -229,13 +229,13 @@ class TestContentLoaderParsing:
         from world_gal_game.content_loader import _parse_exits
         raw = [
             {"target": "secret_stacks", "description": "夜晚才能進入",
-             "requires_time": ["night"], "requires_flags": ["met_qingyi"]},
+             "requires_time": ["night"], "requires_flags": ["met_heroine_1"]},
         ]
         exits = _parse_exits(raw)
         assert exits[0].target == "secret_stacks"
         assert exits[0].description == "夜晚才能進入"
         assert exits[0].requires_time == ["night"]
-        assert exits[0].requires_flags == ["met_qingyi"]
+        assert exits[0].requires_flags == ["met_heroine_1"]
 
     def test_mixed_exits_parse(self):
         from world_gal_game.content_loader import _parse_exits
@@ -269,7 +269,7 @@ class TestContentLoaderParsing:
                   - target: secret_stacks
                     description: "黃昏後請勿進入"
                     requires_time: [evening, night]
-                    requires_flags: [met_qingyi]
+                    requires_flags: [met_heroine_1]
               - id: main_quad
                 name: "中央廣場"
                 region: campus
@@ -353,28 +353,38 @@ def test_exit_travel_cost_set_via_yaml_shape():
 
 
 def test_move_to_zero_cost_does_not_advance_time():
-    """Local moves (default travel_cost=0) keep the clock still."""
+    """Zero-cost local moves keep the clock still; nonzero advance it.
+
+    Drives `app._move_to` directly against demo_pack so the test stays
+    focused on the travel_cost arithmetic without coupling to the
+    ExplorationScene widget cache (which doesn't rebuild between
+    moves) or the demo's auto-trigger scene_hooks.
+    """
     import os
     os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
     os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
     from world_gal_game.dev.driver import GameDriver
-    d = GameDriver(pack="tsing_hua_strange_tales")
+    d = GameDriver(pack="demo_pack")
     d.new_game()
     d.skip_dialogue(800)
     d.advance_frames(5)
-    snap = d.snapshot()
-    time_before = snap["time"]
-    location_before = snap["location"]
-    btn = d.find_widget(label="校門口")
-    assert btn is not None, "main_gate exit should be available"
-    d.click(tuple(btn["rect_center"]))
-    d.advance_frames(20)
-    snap2 = d.snapshot()
-    assert snap2["location"] != location_before
-    # main_gate is in same region (campus); travel_cost defaults 0, so time
-    # of day must NOT have advanced.
-    assert snap2["time"] == time_before, (
-        f"time should not have advanced for an in-region move "
-        f"(was {time_before}, now {snap2['time']})"
+    # Suppress auto-trigger scene_hooks so movement stays mechanical.
+    d.app.state.events.set_flag("met_heroine_1", True)
+    # First hop: starting_room -> town_square (travel_cost=1) — time MUST
+    # advance.
+    time_before = d.app.state.time.label()
+    assert d.app.state.map.current_location_id == "starting_room"
+    d.app._move_to("town_square")
+    assert d.app.state.map.current_location_id == "town_square"
+    time_after_costly = d.app.state.time.label()
+    assert time_after_costly != time_before, (
+        "travel_cost=1 should have advanced the clock"
+    )
+    # Second hop: town_square -> park (travel_cost defaults to 0) —
+    # time MUST stay put.
+    d.app._move_to("park")
+    assert d.app.state.map.current_location_id == "park"
+    assert d.app.state.time.label() == time_after_costly, (
+        "zero-cost local move should not advance the clock"
     )
     d.quit()

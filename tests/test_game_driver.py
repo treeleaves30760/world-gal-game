@@ -14,7 +14,7 @@ os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
 @pytest.fixture
 def driver():
     from world_gal_game.dev.driver import GameDriver
-    d = GameDriver(pack="tsing_hua_strange_tales")
+    d = GameDriver(pack="demo_pack")
     yield d
     d.quit()
 
@@ -22,7 +22,7 @@ def driver():
 def test_driver_boots_and_snapshot(driver):
     """Boot, take snapshot, verify basic fields populated."""
     snap = driver.snapshot()
-    assert snap["pack"] == "tsing_hua_strange_tales"
+    assert snap["pack"] == "demo_pack"
     assert "scene_top" in snap
     assert isinstance(snap["flags"], dict)
     assert isinstance(snap["widgets"], list)
@@ -34,7 +34,7 @@ def test_driver_new_game_into_dialogue(driver):
     driver.advance_frames(10)
     snap = driver.snapshot()
     assert snap["scene_top"] == "DialogueScene"
-    assert snap["current_scene_id"] == "prologue_arrival"
+    assert snap["current_scene_id"] == "prologue"
 
 
 def test_driver_click_advances_dialogue(driver):
@@ -70,25 +70,25 @@ def test_driver_find_widget_by_label(driver):
     driver.new_game()
     driver.skip_dialogue(max_frames=800)
     driver.advance_frames(5)
-    w = driver.find_widget(label="校門口")
+    w = driver.find_widget(label="鎮中廣場")
     assert w is not None
     assert w["enabled"] is True
     assert w["has_on_click"] is True
 
 
 def test_driver_click_label_moves_location(driver):
-    """Clicking '校門口' should change current location."""
+    """Clicking '鎮中廣場' should change current location."""
     driver.new_game()
     driver.skip_dialogue(max_frames=800)
     driver.advance_frames(5)
     before = driver.snapshot()["location"]
-    w = driver.find_widget(label="校門口")
+    w = driver.find_widget(label="鎮中廣場")
     assert w is not None
     driver.click(tuple(w["rect_center"]))
     driver.advance_frames(20)
     after = driver.snapshot()["location"]
     assert after != before
-    assert after == "main_gate"
+    assert after == "town_square"
 
 
 def test_driver_screenshot_writes_file(driver, tmp_path):
@@ -109,11 +109,11 @@ def test_driver_cli_script(tmp_path):
     from world_gal_game.dev.driver import _cli_main
     script = tmp_path / "script.json"
     script.write_text(json.dumps({
-        "pack": "tsing_hua_strange_tales",
+        "pack": "demo_pack",
         "actions": [
             {"do": "new_game"},
             {"do": "skip_dialogue", "max_frames": 800},
-            {"do": "click_label", "label": "校門口", "after": 20},
+            {"do": "click_label", "label": "鎮中廣場", "after": 20},
             {"do": "snapshot", "path": "snap.json"},
         ],
     }))
@@ -122,4 +122,4 @@ def test_driver_cli_script(tmp_path):
     assert rc == 0
     report = json.loads((out_dir / "report.json").read_text())
     last = next(r for r in report if r["do"] == "snapshot")
-    assert last["snapshot"]["location"] == "main_gate"
+    assert last["snapshot"]["location"] == "town_square"
