@@ -18,12 +18,12 @@ visual novel / gal-game needs:
 The CLI is intentionally similar to `imagegen.py`:
 
     uv run tools/imagegen_art.py --kind portrait \\
-        --character "Lin Qing-yi (林青衣)" \\
-        --description "中文系大三女學生，氣質溫柔；長髮、淺青色襯衫，米色長裙" \\
+        --character "Heroine One (林清雪)" \\
+        --description "19 歲女主角，氣質溫柔；長髮、淺色襯衫、米色長裙" \\
         --expression "smile" \\
-        --pose "正面，胸上半身，手裡輕輕拿著一本舊書" \\
+        --pose "正面，胸上半身，手裡拿著一本素描本" \\
         --style "soft anime visual novel art, slight watercolor wash" \\
-        --output ./games/tsinghua_strange_tales/assets/characters/qingyi_smile.png
+        --output ./games/demo_pack/assets/characters/heroine_1_smile.png
 
 Inputs can also come from a JSON spec via --spec (same merge rules as
 the diagram tool: spec defines defaults, flags append / override).

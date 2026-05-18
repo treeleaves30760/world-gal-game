@@ -174,7 +174,7 @@ def _name_variants(name: str) -> list[str]:
     out = {name}
     out.add(name.replace("_", "-"))
     out.add(name.replace("-", "_"))
-    # Title-cased variants: "tsing_hua_strange_tales" -> "Tsing-Hua-Strange-Tales"
+    # Title-cased variants: "my_demo_pack" -> "My-Demo-Pack"
     for sep_in in ("_", "-"):
         parts = [p.capitalize() for p in name.split(sep_in)]
         for sep_out in ("-", "_"):

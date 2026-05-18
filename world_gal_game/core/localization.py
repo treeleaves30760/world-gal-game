@@ -37,8 +37,9 @@ Example ``meta.yaml`` block::
         close: "Close"
         continue_hint: "Click / Space to continue"
 
-The point is: nothing in the engine is hard-coded to "清華異聞錄". The
-defaults are simply what *this* pack ships with.
+The point is: nothing in the engine is hard-coded to any specific
+game pack. The defaults below are sensible Chinese-language strings
+the engine falls back to when a pack does not override them.
 """
 from __future__ import annotations
 

@@ -2,8 +2,9 @@
 
 Centralizes all "look and feel" constants so every widget agrees on
 palette, padding, and radii. A pack can override any subset of these via
-``meta.yaml`` ``theme:`` block; the defaults below are what
-``清華異聞錄`` ships with.
+``meta.yaml`` ``theme:`` block; the defaults below are the engine's
+generic look — packs are expected to override colors and accents to
+match their own visual identity.
 """
 from __future__ import annotations
 

@@ -339,7 +339,7 @@ def _cli_main(argv: list[str] | None = None) -> int:
 
     Script format:
     {
-      "pack": "tsing_hua_strange_tales",
+      "pack": "demo_pack",
       "screen_size": [1280, 720],
       "actions": [
         {"do": "new_game"},

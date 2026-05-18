@@ -16,19 +16,19 @@ Example YAML::
     achievements:
       - id: ach_first_meeting
         title: "第一次見面"
-        description: "與校園中任何一位女主角第一次說上話。"
+        description: "與任一位女主角第一次說上話。"
         icon: assets/ui/ach_meet.png
         hidden: false
         requires:
-          - {kind: flag, target: met_qingyi}
+          - {kind: flag, target: met_heroine_1}
 
-      - id: ach_qingyi_lover
-        title: "舊書與晚風"
-        description: "與林青衣的故事，走到了結局。"
-        icon: assets/ui/ach_qingyi_lover.png
+      - id: ach_heroine_1_lover
+        title: "湖畔的承諾"
+        description: "與女主角的故事，走到了戀人結局。"
+        icon: assets/ui/ach_heroine_1_lover.png
         hidden: true
         requires:
-          - {kind: flag, target: ending_qingyi}
+          - {kind: flag, target: ending_heroine_1}
 """
 from __future__ import annotations
 

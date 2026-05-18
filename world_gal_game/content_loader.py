@@ -7,7 +7,7 @@ A game pack is a directory under games/<pack>/ containing:
         characters.yaml       # list of NPCs
         scenes/               # YAML scene files (one or many per file)
             00_prologue.yaml
-            10_qingyi_route.yaml
+            10_meet_heroine.yaml
             ...
     assets/
         backgrounds/
