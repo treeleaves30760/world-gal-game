@@ -25,20 +25,23 @@ characters:
 
 ## 完整欄位
 
+下面這份範例對應 demo_pack 的 `heroine_1`（林清雪）。`demo_pack` 目前只附一位
+heroine；如果你的 pack 要多女主角，再宣告 `heroine_2`、`heroine_3`… 即可。
+
 ```yaml
-- id: qingyi
-  name: "林青衣"
-  role: "中文系大三"
-  age: 21
+- id: heroine_1
+  name: "林清雪"
+  role: "鎮上書店打工生"
+  age: 19
   is_heroine: true                  # 主角候選之一；UI 在好感頁特別標
-  route_id: qingyi                  # 跟劇情標記 route 對應
+  route_id: heroine_1               # 跟劇情標記 route 對應
 
   # 立繪 — portrait 是預設；portrait_set 按表情切換。
-  portrait: assets/characters/qingyi_normal.png
+  portrait: assets/characters/heroine_1_normal.png
   portrait_set:
-    smile:   assets/characters/qingyi_smile.png
-    sad:     assets/characters/qingyi_sad.png
-    worried: assets/characters/qingyi_worried.png
+    smile: assets/characters/heroine_1_smile.png
+    shy:   assets/characters/heroine_1_shy.png
+    sad:   assets/characters/heroine_1_sad.png
 
   # 人物素材（給玩家在好感 / 事件記錄看；未來 LLM 重接時也會用）
   description: |
@@ -49,26 +52,26 @@ characters:
   backstory: |
     過去 — 玩家還不知道的事。
   secrets:
-    - "她其實是某段傳說的轉世。"
-  likes:    ["古典文學", "雨天的圖書館"]
-  dislikes: ["拍照"]
-  safe_topics: ["宋詞", "茉莉花茶"]
+    - "素描本最後一頁她留著沒畫。"
+  likes:    ["茉莉花茶", "素描本", "安靜的地方"]
+  dislikes: ["油膩食物", "太吵的場合"]
+  safe_topics: ["素描", "湖畔風景"]
 
   # 影響地點與場景觸發
-  affiliated_location: library
-  associated_ghost_story: "藏書姑娘"
+  affiliated_location: town_square
+  associated_ghost_story: "湖邊夜半的素描聲"
 
   # 好感度系統
   thresholds:
-    - {name: "朋友", value: 25, unlocks: ["qingyi_friend_mode"]}
-    - {name: "戀人", value: 100, unlocks: ["qingyi_ending_good"]}
+    - {name: "朋友", value: 25, unlocks: ["heroine_1_friend"]}
+    - {name: "戀人", value: 80, unlocks: ["heroine_1_lover"]}
 
   # v2 預留欄位：當 LLM 接回時生效，目前被忽略。
   llm_brain: true
   llm_model_hint: claude-haiku-4-5
 
   # 自由標籤；引擎不解釋，pack 可以拿來做篩選。
-  tags: ["heroine", "library"]
+  tags: ["heroine", "town"]
 
   # 把這個 NPC 變成商人（細節見 shops.md）
   shop:
@@ -89,7 +92,7 @@ characters:
 場景對白裡用 `expression:`：
 
 ```yaml
-- speaker: "林青衣"
+- speaker: "林清雪"
   text: "「啊…謝謝你。」"
   expression: smile        # 從 NPC.portrait_set["smile"] 抓
 ```
@@ -102,14 +105,14 @@ characters:
 `npcs:` block 宣告：
 
 ```yaml
-- id: library
+- id: town_square
   npcs:
-    - npc_id: qingyi
+    - npc_id: heroine_1
       times: [afternoon, evening]     # 沒寫 = 全天
       weekdays: [mon, tue, wed, thu, fri]
-      requires_flags: [met_qingyi]   # 條件式出現
-      forbids_flags: [qingyi_left_school]
-    - npc_id: librarian
+      requires_flags: [met_heroine_1] # 條件式出現
+      forbids_flags: [heroine_1_left_town]
+    - npc_id: shopkeeper_uncle
       times: [morning, noon, afternoon, evening]
 ```
 

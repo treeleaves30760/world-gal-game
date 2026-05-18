@@ -13,8 +13,8 @@ Condition 是「判斷一件事是否成立」的宣告。
 簡寫字串：
 
 ```yaml
-"flag:met_qingyi"                        # = {kind: flag, target: met_qingyi}
-"affection_gte:qingyi=50"                # = {kind: affection_gte, target: qingyi, value: 50}
+"flag:met_heroine_1"                     # = {kind: flag, target: met_heroine_1}
+"affection_gte:heroine_1=25"             # = {kind: affection_gte, target: heroine_1, value: 25}
 ```
 
 ---
@@ -24,7 +24,7 @@ Condition 是「判斷一件事是否成立」的宣告。
 ### `flag` — flag 為真
 
 ```yaml
-- {kind: flag, target: met_qingyi}
+- {kind: flag, target: met_heroine_1}
 ```
 
 `flag` 真假的定義：set 過、且當前值是 truthy（不是 `False` / `0` / 空字串）。
@@ -32,7 +32,7 @@ Condition 是「判斷一件事是否成立」的宣告。
 ### `not_flag` — flag 為假（或未設）
 
 ```yaml
-- {kind: not_flag, target: ending_qingyi}
+- {kind: not_flag, target: ending_lover}
 ```
 
 ### `flag_eq` — flag 等於某個值
@@ -51,8 +51,8 @@ Condition 是「判斷一件事是否成立」的宣告。
 ### `affection_gte` — 好感 >= value
 
 ```yaml
-- {kind: affection_gte, target: qingyi, value: 50}
-- {kind: affection_gte, target: qingyi, value: 30, stat: trust}
+- {kind: affection_gte, target: heroine_1, value: 25}
+- {kind: affection_gte, target: heroine_1, value: 80, stat: trust}
 ```
 
 `stat` 預設 `"affection"`。
@@ -60,7 +60,7 @@ Condition 是「判斷一件事是否成立」的宣告。
 ### `affection_lt` — 好感 < value
 
 ```yaml
-- {kind: affection_lt, target: qingyi, value: 0}     # 互相討厭時的劇情
+- {kind: affection_lt, target: heroine_1, value: 0}  # 互相討厭時的劇情
 ```
 
 ---
@@ -79,7 +79,7 @@ Condition 是「判斷一件事是否成立」的宣告。
 ### `visited` — 玩家曾經到過某地點
 
 ```yaml
-- {kind: visited, target: library_stacks}
+- {kind: visited, target: park}
 ```
 
 只要進去過一次就永遠成立。
@@ -87,7 +87,7 @@ Condition 是「判斷一件事是否成立」的宣告。
 ### `scene_played` — 場景曾經播過
 
 ```yaml
-- {kind: scene_played, target: meet_qingyi}
+- {kind: scene_played, target: meet_heroine}
 ```
 
 成為條件鎖的常見用法。
@@ -133,7 +133,7 @@ Condition 是「判斷一件事是否成立」的宣告。
 ### `resource_eq` — 資源 == value
 
 ```yaml
-- {kind: resource_eq, target: faith, value: 0}
+- {kind: resource_eq, target: energy, value: 0}
 ```
 
 ---
@@ -165,7 +165,7 @@ choices:
 ### `quest_active` — 任務進行中
 
 ```yaml
-- {kind: quest_active, target: find_ghost_book}
+- {kind: quest_active, target: find_sketchbook}
 ```
 
 quest 目前是 `active` 時成立。`inactive`、`completed`、`failed` 都是 false。
@@ -173,7 +173,7 @@ quest 目前是 `active` 時成立。`inactive`、`completed`、`failed` 都是 
 ### `quest_completed` — 任務已完成
 
 ```yaml
-- {kind: quest_completed, target: find_ghost_book}
+- {kind: quest_completed, target: find_sketchbook}
 ```
 
 quest 狀態為 `completed` 時成立。
@@ -181,7 +181,7 @@ quest 狀態為 `completed` 時成立。
 ### `objective_completed` — 某個目標已完成
 
 ```yaml
-- {kind: objective_completed, target: find_ghost_book, stat: visit_stacks}
+- {kind: objective_completed, target: find_sketchbook, stat: obj_square}
 ```
 
 `target` = quest id，`stat` = objective id。

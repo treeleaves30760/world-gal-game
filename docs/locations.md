@@ -28,7 +28,7 @@ locations:
         description: "黃昏後請勿獨自進入"
         one_way: true
         requires_time: [evening, night]
-        requires_flags: [met_qingyi]
+        requires_flags: [met_heroine_1]
     npcs:
       - npc_id: librarian
         times: [morning, noon, afternoon]

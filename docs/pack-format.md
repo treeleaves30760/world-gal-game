@@ -125,7 +125,7 @@ resources:
 ```
 
 `<name>` 會自動嘗試 snake_case、kebab-case、Title-Case 變體。
-所以 `--pack tsing_hua_strange_tales` 也會找到 `Tsing-Hua-Strange-Tales/`。
+所以 `--pack my_game_pack` 也會找到 `My-Game-Pack/`。
 
 ## 讓 pack 變成 pip-installable
 
@@ -195,4 +195,4 @@ uv pip install my-game
 my-game             # console script 直接啟動，引擎自動載這個 pack
 ```
 
-範例見 sibling 的 `Tsinghua-Strange-Tales/`。
+範例見 repo 內建的 `games/demo_pack/`，或任何放在 sibling 目錄的外部 pack。

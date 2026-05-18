@@ -87,7 +87,7 @@ effects:
 ```yaml
 # 從場景 effect:
 effects:
-  - {kind: gift, target: qingyi, stat: jasmine_tea}    # stat 欄位放 item_id
+  - {kind: gift, target: heroine_1, stat: jasmine_tea}    # stat 欄位放 item_id
 ```
 
 - `target` = 收禮的 NPC id

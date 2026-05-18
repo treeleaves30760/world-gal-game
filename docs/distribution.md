@@ -47,12 +47,12 @@ python build.py /path/to/my-pack
 ```
 
 The engine derives the app name from the `title` field in your pack's
-`content/meta.yaml`.  A pack with `title: "清華異聞錄"` produces an app
+`content/meta.yaml`.  A pack with `title: "小鎮的午後"` produces an app
 name of `_` (ASCII-safe characters are kept; non-ASCII are replaced by
 `_`).  Override it explicitly with `--name`:
 
 ```bash
-wgg build /path/to/my-pack --name TsinghuaStrangeTales
+wgg build /path/to/my-pack --name SmallTownAfternoon
 ```
 
 ---

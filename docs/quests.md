@@ -14,7 +14,7 @@ quests:
   - id: find_ghost_book
     title: "尋找會消失的書"
     description: "圖書館特藏書庫深處傳來歌聲。也許那本書能解釋一切。"
-    giver: qingyi
+    giver: heroine_1
     objectives:
       - {id: visit_stacks, text: "進入特藏書庫"}
       - {id: find_book,    text: "找到那本古書"}

@@ -10,32 +10,31 @@
 
 ```yaml
 effects:
-  - {kind: affection, target: qingyi, value: 5}              # 預設 stat
-  - {kind: affection, target: qingyi, value: 5, stat: trust} # 多軸
-  - {kind: stat, target: qingyi, value: 8, stat: fear}       # alias，跟上面一樣
+  - {kind: affection, target: heroine_1, value: 5}              # 預設 stat
+  - {kind: affection, target: heroine_1, value: 5, stat: trust} # 多軸
+  - {kind: stat, target: heroine_1, value: 8, stat: fear}       # alias，跟上面一樣
 ```
 
 ## 條件
 
 ```yaml
 requires:
-  - {kind: affection_gte, target: qingyi, value: 50}            # 預設 stat
-  - {kind: affection_gte, target: qingyi, value: 30, stat: trust}
-  - {kind: affection_lt,  target: qingyi, value: 80}
+  - {kind: affection_gte, target: heroine_1, value: 50}            # 預設 stat
+  - {kind: affection_gte, target: heroine_1, value: 30, stat: trust}
+  - {kind: affection_lt,  target: heroine_1, value: 80}
 ```
 
 condition 預設用 `affection` stat — 寫 `stat: trust` 才會看 trust。
 
 ## 門檻 + 解鎖
 
-在 `characters.yaml` 為 NPC 宣告門檻：
+在 `characters.yaml` 為 NPC 宣告門檻（這是 demo_pack 的 `heroine_1` 實際設定）：
 
 ```yaml
-- id: qingyi
+- id: heroine_1
   thresholds:
-    - {name: "朋友",     value: 25,  unlocks: ["qingyi_friend_mode"]}
-    - {name: "心動",     value: 80,  unlocks: ["qingyi_route_climax"]}
-    - {name: "戀人",     value: 100, unlocks: ["qingyi_ending_good"]}
+    - {name: "朋友", value: 25, unlocks: ["heroine_1_friend"]}
+    - {name: "戀人", value: 80, unlocks: ["heroine_1_lover"]}
 ```
 
 當好感度第一次達到 `value` 時，`unlocks` 的字串會被加進該角色的
@@ -43,8 +42,8 @@ condition 預設用 `affection` stat — 寫 `stat: trust` 才會看 trust。
 其實 unlocks 不是 flag、不能直接被 condition 查 — 推薦同時 set_flag）：
 
 ```yaml
-- {kind: affection, target: qingyi, value: 30}
-- {kind: set_flag, target: qingyi_friend}     # 顯式 flag 對齊
+- {kind: affection, target: heroine_1, value: 30}
+- {kind: set_flag, target: heroine_1_friend}     # 顯式 flag 對齊
 ```
 
 未來可能加 `unlock` condition kind；目前用 flag 是穩當的做法。
@@ -79,6 +78,6 @@ locale:
 寫腳本測劇情時：
 
 ```json
-{"op": "adjust_affection", "npc": "qingyi", "delta": 55}
-{"op": "adjust_affection", "npc": "qingyi", "delta": 5, "stat": "trust"}
+{"op": "adjust_affection", "npc": "heroine_1", "delta": 55}
+{"op": "adjust_affection", "npc": "heroine_1", "delta": 5, "stat": "trust"}
 ```

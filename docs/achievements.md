@@ -10,35 +10,33 @@
 ```yaml
 achievements:
   - id: ach_first_step
-    title: "新生入學"
-    description: "踏出宿舍房間，正式開始校園生活。"
+    title: "踏出房門"
+    description: "終於離開出租房間，開始小鎮的生活。"
     icon: assets/ui/ach_first_step.png    # 選填，沒寫就用文字 chip
     requires:
-      - {kind: flag, target: orientation_done}
+      - {kind: flag, target: prologue_done}
 
-  - id: ach_meet_three
-    title: "三條岔路"
-    description: "與三位女主角都見過面。"
+  - id: ach_heroine_1_friend
+    title: "已是朋友"
+    description: "與林清雪的好感達到朋友門檻。"
     requires:
-      - {kind: flag, target: met_qingyi}
-      - {kind: flag, target: met_yuening}
-      - {kind: flag, target: met_xiangxiang}
+      - {kind: flag, target: heroine_1_friend}
 
-  - id: ach_qingyi_lover
-    title: "舊書與晚風"
-    description: "與林青衣的故事走到了真正的結局。"
+  - id: ach_heroine_1_lover
+    title: "湖畔的承諾"
+    description: "與林清雪的故事，走到了戀人結局。"
     hidden: true                          # 解鎖前在成就頁顯示「？？？」
     requires:
-      - {kind: flag, target: ending_qingyi}
+      - {kind: flag, target: ending_lover}
 
   # 排除型：要滿足 requires 同時不滿足 forbids
-  - id: ach_pacifist
-    title: "和平主義"
-    description: "整個故事沒打過任何一架。"
+  - id: ach_pacifist_walk
+    title: "獨自走完"
+    description: "沒和女主角結為戀人就走完了主線。"
     requires:
-      - {kind: scene_played, target: ending_any}
+      - {kind: flag, target: ending_alone}
     forbids:
-      - {kind: flag, target: started_fight}
+      - {kind: flag, target: ending_lover}
 ```
 
 完整欄位：
@@ -76,7 +74,7 @@ requires:
 ## 從 headless 觸發
 
 ```json
-{"op": "set_flag", "key": "ending_qingyi", "value": true}
+{"op": "set_flag", "key": "ending_lover", "value": true}
 {"op": "inspect"}
 ```
 

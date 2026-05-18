@@ -10,22 +10,22 @@
 ## 印當前狀態
 
 ```bash
-uv run world-gal-game --pack my_game --headless --inspect
+uv run world-gal-game --pack demo_pack --headless --inspect
 ```
 
 輸出一大坨 JSON，包含：
 
 ```json
 {
-  "pack": "my_game",
+  "pack": "demo_pack",
   "title": "...",
   "player": {"name": "玩家", "pronouns": "他"},
   "time": {"day": 1, "weekday": "mon", "time_of_day": "morning", ...},
   "location": "starting_room",
-  "exits": ["town"],
+  "exits": ["town_square"],
   "all_locations": [...],
   "npcs_present": [...],
-  "all_characters": [{"id": "qingyi", "name": "林青衣", "affection": 0, ...}],
+  "all_characters": [{"id": "heroine_1", "name": "林清雪", "affection": 0, ...}],
   "scenes_available": [...],
   "scenes_played": [...],
   "current_scene": null,
@@ -39,23 +39,24 @@ uv run world-gal-game --pack my_game --headless --inspect
 
 ## 跑一串動作
 
-寫一個 JSON 腳本：
+寫一個 JSON 腳本（demo_pack 已經內建 `games/demo_pack/scripts/test_lover_route.json`）：
 
 ```json
 {
   "commands": [
     {"op": "start_scene", "scene": "prologue"},
-    {"op": "next", "count": 15},
-    {"op": "move", "location": "library"},
-    {"op": "start_scene", "scene": "meet_qingyi"},
-    {"op": "next", "count": 10},
-    {"op": "choose", "choice": "ask_name"},
     {"op": "next", "count": 8},
-    {"op": "adjust_affection", "npc": "qingyi", "delta": 55},
-    {"op": "move", "location": "library_stacks"},
-    {"op": "start_scene", "scene": "qingyi_route_stacks"},
-    {"op": "next", "count": 20},
-    {"op": "choose", "choice": "protect"},
+    {"op": "move", "location": "town_square"},
+    {"op": "start_scene", "scene": "meet_heroine"},
+    {"op": "next", "count": 8},
+    {"op": "choose", "choice": "accept_quest"},
+    {"op": "adjust_affection", "npc": "heroine_1", "delta": 75},
+    {"op": "move", "location": "park"},
+    {"op": "start_scene", "scene": "find_sketchbook_park"},
+    {"op": "next", "count": 10},
+    {"op": "choose", "choice": "chat_more"},
+    {"op": "next", "count": 15},
+    {"op": "choose", "choice": "confess"},
     {"op": "inspect"}
   ]
 }
@@ -64,8 +65,12 @@ uv run world-gal-game --pack my_game --headless --inspect
 跑：
 
 ```bash
-uv run world-gal-game --pack my_game --headless --script my_route.json
+uv run world-gal-game --pack demo_pack --headless \
+    --script games/demo_pack/scripts/test_lover_route.json
 ```
+
+`games/demo_pack/scripts/` 底下還有 `test_friend_route.json`、`test_alone_route.json`
+分別示範朋友 / 孤獨結局。
 
 預設輸出包含每個 op 的結果 + 最後一個 `inspect` 的完整 snapshot。
 用 `--no-inspect-after` 關掉最後那個 dump。
@@ -95,32 +100,33 @@ uv run world-gal-game --pack my_game --headless --script my_route.json
 ## 寫成 pytest
 
 ```python
-# tests/test_qingyi_route.py
+# tests/test_lover_route.py
 from world_gal_game.config import EngineConfig
 from world_gal_game.headless import HeadlessSession
 
 
-def test_qingyi_full_route():
-    sess = HeadlessSession.open(EngineConfig(), pack="my_game")
+def test_lover_full_route():
+    sess = HeadlessSession.open(EngineConfig(), pack="demo_pack")
     sess.start_scene("prologue")
-    sess.next_line(20)
-    sess.move_to("library")
-    sess.start_scene("meet_qingyi")
-    sess.next_line(10)
-    sess.choose("ask_name")
     sess.next_line(8)
-    sess.adjust_affection("qingyi", 55)
-    sess.move_to("library_stacks")
-    sess.start_scene("qingyi_route_stacks")
+    sess.move_to("town_square")
+    sess.start_scene("meet_heroine")
+    sess.next_line(8)
+    sess.choose("accept_quest")
+    sess.adjust_affection("heroine_1", 75)
+    sess.move_to("park")
+    sess.start_scene("find_sketchbook_park")
     sess.next_line(20)
-    sess.choose("protect")
-    sess.next_line(20)
+    sess.choose("chat_more")
+    sess.next_line(15)
+    sess.choose("confess")
+    sess.next_line(10)
     snap = sess.inspect()
 
     flags = snap["flags"]
-    assert flags.get("ending_qingyi")
-    qingyi = next(c for c in snap["all_characters"] if c["id"] == "qingyi")
-    assert qingyi["affection"] >= 80
+    assert flags.get("ending_lover")
+    heroine = next(c for c in snap["all_characters"] if c["id"] == "heroine_1")
+    assert heroine["affection"] >= 80
 ```
 
 跑：
@@ -142,11 +148,11 @@ uv run pytest tests/
 不開實際視窗」的折衷模式 — 對 AI agent 驗證 UI 渲染特別好用：
 
 ```bash
-uv run world-gal-game --pack my_game \
-    --screenshot screenshots/dorm.png \
+uv run world-gal-game --pack demo_pack \
+    --screenshot screenshots/starting_room.png \
     --autoplay 1.0 \
     --dev-start explore \
-    --dev-location player_dorm
+    --dev-location starting_room
 ```
 
 `--dev-start` 可選值：

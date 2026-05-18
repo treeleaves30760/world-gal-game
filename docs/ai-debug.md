@@ -15,13 +15,13 @@
 ```bash
 cat > /tmp/repro.json <<'EOF'
 {
-  "pack": "tsing_hua_strange_tales",
+  "pack": "demo_pack",
   "actions": [
     {"do": "new_game"},
     {"do": "skip_dialogue", "max_frames": 800},
     {"do": "snapshot", "path": "before.json"},
     {"do": "screenshot", "path": "before.png"},
-    {"do": "click_label", "label": "校門口", "after": 20},
+    {"do": "click_label", "label": "town_square", "after": 20},
     {"do": "snapshot", "path": "after.json"},
     {"do": "screenshot", "path": "after.png"}
   ]
@@ -81,18 +81,18 @@ d.quit()
 
 ```json
 {
-  "pack": "tsing_hua_strange_tales",
+  "pack": "demo_pack",
   "scene_top": "ExplorationScene",
   "scene_stack": [{"scene": "TitleScene"}, {"scene": "ExplorationScene"}],
-  "location": "player_dorm",
-  "location_name": "自宅 · 學齋宿舍",
-  "time": "第 1 天 · 週一 · 早晨",
+  "location": "starting_room",
+  "location_name": "起始房間",
+  "time": "第 1 天 · 早晨",
   "time_of_day": "morning",
   "player_name": "玩家",
   "flags": {"intro_done": true, ...},
-  "affection": {"qingyi": 0, "yuening": 0, ...},
+  "affection": {"heroine_1": 0, ...},
   "resources": {"money": 500, "energy": 100},
-  "inventory": {"jasmine_tea": 1},
+  "inventory": {"pocket_notebook": 1},
   "achievements_unlocked": [],
   "quests_active": [],
   "quests_completed": [],
@@ -101,7 +101,7 @@ d.quit()
   "widgets": [
     {
       "path": "_exit_buttons[0][0]",
-      "label": "→ 校門口",
+      "label": "→ 小鎮中心廣場",
       "enabled": true,
       "visible": true,
       "has_on_click": true,

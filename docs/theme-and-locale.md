@@ -132,7 +132,7 @@ locale:
 目前有 20+ 個。如果你發現某個 UI 字串還是寫死中文沒辦法蓋，請開 issue —
 那是 bug，不是 feature。
 
-## 範例：把清華異聞錄翻成英文
+## 範例：把 demo_pack 翻成英文
 
 ```yaml
 # meta.yaml
@@ -165,5 +165,5 @@ locale:
 ```
 
 劇情本身（場景 YAML 內的對白）目前沒有 i18n 機制 — 多語版本要分 pack
-（例如 `Tsinghua-Strange-Tales` + `Tsinghua-Strange-Tales-EN`）。
+（例如 `demo_pack` + `demo_pack_en`）。
 未來可能加 `lang:` field 讓同一個 pack 帶多語對白。

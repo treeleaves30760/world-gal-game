@@ -64,7 +64,7 @@ usage: world-gal-game [-h] --pack PACK [--headless] [--script SCRIPT] ...
 引擎倉附帶一個內建 showcase，用來確認音效、立繪、場景都能正常渲染：
 
 ```bash
-uv run python main.py --pack tsing_hua_strange_tales
+uv run python main.py --pack demo_pack
 ```
 
 看到標題畫面、能進入遊戲就代表環境沒問題，可以繼續。
