@@ -17,7 +17,14 @@ wheels/
 # user / runtime artefacts (ad-hoc test screenshots & saves)
 screenshots/
 saves/
+qa_shots/
+tmp/
 *.save.json
+QA_REPORT*.md
+
+# pytest / build caches
+.pytest_cache/
+*.bak
 
 # PyInstaller build artefacts
 *.spec.bak
