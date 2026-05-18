@@ -30,30 +30,30 @@ from world_gal_game.core.portrait_spec import PortraitSpec
 
 
 def test_candidate_paths_order():
-    spec = PortraitSpec(character="qingyi", expression="smile", pose="stand", outfit="uniform")
+    spec = PortraitSpec(character="heroine_1", expression="smile", pose="stand", outfit="uniform")
     paths = spec.candidate_paths()
     assert len(paths) == 4
     # Most specific first.
-    assert paths[0] == "assets/characters/qingyi/smile_stand_uniform.png"
-    assert paths[1] == "assets/characters/qingyi/smile_stand.png"
-    assert paths[2] == "assets/characters/qingyi/smile.png"
-    assert paths[3] == "assets/characters/qingyi/qingyi.png"
+    assert paths[0] == "assets/characters/heroine_1/smile_stand_uniform.png"
+    assert paths[1] == "assets/characters/heroine_1/smile_stand.png"
+    assert paths[2] == "assets/characters/heroine_1/smile.png"
+    assert paths[3] == "assets/characters/heroine_1/heroine_1.png"
 
 
 def test_candidate_paths_defaults():
-    spec = PortraitSpec(character="yuening")
+    spec = PortraitSpec(character="heroine_2")
     paths = spec.candidate_paths()
-    assert paths[0] == "assets/characters/yuening/default_stand_default.png"
-    assert paths[-1] == "assets/characters/yuening/yuening.png"
+    assert paths[0] == "assets/characters/heroine_2/default_stand_default.png"
+    assert paths[-1] == "assets/characters/heroine_2/heroine_2.png"
 
 
 def test_slot_default():
-    spec = PortraitSpec(character="yuening")
+    spec = PortraitSpec(character="heroine_2")
     assert spec.slot == "center"
 
 
 def test_slot_explicit():
-    spec = PortraitSpec(character="qingyi", slot="left")
+    spec = PortraitSpec(character="heroine_1", slot="left")
     assert spec.slot == "left"
 
 
@@ -76,30 +76,30 @@ def test_loader_old_string_portrait(tmp_path):
     p = _write_yaml(tmp_path, """
         id: s1
         lines:
-          - speaker: qingyi
+          - speaker: heroine_1
             text: Hello
-            portrait: assets/characters/qingyi_smile.png
+            portrait: assets/characters/heroine_1_smile.png
     """)
     scenes = load_scenes_from_yaml(p)
     line = scenes[0].lines[0]
     assert isinstance(line.portrait, str)
-    assert line.portrait == "assets/characters/qingyi_smile.png"
+    assert line.portrait == "assets/characters/heroine_1_smile.png"
 
 
 def test_loader_spec_dict_portrait(tmp_path):
     p = _write_yaml(tmp_path, """
         id: s2
         lines:
-          - speaker: qingyi
+          - speaker: heroine_1
             text: Hi
             portrait:
-              character: qingyi
+              character: heroine_1
               expression: smile
     """)
     scenes = load_scenes_from_yaml(p)
     line = scenes[0].lines[0]
     assert isinstance(line.portrait, PortraitSpec)
-    assert line.portrait.character == "qingyi"
+    assert line.portrait.character == "heroine_1"
     assert line.portrait.expression == "smile"
 
 
@@ -109,19 +109,19 @@ def test_loader_multi_portrait(tmp_path):
         lines:
           - text: Scene
             portraits:
-              - character: qingyi
+              - character: heroine_1
                 expression: smile
                 slot: left
-              - character: yuening
+              - character: heroine_2
                 expression: neutral
                 slot: right
     """)
     scenes = load_scenes_from_yaml(p)
     line = scenes[0].lines[0]
     assert len(line.portraits) == 2
-    assert line.portraits[0].character == "qingyi"
+    assert line.portraits[0].character == "heroine_1"
     assert line.portraits[0].slot == "left"
-    assert line.portraits[1].character == "yuening"
+    assert line.portraits[1].character == "heroine_2"
     assert line.portraits[1].slot == "right"
 
 

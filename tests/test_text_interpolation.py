@@ -85,22 +85,22 @@ def test_resource_token():
 
 def test_affection_numeric():
     s = GameState()
-    s.affection.adjust("qingyi", 42)
-    result = interpolate("{affection.qingyi}", s)
+    s.affection.adjust("heroine_1", 42)
+    result = interpolate("{affection.heroine_1}", s)
     assert result == "42"
 
 
 def test_affection_label():
     s = GameState()
     # default label for 0 affection is "陌生"
-    result = interpolate("{affection.qingyi.label}", s)
+    result = interpolate("{affection.heroine_1.label}", s)
     assert result == "陌生"
 
 
 def test_affection_label_high():
     s = GameState()
-    s.affection.adjust("qingyi", 90)
-    result = interpolate("{affection.qingyi.label}", s)
+    s.affection.adjust("heroine_1", 90)
+    result = interpolate("{affection.heroine_1.label}", s)
     # >= 80 = "心動"
     assert result == "心動"
 
@@ -120,8 +120,8 @@ def test_no_tokens_passthrough():
 def test_speaker_field_interpolated_via_engine():
     """Regression: when line.speaker contains {player_name}, the dialogue
     engine must render the resolved player name in the speaker label,
-    not the raw token. Reported visible as '{player_name}' on the
-    Tsing-Hua prologue."""
+    not the raw token. Reported as '{player_name}' showing up
+    verbatim on a prologue scene speaker line."""
     from world_gal_game.core.story_graph import Scene, Line, StoryGraph
     from world_gal_game.dialogue.dialogue_engine import DialogueEngine
 
