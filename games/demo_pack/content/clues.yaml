@@ -1,0 +1,32 @@
+# demo_pack — minimal clue journal example.
+# Real packs will want many more entries; this is intentionally tiny.
+
+clues:
+
+  - id: cl_demo_intro
+    title: "從廣場開始"
+    category: "主線"
+    priority: 100
+    text: |
+      序章結束了。
+      房間外面就是廣場 ── 走出去看看會遇到誰。
+    requires:
+      - kind: flag
+        target: prologue_done
+    forbids:
+      - kind: flag
+        target: met_heroine_1
+
+  - id: cl_demo_quest
+    title: "尋找素描本"
+    category: "支線"
+    priority: 80
+    text: |
+      你接下了林清雪委託的「尋找素描本」任務。
+      廣場、湖畔公園、雜貨鋪小巷三個地方都值得查。
+    requires:
+      - kind: flag
+        target: quest_started
+    forbids:
+      - kind: quest_completed
+        target: find_sketchbook

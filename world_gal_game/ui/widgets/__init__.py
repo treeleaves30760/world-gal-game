@@ -14,6 +14,7 @@ from .scrollable import ScrollArea
 from .toast import Toast, ToastStack
 from .debug_overlay import DebugOverlay
 from .quest_log import QuestLog
+from .clue_log import ClueLog
 
 __all__ = [
     "Widget", "Rect",
@@ -23,4 +24,5 @@ __all__ = [
     "Toast", "ToastStack",
     "DebugOverlay",
     "QuestLog",
+    "ClueLog",
 ]

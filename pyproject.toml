@@ -25,6 +25,10 @@ dependencies = [
     "pygame-ce>=2.5",
     "pydantic>=2.5",
     "pyyaml>=6.0",
+    # ruamel.yaml drives comment-preserving YAML round-trips inside
+    # PackEditor — needed so AI-driven edits don't wipe pack authors'
+    # comments. PyYAML stays for hot-path read-only loading.
+    "ruamel.yaml>=0.18",
 ]
 
 [project.optional-dependencies]

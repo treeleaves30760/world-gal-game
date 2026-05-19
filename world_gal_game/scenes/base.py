@@ -118,24 +118,38 @@ class SceneManager:
 
     # ---- per-frame work ----
     def commit_pending(self) -> None:
+        # Lazy import to avoid pulling in the plugins package at module
+        # import time (scenes.base sits below plugins in the dep graph).
+        from ..plugins import fire_event
+        from ..plugins.context import HookEvent
+
         for op, scene, kwargs in self._pending:
             if op == "replace":
-                if self._stack:
-                    self._stack[-1].exit()
+                old = self._stack[-1] if self._stack else None
+                if old is not None:
+                    old.exit()
                     self._stack.pop()
                 if scene is not None:
                     self._stack.append(scene)
                     scene.enter(**kwargs)
+                    fire_event(self._state_of(scene),
+                               HookEvent.SCENE_REPLACE, old=old, new=scene)
             elif op == "push":
                 if self._stack:
                     self._stack[-1].pause()
                 if scene is not None:
                     self._stack.append(scene)
                     scene.enter(**kwargs)
+                    fire_event(self._state_of(scene),
+                               HookEvent.SCENE_PUSH, scene=scene,
+                               kwargs=kwargs)
             elif op == "pop":
                 if self._stack:
-                    self._stack[-1].exit()
+                    popped = self._stack[-1]
+                    popped.exit()
                     self._stack.pop()
+                    fire_event(self._state_of(popped),
+                               HookEvent.SCENE_POP, scene=popped)
                 if self._stack:
                     self._stack[-1].resume()
             elif op == "clear_to":
@@ -145,7 +159,17 @@ class SceneManager:
                 if scene is not None:
                     self._stack.append(scene)
                     scene.enter(**kwargs)
+                    fire_event(self._state_of(scene),
+                               HookEvent.SCENE_REPLACE, old=None, new=scene)
         self._pending.clear()
+
+    @staticmethod
+    def _state_of(scene: Scene | None):
+        """Best-effort look-up of the GameState reachable from a Scene."""
+        if scene is None:
+            return None
+        ctx = getattr(scene, "ctx", None)
+        return getattr(ctx, "state", None) if ctx is not None else None
 
     def update(self, dt: float, inp) -> None:
         self.commit_pending()

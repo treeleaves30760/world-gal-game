@@ -1,5 +1,12 @@
 # Tutorial：從零到可玩 Demo——咖啡館的午後
 
+> **學習路徑**：軌道 1 · 第一次來  
+> **前置條件**：讀完 [getting-started.md](getting-started.md)（裝好引擎）  
+> **下一步**：[pack-format.md](pack-format.md)（看完整 schema）或進軌道 2 各子系統  
+> **完整索引**：[docs/README.md](README.md)
+
+---
+
 **目標讀者**：對 Python 與 YAML 都還算熟、第一次用 World Gal-Game 引擎、想做自己的 Gal-Game。
 
 **你會做出什麼**：一款名為「咖啡館的午後」(pack id: `cafe_afternoon`) 的小 demo——玩家是咖啡館的常客，在三個時段（morning / afternoon / evening）內與兩位女主角互動，獲得不同結局。規模故意設得小：5 個場景、2 個 NPC、2 個地點、3 種物品、3 個成就。讀完這份 tutorial 你就知道把這套邏輯放大成完整遊戲所需的所有手段。

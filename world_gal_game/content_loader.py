@@ -28,6 +28,7 @@ import yaml
 
 from .core.achievements import Achievement
 from .core.affection import AffectionThreshold
+from .core.clue import Clue
 from .core.game_state import GameState, PlayerInfo
 from .core.inventory import Item
 from .core.map_system import MapSystem, Location, NPCPresence, SceneHook, Exit, Region
@@ -178,20 +179,83 @@ def load_quests(content_root: Path, state: GameState) -> None:
         state.quests.register(quest)
 
 
+def load_clues(content_root: Path, state: GameState) -> None:
+    """Read ``content/clues.yaml`` (if present) and register every clue.
+
+    The journal/clue system is purely game-pack-driven content; the
+    engine ships no defaults. Each entry's ``requires`` / ``forbids``
+    fields go through the standard condition loader so all condition
+    kinds (flag, scene_played, has_item, ...) are usable.
+    """
+    data = _read_yaml(content_root / "clues.yaml") or []
+    if isinstance(data, dict) and "clues" in data:
+        data = data["clues"]
+    for raw in data:
+        raw = dict(raw)
+        raw["requires"] = _to_conditions(raw.get("requires"))
+        raw["forbids"] = _to_conditions(raw.get("forbids"))
+        clue = Clue(**raw)
+        state.clues.register(clue)
+
+
 def load_game_meta(content_root: Path) -> dict[str, Any]:
     meta = _read_yaml(content_root / "meta.yaml") or {}
     return meta
 
 
 def load_pack(content_root: Path) -> tuple[GameState, NPCRegistry, dict]:
+    """Build a :class:`GameState` from a pack on disk.
+
+    The pack root is the parent of ``content_root`` (handles both
+    ``games/<pack>/`` and ``games/<pack>/content/`` shapes). Plugins
+    live under ``<pack_root>/plugins/<plugin_id>/`` — they're
+    discovered + activated *first*, so any effects / conditions /
+    inspect fields they register are in place before the YAML loader
+    references them.
+    """
+    from .plugins import PluginContext, PluginManager
+    from .plugins.context import HookEvent
+    from . import __version__ as engine_version
+
+    # The content_root may be a content/ subdir or the pack root itself.
+    # Plugins always live at <pack_root>/plugins/.
+    pack_root = content_root.parent if content_root.name == "content" else content_root
+
     state = GameState()
     registry = NPCRegistry()
+
+    # ------------------------------------------------------------------
+    # Stage 1: plugin discovery + activation
+    #
+    # Done before YAML loading so that effect/condition kinds registered
+    # by pack-local plugins exist when scenes/achievements/items reference
+    # them. The PluginContext starts with no state attached; we'll patch
+    # it in once GameState is built (between stage 2 and stage 3).
+    pre_meta = load_game_meta(content_root)
+    pre_ctx = PluginContext(
+        state=None, meta=pre_meta, pack_root=pack_root,
+    )
+    plugin_manager = PluginManager(
+        pack_root=pack_root, engine_version=engine_version,
+    )
+    plugin_manager.discover()
+    plugin_manager.activate(context=pre_ctx)
+    plugin_manager.print_summary()
+    # Fire pack.before_load so plugins can fix up meta / patch state if
+    # they want to.
+    plugin_manager.fire_hook(
+        HookEvent.PACK_BEFORE_LOAD, pre_ctx, pack_root=pack_root,
+    )
+
+    # ------------------------------------------------------------------
+    # Stage 2: load YAML content into the GameState
     load_characters(content_root, registry, state)
     load_locations(content_root, state)
     load_items(content_root, state)
     load_scenes(content_root, state)
     load_achievements(content_root, state)
     load_quests(content_root, state)
+    load_clues(content_root, state)
     meta = load_game_meta(content_root)
     load_resources(content_root, state, meta)
     if "player" in meta:
@@ -213,4 +277,27 @@ def load_pack(content_root: Path) -> tuple[GameState, NPCRegistry, dict]:
     # GameState and otherwise wouldn't know about NPCs). We stash it in
     # meta with a private key so it doesn't get serialized to a save.
     state.meta["__npc_registry__"] = registry
+    # Park the plugin manager on state.meta with a double-underscore
+    # private key so SaveManager filters it out on serialise.
+    state.meta["__plugin_manager__"] = plugin_manager
+
+    # ------------------------------------------------------------------
+    # Stage 3: plugin post-load hooks + clue sweep
+    full_ctx = PluginContext(
+        state=state, meta=meta, pack_root=pack_root, manager=plugin_manager,
+    )
+    plugin_manager.set_context(full_ctx)
+    plugin_manager.fire_hook(
+        HookEvent.PACK_AFTER_LOAD, full_ctx, pack_root=pack_root, meta=meta,
+    )
+
+    # Sweep clues once at startup so any whose requires are already
+    # satisfied by the starting state (e.g. clues gated by visited or
+    # already-set flags from a loaded save) enter the journal. Discard
+    # the unread badge for these — the player didn't "earn" them mid-play.
+    newly = state.clues.refresh(state)
+    for c in newly:
+        state.clues.mark_read(c.id)
+
+    plugin_manager.fire_hook(HookEvent.GAME_STATE_READY, full_ctx)
     return state, registry, meta

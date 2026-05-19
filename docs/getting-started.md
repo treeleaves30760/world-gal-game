@@ -1,5 +1,12 @@
 # Getting Started
 
+> **學習路徑**：軌道 1 · 第一次來  
+> **前置條件**：Python 3.10+、`uv` 或 `pip`  
+> **下一步**：[tutorial-build-a-game.md](tutorial-build-a-game.md)  
+> **完整索引**：[docs/README.md](README.md)
+
+---
+
 本章教你從零安裝 World Gal-Game 引擎、產生第一個遊戲 pack、跑起來。
 全程不需要寫任何 Python — 引擎能載入純 YAML 內容。
 

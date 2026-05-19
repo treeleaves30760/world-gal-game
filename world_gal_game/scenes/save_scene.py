@@ -156,9 +156,16 @@ class SaveScene(Scene):
             # into GameState. Without it, default model_dump() leaves sets
             # as Python sets and json.dump(default=str) writes them as repr
             # strings that pydantic refuses to validate.
+            payload = self.ctx.state.model_dump(mode="json")
+            # Lifecycle hook so plugins can patch / persist auxiliary data
+            # before the JSON write. They mutate `payload` directly.
+            from ..plugins import fire_event
+            from ..plugins.context import HookEvent
+            fire_event(self.ctx.state, HookEvent.SAVE_BEFORE_SERIALIZE,
+                       slot=slot, payload=payload)
             self.sm.save(
                 slot,
-                self.ctx.state.model_dump(mode="json"),
+                payload,
                 label=label,
                 summary=summary,
                 thumbnail=thumbnail,
@@ -181,7 +188,18 @@ class SaveScene(Scene):
             except Exception as exc:
                 self._error_msg = f"存檔格式錯誤：{exc}"
                 return
+            # Preserve transient bridges (__plugin_manager__, __npc_registry__)
+            # before the state swap — they were filtered out at save time.
+            preserved = {
+                k: v for k, v in self.ctx.state.meta.items()
+                if k.startswith("__")
+            }
             self.ctx.state.__dict__.update(new_state.__dict__)
+            self.ctx.state.meta.update(preserved)
+            from ..plugins import fire_event
+            from ..plugins.context import HookEvent
+            fire_event(self.ctx.state, HookEvent.SAVE_AFTER_LOAD,
+                       slot=slot, payload=data)
             if self.on_close:
                 self.on_close()
                 return

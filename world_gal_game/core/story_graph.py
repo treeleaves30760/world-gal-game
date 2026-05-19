@@ -9,73 +9,66 @@ content authors can write scenes without touching Python.
 """
 from __future__ import annotations
 
-from typing import Any, Literal
-from pydantic import BaseModel, ConfigDict, Field
+from typing import Any
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from .portrait_spec import PortraitSpec
 
 
 class Effect(BaseModel):
-    """A single state change produced by a line or choice."""
+    """A single state change produced by a line or choice.
+
+    ``kind`` is open-ended ``str`` rather than a ``Literal[...]`` enum:
+    plugins extend the set of valid kinds at load time by registering
+    handlers into :data:`world_gal_game.plugins.EFFECT_REGISTRY`. The
+    model accepts any non-empty string; the engine reports unknown kinds
+    as an ``error`` dict from :meth:`GameState.apply` rather than failing
+    pydantic validation, so YAML-driven content can ship side-by-side
+    with plugin-provided kinds.
+
+    The engine's :mod:`world_gal_game.validator` cross-checks pack YAML
+    against the registry at load time and surfaces "did you mean"
+    suggestions for typos.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
-    kind: Literal[
-        "affection",         # change a character's affection
-        "stat",              # change a character's arbitrary stat
-        "set_flag",          # set a flag
-        "increment_flag",    # add to a numeric flag
-        "advance_time",      # advance time-of-day
-        "move_to",           # move player to a location
-        "unlock_location",   # set the requires_flags satisfaction
-        "play_scene",        # transition to another scene
-        "end_scene",         # end the current scene
-        "log_event",         # add an arbitrary event log entry
-        "give_item",         # add an item to the player's inventory
-        "take_item",         # remove an item from the player's inventory
-        "gift",              # give an item to an NPC (consumes it)
-        "use_item",          # consume an item; apply its use_effects
-        "gain_resource",     # +N to a resource (e.g. money, energy)
-        "spend_resource",    # -N from a resource (fails if not enough)
-        "set_resource",      # set a resource to an absolute value
-        "buy_item",          # spend currency, gain item (from a shop)
-        "sell_item",         # consume item, gain currency
-        "start_quest",       # activate a quest (inactive -> active)
-        "complete_objective",# mark one objective done; stat = objective_id
-        "complete_quest",    # directly complete a quest
-        "fail_quest",        # mark quest as failed
-    ]
+    kind: str
     target: str = ""
     value: Any = None
     stat: str | None = None
+
+    @field_validator("kind")
+    @classmethod
+    def _kind_nonempty(cls, v: str) -> str:
+        if not isinstance(v, str) or not v.strip():
+            raise ValueError("Effect.kind must be a non-empty string")
+        return v
 
 
 class Condition(BaseModel):
-    """A predicate over the current game state."""
+    """A predicate over the current game state.
+
+    Like :class:`Effect`, ``kind`` is an open-ended ``str``; the set of
+    valid kinds is whatever :data:`world_gal_game.plugins.CONDITION_REGISTRY`
+    has registered at the time :meth:`GameState.evaluate` runs. Unknown
+    kinds evaluate to ``False`` (i.e. "predicate unsatisfied") with a
+    warning logged, rather than raising.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
-    kind: Literal[
-        "flag",            # flag must be truthy
-        "not_flag",        # flag must be falsy
-        "flag_eq",         # flag must equal value
-        "affection_gte",   # affection >= value for target
-        "affection_lt",
-        "time_in",         # time-of-day is in value (list)
-        "visited",         # location has been visited
-        "scene_played",    # scene has been played
-        "has_item",        # player has item; value = min count (default 1)
-        "achievement",     # achievement has been unlocked
-        "resource_gte",    # resource value >= value
-        "resource_lt",
-        "resource_eq",
-        "quest_active",        # quest is currently active
-        "quest_completed",     # quest has been completed
-        "objective_completed", # one objective done; stat = objective_id
-    ]
+    kind: str
     target: str = ""
     value: Any = None
     stat: str | None = None
+
+    @field_validator("kind")
+    @classmethod
+    def _kind_nonempty(cls, v: str) -> str:
+        if not isinstance(v, str) or not v.strip():
+            raise ValueError("Condition.kind must be a non-empty string")
+        return v
 
 
 class Choice(BaseModel):

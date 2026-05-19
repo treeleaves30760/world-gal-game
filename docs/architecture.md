@@ -37,6 +37,16 @@ world_gal_game/
 │   ├── npc_base.py          # NPC + memory + system_prompt
 │   └── llm_brain.py         # LLMBrain ABC + EchoBrain（為 v2 預留 seam）
 │
+├── plugins/                 # 插件系統（Phase 1）— 詳見 docs/plugins.md
+│   ├── __init__.py          # 公開 decorator + 內建 bootstrap
+│   ├── registry.py          # EFFECT/CONDITION/HOOK/INSPECT_FIELD 全域 registry
+│   ├── manager.py           # PluginManager（掃描 + 拓樸排序 + lifecycle）
+│   ├── manifest.py          # PluginManifest pydantic + semver matcher
+│   ├── context.py           # PluginContext + HookEvent 常數
+│   ├── errors.py            # PluginError 家族 + isolate() context manager
+│   ├── builtin_effects.py   # 23 個 builtin effect kind handler
+│   └── builtin_conditions.py# 16 個 builtin condition kind handler
+│
 ├── ui/                      # pygame UI 元件
 │   ├── assets.py            # 圖檔 / 聲音快取（含 placeholder）
 │   ├── fonts.py             # CJK 字型偵測 + 快取
@@ -88,7 +98,18 @@ NPCRegistry                  # parallel registry of NPCs
 ```
 
 `GameState.evaluate(Condition)` 與 `GameState.apply(Effect)` 是
-*所有* 場景邏輯的中央分派 — 任何狀態變更都流經它。
+*所有* 場景邏輯的中央分派 — 任何狀態變更都流經它。Phase 1 起，內部走的是
+plugin registry 查表：
+
+```
+state.apply(Effect(kind="affection", ...))
+   └─ EFFECT_REGISTRY.get("affection") → EffectEntry(fn=handle_affection, plugin_id="builtin")
+      └─ entry.fn(state, eff)
+```
+
+39 個內建 kind 被 `plugins/builtin_effects.py` + `builtin_conditions.py` 註冊。
+第三方插件透過 `@effect("kind")` 加入同一份 registry — 沒有 if-elif 差別對待。
+詳見 [plugins.md](plugins.md)。
 
 ## App 流程
 
@@ -131,31 +152,77 @@ SceneManager
 scene 之間的通訊只透過 `Scene.enter(**kwargs)` 拿回呼。App 是中央
 hub，由它組裝這些 callback。
 
-## 加新 effect kind 的範本
+## 加新 effect / condition kind 的兩條路徑
+
+**Effect.kind / Condition.kind 都是開放的 `str`**（不是 `Literal[...]`）—
+分派表 `core/game_state.py` 的 `apply` / `evaluate` 從
+`world_gal_game.plugins.EFFECT_REGISTRY` / `CONDITION_REGISTRY` 動態查表，所以
+新增 kind 有兩條路：
+
+### 路徑 1（首選）：寫一個 plugin
+
+絕大多數新 kind 都應該走 plugin。原因：
+- 不會碰 `core/`，所以不影響其他 pack
+- 自帶 manifest + signature，PackEditor / Capability Manifest 立刻能 introspect
+- 適合 genre-specific 邏輯（戀愛 / 恐怖 / 養成…）
+
+完整教學見 [plugins.md](plugins.md)。最小範本：
 
 ```python
-# 1) world_gal_game/core/story_graph.py
-class Effect(BaseModel):
-    kind: Literal[
-        "affection", "set_flag", ...,
-        "my_new_kind",   # ← 加在這
-    ]
+# games/<pack>/plugins/my_thing/plugin.py
+from world_gal_game.plugins import effect
 
-# 2) world_gal_game/core/game_state.py
-class GameState:
-    def apply(self, eff):
-        ...
-        if k == "my_new_kind":
-            # 做你要做的事
-            self.events.record(kind="custom", title=f"...")
-            return {"kind": k, "result": ...}
+@effect("my_new_kind",
+        description="What this kind does",
+        signature={"target": "character_id", "value": "int"})
+def handle_my_new_kind(state, eff):
+    state.events.record(kind="custom", title=f"...")
+    return {"kind": eff.kind, "result": ...}
+```
 
-# 3) tests/test_game_state.py
+配 `plugin.yaml`：
+
+```yaml
+id: my_thing
+name: My Thing
+version: 0.1.0
+engine_version: ">=0.1.0"
+extends:
+  effects:
+    - kind: my_new_kind
+      description: What this kind does
+      signature: {target: character_id, value: int}
+```
+
+引擎啟動時自動掃描 `games/<pack>/plugins/`、`~/.world-gal-game/plugins/`、
+`world_gal_game/plugins_user/` 三個位置。
+
+### 路徑 2：擴充 builtin
+
+只在「這個 kind 屬於 genre-agnostic engine primitive」時走這條（例如：未來引擎
+新增 `gain_xp` 之類普遍適用的 kind）。
+
+```python
+# world_gal_game/plugins/builtin_effects.py
+@effect("my_new_kind", plugin_id="builtin",
+        description="...", signature={...})
+def handle_my_new_kind(state, eff):
+    ...
+    return {"kind": eff.kind, ...}
+```
+
+對應測試：
+
+```python
+# tests/test_game_state.py
 def test_my_new_kind():
     s = GameState()
     out = s.apply(Effect(kind="my_new_kind", target="x", value=42))
     assert out["result"] == ...
 ```
+
+**不要再回去動 `Literal[...]` 與 if-elif**：那兩個結構在 Phase 1 重構掉了，
+分派完全走 registry。
 
 ## 加新 widget 的範本
 

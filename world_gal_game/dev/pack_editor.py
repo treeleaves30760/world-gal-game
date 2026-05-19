@@ -1,0 +1,693 @@
+"""PackEditor — structured, comment-preserving edits to a pack on disk.
+
+The motivation is pillar B: AI tools need to *edit* packs, not just
+read them, and they need to do so without destroying the author's
+formatting + comments. ruamel.yaml's round-trip mode keeps comments,
+quotes, key order, and blank lines.
+
+Each mutator (``add_scene``, ``add_choice``, ``add_npc``,
+``add_location``, ``add_item``, ``update_*``, ``remove_*``) runs the
+pydantic model validation before writing. Failures raise a
+:class:`PackEditError` carrying a *structured* report (field, path,
+expected, got, hint) that an AI agent can react to programmatically.
+
+Two execution modes:
+
+- **immediate** (default): mutations write to disk on call.
+- **deferred** (``dry_run=True``): mutations are kept in-memory; call
+  :meth:`commit` to actually write, or :meth:`rollback` to discard.
+  :meth:`diff` returns a unified diff between disk and pending state.
+
+Typical usage::
+
+    editor = PackEditor(Path("games/demo_pack"))
+    editor.add_npc({
+        "id": "guest_chen",
+        "name": "陳先生",
+        "role": "客人",
+    })
+    editor.add_choice("meet_heroine", {
+        "id": "ch_say_hi",
+        "text": "打招呼",
+        "next_scene": "ending_friend",
+    })
+
+PackEditor never touches plugin files — those live under
+``<pack>/plugins/<id>/`` and have their own format. Use the regular
+filesystem APIs there.
+"""
+from __future__ import annotations
+
+import difflib
+import io
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Iterable
+
+from pydantic import BaseModel, ValidationError
+from ruamel.yaml import YAML
+from ruamel.yaml.comments import CommentedMap, CommentedSeq
+
+from ..core.inventory import Item
+from ..core.map_system import Location, NPCPresence, SceneHook, Exit
+from ..core.story_graph import Choice, Effect, Scene
+from ..npc.npc_base import NPC
+
+
+# ----------------------------------------------------------------------
+# Errors
+
+
+@dataclass
+class PackEditError(Exception):
+    """Structured failure from a PackEditor mutator.
+
+    The fields are designed to be *AI-readable* — the caller (often
+    an LLM agent) can react to ``field`` + ``hint`` to repair its
+    payload and retry.
+    """
+
+    op: str               # e.g. "add_scene", "add_choice"
+    path: str             # YAML path inside the pack (e.g. "scenes[3].lines[0].text")
+    message: str
+    field: str = ""       # specific field that failed
+    expected: str = ""    # what was expected
+    got: str = ""         # what was actually given
+    hint: str = ""        # actionable repair suggestion
+
+    def __post_init__(self) -> None:
+        # Exception.__init__ needs a message for str(e) to work.
+        Exception.__init__(self, self._format())
+
+    def _format(self) -> str:
+        bits = [f"{self.op}: {self.message}"]
+        if self.path:
+            bits.append(f"  path: {self.path}")
+        if self.field:
+            bits.append(f"  field: {self.field}")
+        if self.expected:
+            bits.append(f"  expected: {self.expected}")
+        if self.got:
+            bits.append(f"  got: {self.got}")
+        if self.hint:
+            bits.append(f"  hint: {self.hint}")
+        return "\n".join(bits)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "op": self.op, "path": self.path, "message": self.message,
+            "field": self.field, "expected": self.expected, "got": self.got,
+            "hint": self.hint,
+        }
+
+
+# ----------------------------------------------------------------------
+# Plan records — track pending writes for diff / dry-run
+
+
+@dataclass
+class _PendingDoc:
+    """One YAML document scheduled for write-back."""
+
+    path: Path
+    data: Any                 # ruamel CommentedMap / CommentedSeq
+    original_text: str        # disk content at load time
+    created: bool = False     # True if the file didn't exist before
+
+
+@dataclass
+class _ChangeRecord:
+    op: str
+    target_id: str
+    file: str
+    summary: str
+
+
+# ----------------------------------------------------------------------
+# PackEditor
+
+
+class PackEditor:
+    """Structured CRUD for a pack on disk."""
+
+    # Default file for newly-added scenes / npcs / etc when the caller
+    # doesn't specify one. Putting AI-generated content under a
+    # ``_generated.yaml`` file keeps it out of the way of hand-edits.
+    DEFAULT_SCENES_FILE = "_generated.yaml"
+    DEFAULT_NEW_CHARACTERS = "characters.yaml"
+    DEFAULT_NEW_LOCATIONS = "locations.yaml"
+    DEFAULT_NEW_ITEMS = "items.yaml"
+
+    def __init__(self, pack_root: Path | str, *,
+                 dry_run: bool = False) -> None:
+        pack_root_p = Path(pack_root).resolve()
+        if (pack_root_p / "content").is_dir():
+            self.content_root = pack_root_p / "content"
+            self.pack_root = pack_root_p
+        else:
+            self.content_root = pack_root_p
+            self.pack_root = pack_root_p.parent if pack_root_p.name == "content" else pack_root_p
+        if not self.content_root.is_dir():
+            raise FileNotFoundError(
+                f"PackEditor: content dir not found at {self.content_root}")
+
+        self.dry_run = dry_run
+        self._yaml = self._make_yaml()
+        self._pending: dict[Path, _PendingDoc] = {}
+        self.changes: list[_ChangeRecord] = []
+
+    # ------------------------------------------------------------------
+    # YAML configuration
+
+    @staticmethod
+    def _make_yaml() -> YAML:
+        y = YAML(typ="rt")
+        y.preserve_quotes = True
+        y.indent(mapping=2, sequence=4, offset=2)
+        y.width = 4096  # don't wrap long strings
+        return y
+
+    # ------------------------------------------------------------------
+    # Pending doc bookkeeping
+
+    def _load_doc(self, rel_path: str | Path, *, create_if_missing: bool = False,
+                  root_kind: str = "list") -> _PendingDoc:
+        """Return the pending document for ``rel_path`` (loading on first use).
+
+        ``rel_path`` is interpreted relative to ``content/``. If
+        ``create_if_missing`` is True, a fresh empty document is
+        synthesised (no disk read).
+        """
+        path = self.content_root / Path(rel_path)
+        if path in self._pending:
+            return self._pending[path]
+        if path.is_file():
+            text = path.read_text(encoding="utf-8")
+            try:
+                data = self._yaml.load(io.StringIO(text))
+            except Exception as exc:
+                raise PackEditError(
+                    op="load", path=str(path),
+                    message=f"YAML parse failed: {exc}",
+                    hint="fix the YAML before further edits",
+                )
+            if data is None:
+                # Empty file: synthesise a typed empty container.
+                data = CommentedSeq() if root_kind == "list" else CommentedMap()
+            self._pending[path] = _PendingDoc(path=path, data=data,
+                                              original_text=text)
+            return self._pending[path]
+        if not create_if_missing:
+            raise PackEditError(
+                op="load", path=str(path),
+                message=f"file does not exist: {path}",
+                hint=f"set create_if_missing=True or use a known path",
+            )
+        data = CommentedSeq() if root_kind == "list" else CommentedMap()
+        self._pending[path] = _PendingDoc(
+            path=path, data=data, original_text="", created=True,
+        )
+        return self._pending[path]
+
+    def _list_in_doc(self, doc: _PendingDoc, *, key: str) -> CommentedSeq:
+        """Return the list inside a doc, handling both shapes.
+
+        Some YAMLs are a bare list at the top level; some are wrapped
+        in ``{key: [...]}``. We return whichever the existing file uses,
+        creating the wrapper on demand for empty / new files.
+        """
+        if isinstance(doc.data, CommentedSeq):
+            return doc.data
+        if isinstance(doc.data, CommentedMap):
+            existing = doc.data.get(key)
+            if isinstance(existing, list):
+                return existing  # may be CommentedSeq
+            new_seq = CommentedSeq()
+            doc.data[key] = new_seq
+            return new_seq
+        # Unknown root: convert to a wrapper map.
+        new_map = CommentedMap()
+        new_seq = CommentedSeq()
+        new_map[key] = new_seq
+        doc.data = new_map
+        return new_seq
+
+    # ------------------------------------------------------------------
+    # Validation helper
+
+    @staticmethod
+    def _validate(model: type[BaseModel], op: str, raw: dict[str, Any],
+                  *, path: str = "") -> Any:
+        """Run pydantic validation; wrap errors as PackEditError."""
+        try:
+            return model.model_validate(raw)
+        except ValidationError as ve:
+            errs = ve.errors()
+            first = errs[0]
+            loc_parts = [str(p) for p in first.get("loc", [])]
+            field_name = ".".join(loc_parts)
+            err_type = first.get("type", "")
+            msg = first.get("msg", "validation failed")
+            hint = ""
+            if err_type == "missing":
+                hint = (
+                    f"field '{field_name}' is required by "
+                    f"{model.__name__}; add it to the payload"
+                )
+            elif err_type == "extra_forbidden":
+                hint = (
+                    f"'{field_name}' is not a known field on {model.__name__}; "
+                    f"valid fields: {sorted(model.model_fields)}"
+                )
+            raise PackEditError(
+                op=op, path=path,
+                message=f"validation failed: {msg}",
+                field=field_name,
+                expected=str(first.get("ctx") or ""),
+                got=repr(first.get("input")),
+                hint=hint,
+            ) from ve
+
+    # ------------------------------------------------------------------
+    # Scene operations
+
+    def find_scene_file(self, scene_id: str) -> Path | None:
+        """Locate which file under content/scenes/ contains ``scene_id``."""
+        scenes_dir = self.content_root / "scenes"
+        if not scenes_dir.is_dir():
+            return None
+        for yaml_path in sorted(scenes_dir.rglob("*.yaml")):
+            try:
+                with open(yaml_path, encoding="utf-8") as fh:
+                    data = self._yaml.load(fh)
+            except Exception:
+                continue
+            scenes = self._extract_scenes(data)
+            for raw in scenes:
+                if isinstance(raw, dict) and raw.get("id") == scene_id:
+                    return yaml_path
+        return None
+
+    @staticmethod
+    def _extract_scenes(data: Any) -> list[Any]:
+        if isinstance(data, dict) and "scenes" in data:
+            return data["scenes"] or []
+        if isinstance(data, list):
+            return data
+        if isinstance(data, dict) and "id" in data:
+            return [data]
+        return []
+
+    def add_scene(self, scene: dict | Scene,
+                  *, into_file: str | Path | None = None) -> Scene:
+        """Append a new scene to a scenes file.
+
+        Returns the validated :class:`Scene`. If ``into_file`` is None,
+        the scene goes into ``content/scenes/_generated.yaml``
+        (creating it if missing); otherwise the given file is used.
+        """
+        raw = scene.model_dump(exclude_unset=True) if isinstance(scene, Scene) else dict(scene)
+        validated = self._validate(Scene, "add_scene", raw)
+        sid = validated.id
+        existing = self.find_scene_file(sid)
+        if existing is not None:
+            raise PackEditError(
+                op="add_scene", path=f"scenes[id={sid}]",
+                message=f"scene id '{sid}' already exists (file: {existing.name})",
+                field="id", got=sid,
+                hint="use update_scene() to modify the existing scene, "
+                     "or pick a unique id",
+            )
+
+        target_rel = into_file or f"scenes/{self.DEFAULT_SCENES_FILE}"
+        target_rel = str(target_rel)
+        if not target_rel.startswith("scenes/"):
+            target_rel = f"scenes/{target_rel}"
+        if not target_rel.endswith((".yaml", ".yml")):
+            target_rel = f"{target_rel}.yaml"
+        doc = self._load_doc(target_rel, create_if_missing=True,
+                             root_kind="map")
+        seq = self._list_in_doc(doc, key="scenes")
+        seq.append(self._to_commented(raw))
+        self.changes.append(_ChangeRecord(
+            op="add_scene", target_id=sid, file=target_rel,
+            summary=f"added scene '{sid}'",
+        ))
+        if not self.dry_run:
+            self._flush()
+        return validated
+
+    def update_scene(self, scene_id: str,
+                     updates: dict[str, Any]) -> Scene:
+        """Merge ``updates`` into an existing scene's mapping.
+
+        ``updates`` is shallow-merged: top-level keys overwrite, nested
+        lists are *replaced*. Use ``add_choice`` for appending.
+        """
+        path = self.find_scene_file(scene_id)
+        if path is None:
+            raise PackEditError(
+                op="update_scene", path=f"scenes[id={scene_id}]",
+                message=f"scene '{scene_id}' not found",
+                hint="use list_scenes() to see available ids",
+            )
+        rel = str(path.relative_to(self.content_root))
+        doc = self._load_doc(rel)
+        scenes = self._scenes_seq(doc)
+        target = self._find_in_seq(scenes, "id", scene_id)
+        if target is None:
+            raise PackEditError(
+                op="update_scene", path=f"scenes[id={scene_id}]",
+                message=f"scene '{scene_id}' not found in doc")
+        merged = dict(target)
+        merged.update(updates)
+        validated = self._validate(Scene, "update_scene", merged,
+                                    path=f"scenes[id={scene_id}]")
+        for k, v in updates.items():
+            target[k] = self._to_commented(v) if isinstance(v, (dict, list)) else v
+        self.changes.append(_ChangeRecord(
+            op="update_scene", target_id=scene_id, file=rel,
+            summary=f"updated scene '{scene_id}' keys={list(updates)}",
+        ))
+        if not self.dry_run:
+            self._flush()
+        return validated
+
+    def remove_scene(self, scene_id: str) -> None:
+        """Delete a scene by id."""
+        path = self.find_scene_file(scene_id)
+        if path is None:
+            raise PackEditError(
+                op="remove_scene", path=f"scenes[id={scene_id}]",
+                message=f"scene '{scene_id}' not found")
+        rel = str(path.relative_to(self.content_root))
+        doc = self._load_doc(rel)
+        scenes = self._scenes_seq(doc)
+        for i, raw in enumerate(scenes):
+            if isinstance(raw, dict) and raw.get("id") == scene_id:
+                del scenes[i]
+                self.changes.append(_ChangeRecord(
+                    op="remove_scene", target_id=scene_id, file=rel,
+                    summary=f"removed scene '{scene_id}'",
+                ))
+                if not self.dry_run:
+                    self._flush()
+                return
+        raise PackEditError(
+            op="remove_scene", path=f"scenes[id={scene_id}]",
+            message=f"scene '{scene_id}' not found in doc")
+
+    def _scenes_seq(self, doc: _PendingDoc) -> CommentedSeq:
+        return self._list_in_doc(doc, key="scenes")
+
+    def add_choice(self, scene_id: str,
+                   choice: dict | Choice) -> Choice:
+        """Append a choice to an existing scene."""
+        raw = choice.model_dump(exclude_unset=True) if isinstance(choice, Choice) else dict(choice)
+        validated = self._validate(Choice, "add_choice", raw,
+                                    path=f"scenes[id={scene_id}].choices[]")
+        path = self.find_scene_file(scene_id)
+        if path is None:
+            raise PackEditError(
+                op="add_choice", path=f"scenes[id={scene_id}]",
+                message=f"scene '{scene_id}' not found")
+        rel = str(path.relative_to(self.content_root))
+        doc = self._load_doc(rel)
+        scenes = self._scenes_seq(doc)
+        target = self._find_in_seq(scenes, "id", scene_id)
+        if target is None:
+            raise PackEditError(
+                op="add_choice", path=f"scenes[id={scene_id}]",
+                message=f"scene '{scene_id}' not found in doc")
+        choices = target.setdefault("choices", CommentedSeq())
+        choices.append(self._to_commented(raw))
+        self.changes.append(_ChangeRecord(
+            op="add_choice", target_id=scene_id, file=rel,
+            summary=f"added choice '{validated.id}' to scene '{scene_id}'",
+        ))
+        if not self.dry_run:
+            self._flush()
+        return validated
+
+    # ------------------------------------------------------------------
+    # NPC operations
+
+    def add_npc(self, npc: dict | NPC,
+                *, into_file: str | Path | None = None) -> NPC:
+        raw = npc.model_dump(exclude_unset=True) if isinstance(npc, NPC) else dict(npc)
+        # Strip the affection thresholds extension before pydantic — the
+        # loader handles those separately, NPC model itself doesn't have
+        # a `thresholds` field.
+        thresholds = raw.pop("thresholds", None)
+        validated = self._validate(NPC, "add_npc", raw)
+        if thresholds is not None:
+            raw["thresholds"] = thresholds
+
+        target_rel = into_file or self.DEFAULT_NEW_CHARACTERS
+        doc = self._load_doc(target_rel, create_if_missing=True, root_kind="map")
+        seq = self._list_in_doc(doc, key="characters")
+        if self._find_in_seq(seq, "id", validated.id) is not None:
+            raise PackEditError(
+                op="add_npc", path=f"characters[id={validated.id}]",
+                message=f"character id '{validated.id}' already exists",
+                field="id", hint="use update_npc to modify it")
+        seq.append(self._to_commented(raw))
+        self.changes.append(_ChangeRecord(
+            op="add_npc", target_id=validated.id, file=str(target_rel),
+            summary=f"added NPC '{validated.id}'",
+        ))
+        if not self.dry_run:
+            self._flush()
+        return validated
+
+    def update_npc(self, npc_id: str, updates: dict[str, Any]) -> NPC:
+        rel = self.DEFAULT_NEW_CHARACTERS
+        doc = self._load_doc(rel)
+        seq = self._list_in_doc(doc, key="characters")
+        target = self._find_in_seq(seq, "id", npc_id)
+        if target is None:
+            raise PackEditError(
+                op="update_npc", path=f"characters[id={npc_id}]",
+                message=f"npc '{npc_id}' not found")
+        merged = dict(target)
+        merged.update(updates)
+        merged.pop("thresholds", None)
+        validated = self._validate(NPC, "update_npc", merged,
+                                    path=f"characters[id={npc_id}]")
+        for k, v in updates.items():
+            target[k] = self._to_commented(v) if isinstance(v, (dict, list)) else v
+        self.changes.append(_ChangeRecord(
+            op="update_npc", target_id=npc_id, file=rel,
+            summary=f"updated NPC '{npc_id}' keys={list(updates)}",
+        ))
+        if not self.dry_run:
+            self._flush()
+        return validated
+
+    def remove_npc(self, npc_id: str) -> None:
+        rel = self.DEFAULT_NEW_CHARACTERS
+        doc = self._load_doc(rel)
+        seq = self._list_in_doc(doc, key="characters")
+        for i, raw in enumerate(seq):
+            if isinstance(raw, dict) and raw.get("id") == npc_id:
+                del seq[i]
+                self.changes.append(_ChangeRecord(
+                    op="remove_npc", target_id=npc_id, file=rel,
+                    summary=f"removed NPC '{npc_id}'",
+                ))
+                if not self.dry_run:
+                    self._flush()
+                return
+        raise PackEditError(
+            op="remove_npc", path=f"characters[id={npc_id}]",
+            message=f"npc '{npc_id}' not found")
+
+    # ------------------------------------------------------------------
+    # Location operations
+
+    def add_location(self, location: dict | Location,
+                     *, into_file: str | Path | None = None) -> Location:
+        raw = location.model_dump(exclude_unset=True) if isinstance(location, Location) else dict(location)
+        validated = self._validate(Location, "add_location", raw)
+        target_rel = into_file or self.DEFAULT_NEW_LOCATIONS
+        doc = self._load_doc(target_rel, create_if_missing=True, root_kind="map")
+        seq = self._list_in_doc(doc, key="locations")
+        if self._find_in_seq(seq, "id", validated.id) is not None:
+            raise PackEditError(
+                op="add_location", path=f"locations[id={validated.id}]",
+                message=f"location id '{validated.id}' already exists",
+                field="id")
+        seq.append(self._to_commented(raw))
+        self.changes.append(_ChangeRecord(
+            op="add_location", target_id=validated.id, file=str(target_rel),
+            summary=f"added location '{validated.id}'",
+        ))
+        if not self.dry_run:
+            self._flush()
+        return validated
+
+    def update_location(self, loc_id: str, updates: dict[str, Any]) -> Location:
+        rel = self.DEFAULT_NEW_LOCATIONS
+        doc = self._load_doc(rel)
+        seq = self._list_in_doc(doc, key="locations")
+        target = self._find_in_seq(seq, "id", loc_id)
+        if target is None:
+            raise PackEditError(
+                op="update_location", path=f"locations[id={loc_id}]",
+                message=f"location '{loc_id}' not found")
+        merged = dict(target)
+        merged.update(updates)
+        validated = self._validate(Location, "update_location", merged,
+                                    path=f"locations[id={loc_id}]")
+        for k, v in updates.items():
+            target[k] = self._to_commented(v) if isinstance(v, (dict, list)) else v
+        self.changes.append(_ChangeRecord(
+            op="update_location", target_id=loc_id, file=rel,
+            summary=f"updated location '{loc_id}' keys={list(updates)}",
+        ))
+        if not self.dry_run:
+            self._flush()
+        return validated
+
+    def remove_location(self, loc_id: str) -> None:
+        rel = self.DEFAULT_NEW_LOCATIONS
+        doc = self._load_doc(rel)
+        seq = self._list_in_doc(doc, key="locations")
+        for i, raw in enumerate(seq):
+            if isinstance(raw, dict) and raw.get("id") == loc_id:
+                del seq[i]
+                self.changes.append(_ChangeRecord(
+                    op="remove_location", target_id=loc_id, file=rel,
+                    summary=f"removed location '{loc_id}'",
+                ))
+                if not self.dry_run:
+                    self._flush()
+                return
+        raise PackEditError(
+            op="remove_location", path=f"locations[id={loc_id}]",
+            message=f"location '{loc_id}' not found")
+
+    # ------------------------------------------------------------------
+    # Item operations
+
+    def add_item(self, item: dict | Item,
+                 *, into_file: str | Path | None = None) -> Item:
+        raw = item.model_dump(exclude_unset=True) if isinstance(item, Item) else dict(item)
+        validated = self._validate(Item, "add_item", raw)
+        target_rel = into_file or self.DEFAULT_NEW_ITEMS
+        doc = self._load_doc(target_rel, create_if_missing=True, root_kind="map")
+        seq = self._list_in_doc(doc, key="items")
+        if self._find_in_seq(seq, "id", validated.id) is not None:
+            raise PackEditError(
+                op="add_item", path=f"items[id={validated.id}]",
+                message=f"item id '{validated.id}' already exists",
+                field="id")
+        seq.append(self._to_commented(raw))
+        self.changes.append(_ChangeRecord(
+            op="add_item", target_id=validated.id, file=str(target_rel),
+            summary=f"added item '{validated.id}'",
+        ))
+        if not self.dry_run:
+            self._flush()
+        return validated
+
+    # ------------------------------------------------------------------
+    # Pending state inspection
+
+    def diff(self) -> str:
+        """Unified diff of pending vs on-disk state. Empty if no pending."""
+        bits: list[str] = []
+        for doc in self._pending.values():
+            buf = io.StringIO()
+            self._yaml.dump(doc.data, buf)
+            new_text = buf.getvalue()
+            if new_text == doc.original_text and not doc.created:
+                continue
+            old_label = (f"{self._rel(doc.path)} (on disk)" if not doc.created
+                         else f"{self._rel(doc.path)} (new file)")
+            new_label = f"{self._rel(doc.path)} (pending)"
+            old_lines = doc.original_text.splitlines(keepends=True) if doc.original_text else []
+            new_lines = new_text.splitlines(keepends=True)
+            diff = list(difflib.unified_diff(
+                old_lines, new_lines, fromfile=old_label, tofile=new_label,
+            ))
+            bits.extend(diff)
+        return "".join(bits)
+
+    def has_pending(self) -> bool:
+        return self.diff() != ""
+
+    def pending_files(self) -> list[str]:
+        return sorted(self._rel(d.path) for d in self._pending.values())
+
+    def list_changes(self) -> list[dict[str, Any]]:
+        return [
+            {"op": c.op, "id": c.target_id, "file": c.file,
+             "summary": c.summary}
+            for c in self.changes
+        ]
+
+    # ------------------------------------------------------------------
+    # Commit / rollback
+
+    def commit(self) -> dict[str, Any]:
+        """Force-write every pending document, regardless of dry_run."""
+        self._flush()
+        out = {
+            "files_written": list(self.pending_files()),
+            "changes": self.list_changes(),
+        }
+        return out
+
+    def rollback(self) -> None:
+        """Discard all pending edits."""
+        self._pending.clear()
+        self.changes.clear()
+
+    def _flush(self) -> None:
+        """Write every pending doc to disk (idempotent)."""
+        for doc in self._pending.values():
+            doc.path.parent.mkdir(parents=True, exist_ok=True)
+            buf = io.StringIO()
+            self._yaml.dump(doc.data, buf)
+            doc.path.write_text(buf.getvalue(), encoding="utf-8")
+            # After flush, the new disk state becomes the "original".
+            doc.original_text = buf.getvalue()
+            doc.created = False
+
+    # ------------------------------------------------------------------
+    # Helpers
+
+    @staticmethod
+    def _find_in_seq(seq: Iterable[Any], key: str, value: Any) -> Any | None:
+        for item in seq:
+            if isinstance(item, dict) and item.get(key) == value:
+                return item
+        return None
+
+    @staticmethod
+    def _to_commented(value: Any) -> Any:
+        """Recursively convert plain dicts/lists into ruamel CommentedMap/Seq.
+
+        Required so newly-inserted content is in the right type family
+        for ruamel to format with the rest of the file.
+        """
+        if isinstance(value, dict):
+            out = CommentedMap()
+            for k, v in value.items():
+                out[k] = PackEditor._to_commented(v)
+            return out
+        if isinstance(value, list):
+            seq = CommentedSeq()
+            for v in value:
+                seq.append(PackEditor._to_commented(v))
+            return seq
+        if isinstance(value, BaseModel):
+            return PackEditor._to_commented(value.model_dump(exclude_unset=True))
+        return value
+
+    def _rel(self, p: Path) -> str:
+        try:
+            return str(p.relative_to(self.pack_root))
+        except ValueError:
+            return str(p)

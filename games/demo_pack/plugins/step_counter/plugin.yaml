@@ -1,0 +1,40 @@
+id: step_counter
+name: Step Counter
+version: 0.1.0
+description: |
+  Tracks how many times the player has moved between locations.
+  A small reference plugin demonstrating every Phase 1 extension point:
+  effect, condition, hook, and inspect_field.
+author: World Gal-Game examples
+engine_version: ">=0.1.0"
+depends: []
+entry_module: plugin
+
+extends:
+  effects:
+    - kind: reset_step_counter
+      description: Reset the step counter to zero.
+      signature:
+        target: "<unused>"
+        value: "<unused>"
+  conditions:
+    - kind: steps_gte
+      description: True when the player has walked at least `value` steps.
+      signature:
+        value: "int (minimum step count)"
+  hooks:
+    - kind: effect.after_apply
+      description: Increment the counter on every successful move_to.
+  inspect_fields:
+    - kind: step_counter
+      description: "Surfaces {count: int} into the headless inspect snapshot."
+
+side_effects:
+  reads_filesystem: false
+  writes_filesystem: false
+  network: false
+  subprocess: false
+
+tags:
+  - example
+  - tutorial

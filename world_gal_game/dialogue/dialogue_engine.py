@@ -10,10 +10,42 @@ from __future__ import annotations
 from typing import Any
 from dataclasses import dataclass, field
 
+import re
+
 from ..core.game_state import GameState
 from ..core.story_graph import Scene, Line, Choice
 from ..core.portrait_spec import PortraitSpec
 from ..core.text_interpolation import interpolate
+
+
+_DIALOGUE_OP_RE = re.compile(r"\[\[([a-zA-Z_][a-zA-Z0-9_]*)(?::([^\]]*))?\]\]")
+
+
+def _apply_dialogue_ops(text: str, state: GameState) -> str:
+    """Strip `[[op:arg]]` directives and fire registered handlers.
+
+    The handler's return value (when a string) replaces the directive
+    inline; otherwise the directive is removed entirely. Unknown ops
+    pass through untouched so plugin authors can spot missing handlers
+    in the rendered text (rather than silently dropping them).
+    """
+    from ..plugins.registry import DIALOGUE_OP_REGISTRY
+    from ..plugins.errors import isolate
+
+    def _sub(m: re.Match) -> str:
+        name = m.group(1)
+        arg = m.group(2) or ""
+        entry = DIALOGUE_OP_REGISTRY.get(name)
+        if entry is None:
+            return m.group(0)  # leave [[unknown:foo]] in place
+        repl_holder: list[str] = []
+        with isolate(entry.plugin_id, f"dialogue_op:{name}"):
+            result = entry.fn(state, arg)
+            if isinstance(result, str):
+                repl_holder.append(result)
+        return repl_holder[0] if repl_holder else ""
+
+    return _DIALOGUE_OP_RE.sub(_sub, text)
 
 
 @dataclass
@@ -102,6 +134,10 @@ class DialogueEngine:
             return self._present_current()
         if not self._choice_available(choice):
             return self._present_current()
+        from ..plugins import fire_event
+        from ..plugins.context import HookEvent
+        fire_event(self.state, HookEvent.DIALOGUE_CHOICE_MADE,
+                   scene_id=scene.id, choice_id=choice.id)
         # Apply effects.
         effects_out = self.state.apply_all(choice.effects)
         # Interpolate the recorded choice text so the event log shows the
@@ -202,6 +238,8 @@ class DialogueEngine:
         # Apply {token} interpolation after LLM resolution so LLM-generated
         # text can also embed state variables.
         text = interpolate(text, self.state)
+        # Parse + fire any [[op:arg]] dialogue directives.
+        text = _apply_dialogue_ops(text, self.state)
         effects_out: list[dict[str, Any]] = []
         if line.effects:
             effects_out = self.state.apply_all(line.effects)
@@ -251,7 +289,15 @@ class DialogueEngine:
         if idx < len(scene.lines):
             # We're showing a line.
             line = scene.lines[idx]
+            # Fire dialogue.before_line so plugins can preview / mutate state
+            # (e.g. trigger a cinematic effect on a specific line).
+            from ..plugins import fire_event
+            from ..plugins.context import HookEvent
+            fire_event(self.state, HookEvent.DIALOGUE_BEFORE_LINE,
+                       scene_id=scene.id, line_index=idx, line=line)
             pres = self._present_line(scene, line, idx)
+            fire_event(self.state, HookEvent.DIALOGUE_AFTER_LINE,
+                       scene_id=scene.id, line_index=idx, line=pres)
             # advance pointer past this line so the next call goes to the next
             self.state.story.current_line_index = idx + 1
             return ScenePresentation(

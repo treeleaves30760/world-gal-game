@@ -2,22 +2,41 @@
 
 Holds player info + all subsystems. Provides serialize/deserialize for
 save/load, and a single place to evaluate Conditions and apply Effects.
+
+Effect/Condition dispatch is plugin-driven. :meth:`apply` and
+:meth:`evaluate` look up the kind in
+:data:`world_gal_game.plugins.EFFECT_REGISTRY` /
+:data:`CONDITION_REGISTRY` and call the registered handler. The 39
+builtin kinds the engine has always shipped are registered by
+:mod:`world_gal_game.plugins.builtin_effects` /
+:mod:`builtin_conditions`; third-party plugins extend the same registry.
+
+A :class:`world_gal_game.plugins.PluginManager` may be parked at
+``state.meta["__plugin_manager__"]`` (the content loader does this
+automatically). When present, ``apply`` fires
+:data:`HookEvent.EFFECT_BEFORE_APPLY` / ``EFFECT_AFTER_APPLY`` around
+each dispatch so plugins can observe and react.
 """
 from __future__ import annotations
 
+import logging
 from typing import Any
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_serializer
 
 from .achievements import AchievementTracker
 from .affection import AffectionTracker
+from .clue import ClueTracker
 from .event_log import EventLog, DialogueHistory
-from .inventory import Inventory, ItemRegistry, evaluate_gift
+from .inventory import Inventory, ItemRegistry
 from .map_system import MapSystem
 from .quest import QuestTracker
 from .read_log import ReadLog
 from .resources import ResourceTracker
 from .story_graph import StoryGraph, Condition, Effect
 from .time_system import TimeSystem
+
+
+_log = logging.getLogger("world_gal_game.core.game_state")
 
 
 class PlayerInfo(BaseModel):
@@ -43,49 +62,52 @@ class GameState(BaseModel):
     resources: ResourceTracker = Field(default_factory=ResourceTracker)
     read_log: ReadLog = Field(default_factory=ReadLog)
     quests: QuestTracker = Field(default_factory=QuestTracker)
+    clues: ClueTracker = Field(default_factory=ClueTracker)
     route: str | None = None    # which heroine route is currently dominant
     meta: dict[str, Any] = Field(default_factory=dict)
 
+    @field_serializer("meta")
+    def _serialize_meta(self, meta: dict[str, Any], _info) -> dict[str, Any]:
+        """Strip transient ``__`` keys so pydantic JSON dump stays clean.
+
+        Keys like ``__plugin_manager__`` / ``__npc_registry__`` hold live
+        Python objects that pydantic can't serialise; they're recreated
+        on the fly by ``load_pack``. SaveManager later applies a similar
+        filter, but doing it here keeps every ``model_dump(mode='json')``
+        path safe — not just the save_scene one.
+        """
+        return {k: v for k, v in meta.items() if not k.startswith("__")}
+
     def evaluate(self, cond: Condition) -> bool:
-        """Return True if condition is satisfied by current state."""
-        k = cond.kind
-        if k == "flag":
-            return bool(self.events.get_flag(cond.target))
-        if k == "not_flag":
-            return not bool(self.events.get_flag(cond.target))
-        if k == "flag_eq":
-            return self.events.get_flag(cond.target) == cond.value
-        if k == "affection_gte":
-            stat = cond.stat or "affection"
-            return self.affection.get(cond.target, stat) >= int(cond.value)
-        if k == "affection_lt":
-            stat = cond.stat or "affection"
-            return self.affection.get(cond.target, stat) < int(cond.value)
-        if k == "time_in":
-            vals = cond.value if isinstance(cond.value, list) else [cond.value]
-            return self.time.time_of_day.value in vals
-        if k == "visited":
-            return cond.target in self.map.visited
-        if k == "scene_played":
-            return self.story.is_played(cond.target)
-        if k == "has_item":
-            need = int(cond.value) if cond.value is not None else 1
-            return self.inventory.has(cond.target, need)
-        if k == "achievement":
-            return self.achievements.is_unlocked(cond.target)
-        if k == "resource_gte":
-            return self.resources.get(cond.target) >= int(cond.value or 0)
-        if k == "resource_lt":
-            return self.resources.get(cond.target) < int(cond.value or 0)
-        if k == "resource_eq":
-            return self.resources.get(cond.target) == int(cond.value or 0)
-        if k == "quest_active":
-            return self.quests.is_active(cond.target)
-        if k == "quest_completed":
-            return self.quests.is_completed(cond.target)
-        if k == "objective_completed":
-            return self.quests.objective_completed(cond.target, cond.stat or "")
-        return False
+        """Return True if condition is satisfied by current state.
+
+        Dispatch goes through :data:`CONDITION_REGISTRY`. Unknown kinds
+        log a warning and evaluate to ``False`` — a defensive default
+        that lets the engine keep running when a YAML pack references a
+        plugin that did not load.
+
+        Handler exceptions are isolated: the error is logged and the
+        condition evaluates to ``False`` for that call so a single
+        misbehaving plugin doesn't crash the game.
+        """
+        # Late import: avoids any import-time coupling between core and
+        # plugins. The import triggers builtin handler registration on
+        # first call.
+        from world_gal_game.plugins.registry import CONDITION_REGISTRY
+        entry = CONDITION_REGISTRY.get(cond.kind)
+        if entry is None:
+            _log.warning("evaluate: unknown condition kind '%s' (target=%r); "
+                         "treating as False", cond.kind, cond.target)
+            return False
+        try:
+            return bool(entry.fn(self, cond))
+        except Exception as exc:
+            _log.exception(
+                "condition handler '%s' (plugin %s) raised: %s; "
+                "treating as False",
+                cond.kind, entry.plugin_id, exc,
+            )
+            return False
 
     def evaluate_all(self, conds: list[Condition]) -> bool:
         return all(self.evaluate(c) for c in conds)
@@ -94,213 +116,56 @@ class GameState(BaseModel):
         return not any(self.evaluate(c) for c in conds)
 
     def apply(self, eff: Effect) -> dict[str, Any]:
-        """Apply a single effect; return a small dict describing what happened."""
-        k = eff.kind
-        if k == "affection":
-            new_val, unlocked = self.affection.adjust(eff.target, int(eff.value),
-                                                     eff.stat or "affection")
-            return {"kind": k, "target": eff.target, "new": new_val,
-                    "unlocked": unlocked}
-        if k == "stat":
-            new_val, unlocked = self.affection.adjust(eff.target, int(eff.value),
-                                                     eff.stat or "affection")
-            return {"kind": k, "target": eff.target, "stat": eff.stat,
-                    "new": new_val, "unlocked": unlocked}
-        if k == "set_flag":
-            self.events.set_flag(eff.target, eff.value if eff.value is not None else True)
-            return {"kind": k, "target": eff.target, "value": eff.value}
-        if k == "increment_flag":
-            new_val = self.events.increment(eff.target, int(eff.value or 1))
-            return {"kind": k, "target": eff.target, "new": new_val}
-        if k == "advance_time":
-            self.time.advance(int(eff.value or 1))
-            return {"kind": k, "phase": self.time.time_of_day.value,
-                    "day": self.time.day}
-        if k == "move_to":
+        """Apply a single effect; return a small dict describing what happened.
+
+        Dispatch goes through :data:`EFFECT_REGISTRY`. If a
+        :class:`world_gal_game.plugins.PluginManager` sits at
+        ``state.meta["__plugin_manager__"]`` (the content loader puts
+        one there), :data:`HookEvent.EFFECT_BEFORE_APPLY` and
+        ``EFFECT_AFTER_APPLY`` fire around the handler call. Hook
+        failures and handler failures are both isolated: errors are
+        logged and an ``{"kind": kind, "error": ...}`` dict is returned
+        instead of propagating the exception.
+        """
+        from world_gal_game.plugins.registry import EFFECT_REGISTRY
+
+        manager = self.meta.get("__plugin_manager__")
+        if manager is not None:
+            self._fire_effect_hook(manager, "effect.before_apply", eff=eff)
+
+        entry = EFFECT_REGISTRY.get(eff.kind)
+        if entry is None:
+            result: dict[str, Any] = {"kind": eff.kind, "error": "unknown effect"}
+        else:
             try:
-                loc = self.map.move_to(eff.target)
-                self.events.record("location", f"來到 {loc.name}",
-                                   location=loc.id, data={"to": eff.target})
-                return {"kind": k, "to": eff.target}
-            except KeyError:
-                return {"kind": k, "error": f"未知地點: {eff.target}"}
-        if k == "unlock_location":
-            self.events.set_flag(f"unlock:{eff.target}", True)
-            return {"kind": k, "target": eff.target}
-        if k == "play_scene":
-            return {"kind": k, "scene": eff.target}
-        if k == "end_scene":
-            return {"kind": k}
-        if k == "log_event":
-            self.events.record(
-                kind="custom",
-                title=eff.target,
-                summary=str(eff.value or ""),
-                location=self.map.current_location_id,
+                result = entry.fn(self, eff)
+            except Exception as exc:
+                _log.exception(
+                    "effect handler '%s' (plugin %s) raised: %s",
+                    eff.kind, entry.plugin_id, exc,
+                )
+                result = {"kind": eff.kind, "error": f"handler failed: {exc}"}
+
+        if manager is not None:
+            self._fire_effect_hook(
+                manager, "effect.after_apply", eff=eff, result=result,
             )
-            return {"kind": k, "title": eff.target}
-        if k == "give_item":
-            n = int(eff.value) if eff.value is not None else 1
-            item = self.items.get(eff.target)
-            max_stack = item.max_stack if item else None
-            new_count = self.inventory.add(eff.target, n, max_stack=max_stack)
-            self.events.record(
-                kind="custom",
-                title=f"獲得物品 · {item.name if item else eff.target}",
-                data={"item": eff.target, "delta": n, "count": new_count},
-            )
-            return {"kind": k, "item": eff.target, "count": new_count}
-        if k == "take_item":
-            n = int(eff.value) if eff.value is not None else 1
-            removed = self.inventory.remove(eff.target, n)
-            return {"kind": k, "item": eff.target, "removed": removed}
-        if k == "use_item":
-            # target = item_id; consumes one of the item and applies its
-            # use_effects in order.
-            item_id = eff.target
-            if not self.inventory.has(item_id, 1):
-                return {"kind": k, "error": "missing item", "item": item_id}
-            item = self.items.get(item_id)
-            if item is None:
-                return {"kind": k, "error": "unknown item", "item": item_id}
-            if not item.consumable:
-                return {"kind": k, "error": "not consumable", "item": item_id}
-            self.inventory.remove(item_id, 1)
-            sub_results: list[dict[str, Any]] = []
-            if item.use_effects:
-                sub_results = self.apply_all(item.use_effects)
-            self.events.record(
-                kind="custom",
-                title=f"使用了 · {item.name}",
-                data={"item": item_id, "effects": sub_results},
-            )
-            return {"kind": k, "item": item_id, "effects": sub_results}
-        if k == "gain_resource":
-            amount = int(eff.value or 0)
-            old, new = self.resources.adjust(eff.target, amount)
-            d = self.resources.definition(eff.target)
-            label = (d.name or eff.target) if d else eff.target
-            symbol = d.symbol if d else ""
-            self.events.record(
-                kind="custom",
-                title=(f"獲得 {label} {symbol}+{amount}" if amount >= 0
-                       else f"失去 {label} {symbol}{amount}"),
-                data={"resource": eff.target, "delta": amount, "new": new},
-            )
-            return {"kind": k, "resource": eff.target,
-                    "delta": amount, "old": old, "new": new}
-        if k == "spend_resource":
-            amount = int(eff.value or 0)
-            ok, balance = self.resources.spend(eff.target, amount)
-            if not ok:
-                return {"kind": k, "error": "insufficient",
-                        "resource": eff.target, "balance": balance,
-                        "needed": amount}
-            d = self.resources.definition(eff.target)
-            label = (d.name or eff.target) if d else eff.target
-            symbol = d.symbol if d else ""
-            self.events.record(
-                kind="custom",
-                title=f"花費 {label} {symbol}-{amount}",
-                data={"resource": eff.target, "delta": -amount, "new": balance},
-            )
-            return {"kind": k, "resource": eff.target,
-                    "delta": -amount, "new": balance}
-        if k == "set_resource":
-            new = self.resources.set(eff.target, int(eff.value or 0))
-            return {"kind": k, "resource": eff.target, "new": new}
-        if k == "buy_item":
-            # target = item_id; stat = currency_id; value = price (per unit)
-            item_id = eff.target
-            currency = eff.stat or "money"
-            price = int(eff.value or 0)
-            if not self.resources.can_afford(currency, price):
-                return {"kind": k, "error": "insufficient_funds",
-                        "currency": currency, "needed": price,
-                        "balance": self.resources.get(currency)}
-            self.resources.spend(currency, price)
-            self.inventory.add(item_id, 1)
-            item = self.items.get(item_id)
-            name = item.name if item else item_id
-            self.events.record(
-                kind="custom",
-                title=f"購買 · {name} ({currency} -{price})",
-                data={"item": item_id, "currency": currency, "price": price},
-            )
-            return {"kind": k, "item": item_id, "currency": currency,
-                    "price": price}
-        if k == "sell_item":
-            # target = item_id; stat = currency_id; value = price gained
-            item_id = eff.target
-            if not self.inventory.has(item_id, 1):
-                return {"kind": k, "error": "missing item", "item": item_id}
-            currency = eff.stat or "money"
-            item = self.items.get(item_id)
-            price = int(eff.value if eff.value is not None
-                        else (item.value if item else 0))
-            self.inventory.remove(item_id, 1)
-            self.resources.adjust(currency, price)
-            name = item.name if item else item_id
-            self.events.record(
-                kind="custom",
-                title=f"賣出 · {name} ({currency} +{price})",
-                data={"item": item_id, "currency": currency, "price": price},
-            )
-            return {"kind": k, "item": item_id, "currency": currency,
-                    "price": price}
-        if k == "gift":
-            # target = npc_id, stat = item_id (reuse the field), value =
-            # optional override count (default 1). The item must be in
-            # inventory; the gift effect applies the heuristic in
-            # inventory.evaluate_gift.
-            item_id = eff.stat or ""
-            n = int(eff.value) if eff.value is not None else 1
-            if not item_id or not self.inventory.has(item_id, n):
-                return {"kind": k, "error": "missing item", "item": item_id}
-            item = self.items.get(item_id)
-            if item is None:
-                return {"kind": k, "error": "unknown item", "item": item_id}
-            # Find the NPC: GameState doesn't own the registry, but the
-            # NPCRegistry is created by the App and reachable via the gift
-            # effect's *target* + meta hook. Without that registry, we
-            # fall back to a +2 generic delta.
-            registry = self.meta.get("__npc_registry__")
-            delta = 2
-            if registry is not None:
-                npc = registry.get(eff.target)
-                if npc is not None:
-                    delta = evaluate_gift(item, npc)
-            new_val, unlocked = self.affection.adjust(eff.target, delta)
-            if item.consumed_on_gift:
-                self.inventory.remove(item_id, n)
-            self.events.record(
-                kind="custom",
-                title=f"送禮 · {item.name} → {eff.target}",
-                summary=f"好感 {'+' if delta >= 0 else ''}{delta}",
-                data={"item": item_id, "target": eff.target,
-                       "delta": delta, "new": new_val},
-            )
-            return {"kind": k, "item": item_id, "target": eff.target,
-                    "delta": delta, "new": new_val, "unlocked": unlocked}
-        if k == "start_quest":
-            started = self.quests.start(eff.target)
-            return {"kind": k, "quest": eff.target, "started": started}
-        if k == "complete_objective":
-            obj_id = eff.stat or ""
-            ok = self.quests.complete_objective(eff.target, obj_id)
-            # Auto-complete the quest when all required objectives are done.
-            auto_completed = False
-            if ok and self.quests._all_required_done(eff.target):
-                auto_completed = self.quests.complete(eff.target)
-            return {"kind": k, "quest": eff.target, "objective": obj_id,
-                    "ok": ok, "auto_completed": auto_completed}
-        if k == "complete_quest":
-            done = self.quests.complete(eff.target)
-            return {"kind": k, "quest": eff.target, "done": done}
-        if k == "fail_quest":
-            failed = self.quests.fail(eff.target)
-            return {"kind": k, "quest": eff.target, "failed": failed}
-        return {"kind": k, "error": "unknown effect"}
+        return result
+
+    # ------------------------------------------------------------------
+    # Internals
+
+    def _fire_effect_hook(self, manager: Any, event: str, **kwargs: Any) -> None:
+        """Fire a lifecycle hook; never raise, only log on failure.
+
+        ``manager`` is typed Any because game_state cannot import the
+        plugin manager (it would be a circular import). At runtime it's
+        always either ``None`` or a real :class:`PluginManager`.
+        """
+        try:
+            manager.fire_hook(event, **kwargs)
+        except Exception as exc:
+            _log.exception("hook fire '%s' failed: %s", event, exc)
 
     def apply_all(self, effs: list[Effect]) -> list[dict[str, Any]]:
         out: list[dict[str, Any]] = []
@@ -320,6 +185,15 @@ class GameState(BaseModel):
                 data={"achievement": ach.id},
             )
             out.append({"kind": "achievement", "id": ach.id, "title": ach.title})
+        # Re-evaluate clues: any newly satisfied requires-gates get added
+        # to the journal and surfaced as toasts so the player notices the
+        # journal button. Resolved clues stay (greyed out) inside the
+        # journal — see ClueTracker.journal().
+        for clue in self.clues.refresh(self):
+            queue = self.meta.setdefault("__pending_toasts__", [])
+            queue.append(("clue", clue.id, clue.title))
+            out.append({"kind": "clue_unlocked", "id": clue.id,
+                        "title": clue.title})
         # Stash item / resource deltas onto meta so the App's toast loop
         # can surface them. The keys are private (double-underscore).
         item_deltas: dict[str, int] = {}

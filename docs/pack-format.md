@@ -1,5 +1,12 @@
 # Pack Format
 
+> **學習路徑**：軌道 1（最後一站）  
+> **前置條件**：讀完 [tutorial-build-a-game.md](tutorial-build-a-game.md)  
+> **下一步**：軌道 2 — 各子系統指南（[scenes.md](scenes.md) / [characters.md](characters.md) / [locations.md](locations.md) / …）  
+> **完整索引**：[docs/README.md](README.md)
+
+---
+
 一個 *pack* 就是一個目錄；放進引擎找得到的地方，
 `world-gal-game --pack <name>` 就能玩。
 
@@ -38,11 +45,18 @@ pack 的根目錄。
 最小可行：
 
 ```yaml
+pack_format_version: "0.1"       # 引擎用來判斷 schema 版本（Phase 1 起建議）
 title: "我的遊戲"
 subtitle: "副標題"
 start_location: starting_room    # 開新遊戲時把玩家放在這個地點
 intro_scene: prologue            # 開新遊戲後第一個自動播的場景
 ```
+
+### pack_format_version
+
+從 Phase 1 開始引擎讀這個欄位，未來 schema 變動會在這裡 bump。Phase 1
+只是「記錄」，不做 migration；缺欄位只會出 warning，不會拒絕載入。新建 pack
+請寫 `"0.1"`。
 
 完整可選欄位：
 

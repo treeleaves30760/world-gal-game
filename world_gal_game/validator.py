@@ -165,29 +165,78 @@ def _achievement_fields() -> list[str]:
     return list(Achievement.model_fields.keys())
 
 
-# Valid effect kind values, for hint generation
-_EFFECT_KINDS = [
-    "affection", "stat", "set_flag", "increment_flag", "advance_time",
-    "move_to", "unlock_location", "play_scene", "end_scene", "log_event",
-    "give_item", "take_item", "gift", "use_item", "gain_resource",
-    "spend_resource", "set_resource", "buy_item", "sell_item",
-]
+# Valid effect / condition kinds are now sourced live from the plugin
+# registry. The lookup is wrapped in functions so import order remains
+# flexible (the registry is populated lazily on first use of the
+# plugins package).
 
-_CONDITION_KINDS = [
-    "flag", "not_flag", "flag_eq", "affection_gte", "affection_lt",
-    "time_in", "visited", "scene_played", "has_item", "achievement",
-    "resource_gte", "resource_lt", "resource_eq",
-]
+def _known_effect_kinds() -> list[str]:
+    from world_gal_game.plugins.registry import EFFECT_REGISTRY
+    return EFFECT_REGISTRY.list_kinds()
+
+
+def _known_condition_kinds() -> list[str]:
+    from world_gal_game.plugins.registry import CONDITION_REGISTRY
+    return CONDITION_REGISTRY.list_kinds()
+
+
+# Back-compat shims for any external code that imported these constants.
+# Each is a module-level proxy that re-resolves on every access so the
+# values stay in sync if plugins load mid-process.
+class _DynamicKindList:
+    """List-like proxy that delegates to a callable returning a fresh list."""
+
+    def __init__(self, source) -> None:
+        self._source = source
+
+    def __iter__(self):
+        return iter(self._source())
+
+    def __contains__(self, item):
+        return item in self._source()
+
+    def __len__(self):
+        return len(self._source())
+
+    def __getitem__(self, idx):
+        return self._source()[idx]
+
+    def __repr__(self):
+        return repr(self._source())
+
+
+_EFFECT_KINDS = _DynamicKindList(_known_effect_kinds)
+_CONDITION_KINDS = _DynamicKindList(_known_condition_kinds)
 
 
 def _validate_effect_raw(raw: dict, *, file: str, path: str) -> list[ValidationIssue]:
-    """Validate a single raw effect dict (before pydantic, for kind hints)."""
+    """Validate a single raw effect dict.
+
+    Since ``Effect.kind`` is now an open string (any plugin can register
+    new kinds), we do the kind-membership check *here* explicitly,
+    before falling through to pydantic for the rest of the schema.
+    """
     from pydantic import ValidationError
     from world_gal_game.core.story_graph import Effect
 
     issues: list[ValidationIssue] = []
     kind_val = raw.get("kind", "") if isinstance(raw, dict) else ""
+    known = _known_effect_kinds()
 
+    # 1) Explicit kind-membership: unknown kind → friendly error + hint.
+    if kind_val and kind_val not in known:
+        suggestion = _suggest(kind_val, known)
+        hint = (f"最接近的 effect kind 是 '{suggestion}'。"
+                if suggestion else None)
+        issues.append(ValidationIssue(
+            severity="error", file=file, path=f"{path}.kind",
+            message=f"effect kind '{kind_val}' 不存在。",
+            hint=hint,
+        ))
+
+    # 2) Pydantic schema check for remaining fields (target/value/stat
+    #    types, extra-forbidden, ...). We don't gate this on the kind
+    #    check above because we want to surface both class of issues.
     try:
         Effect.model_validate(raw)
     except ValidationError as exc:
@@ -198,32 +247,22 @@ def _validate_effect_raw(raw: dict, *, file: str, path: str) -> list[ValidationI
             err_type = err.get("type", "")
             raw_msg = err["msg"]
 
-            if loc == "kind" and ("literal_error" in err_type or "Literal" in raw_msg):
-                suggestion = _suggest(kind_val, _EFFECT_KINDS)
-                hint = f"最接近的 effect kind 是 '{suggestion}'。" if suggestion else None
-                issues.append(ValidationIssue(
-                    severity="error",
-                    file=file,
-                    path=full_path,
-                    message=f"effect kind '{kind_val}' 不存在。",
-                    hint=hint,
-                ))
-            elif err_type == "extra_forbidden" or "Extra inputs are not permitted" in raw_msg:
+            # Skip the kind validator (it was an empty / wrong-type kind);
+            # we already issued a friendly diagnostic above if applicable.
+            if loc == "kind":
+                continue
+            if err_type == "extra_forbidden" or "Extra inputs are not permitted" in raw_msg:
                 bad_field = loc_parts[-1] if loc_parts else "?"
                 suggestion = _suggest(bad_field, _effect_fields())
                 hint = f"你是不是想拼 '{suggestion}'？" if suggestion else None
                 issues.append(ValidationIssue(
-                    severity="error",
-                    file=file,
-                    path=full_path,
+                    severity="error", file=file, path=full_path,
                     message=f"未知欄位 '{bad_field}'。",
                     hint=hint,
                 ))
             else:
                 issues.append(ValidationIssue(
-                    severity="error",
-                    file=file,
-                    path=full_path,
+                    severity="error", file=file, path=full_path,
                     message=raw_msg,
                 ))
     return issues
@@ -235,6 +274,17 @@ def _validate_condition_raw(raw: dict, *, file: str, path: str) -> list[Validati
 
     issues: list[ValidationIssue] = []
     kind_val = raw.get("kind", "") if isinstance(raw, dict) else ""
+    known = _known_condition_kinds()
+
+    if kind_val and kind_val not in known:
+        suggestion = _suggest(kind_val, known)
+        hint = (f"最接近的 condition kind 是 '{suggestion}'。"
+                if suggestion else None)
+        issues.append(ValidationIssue(
+            severity="error", file=file, path=f"{path}.kind",
+            message=f"condition kind '{kind_val}' 不存在。",
+            hint=hint,
+        ))
 
     try:
         Condition.model_validate(raw)
@@ -246,32 +296,20 @@ def _validate_condition_raw(raw: dict, *, file: str, path: str) -> list[Validati
             err_type = err.get("type", "")
             raw_msg = err["msg"]
 
-            if loc == "kind" and ("literal_error" in err_type or "Literal" in raw_msg):
-                suggestion = _suggest(kind_val, _CONDITION_KINDS)
-                hint = f"最接近的 condition kind 是 '{suggestion}'。" if suggestion else None
-                issues.append(ValidationIssue(
-                    severity="error",
-                    file=file,
-                    path=full_path,
-                    message=f"condition kind '{kind_val}' 不存在。",
-                    hint=hint,
-                ))
-            elif err_type == "extra_forbidden" or "Extra inputs are not permitted" in raw_msg:
+            if loc == "kind":
+                continue
+            if err_type == "extra_forbidden" or "Extra inputs are not permitted" in raw_msg:
                 bad_field = loc_parts[-1] if loc_parts else "?"
                 suggestion = _suggest(bad_field, _condition_fields())
                 hint = f"你是不是想拼 '{suggestion}'？" if suggestion else None
                 issues.append(ValidationIssue(
-                    severity="error",
-                    file=file,
-                    path=full_path,
+                    severity="error", file=file, path=full_path,
                     message=f"未知欄位 '{bad_field}'。",
                     hint=hint,
                 ))
             else:
                 issues.append(ValidationIssue(
-                    severity="error",
-                    file=file,
-                    path=full_path,
+                    severity="error", file=file, path=full_path,
                     message=raw_msg,
                 ))
     return issues
@@ -915,4 +953,51 @@ def validate_pack(pack_root: Path) -> list[ValidationIssue]:
         elif name == "locations.yaml":
             issues.extend(_check_refs_locations(data, file=rel, index=index))
 
+    # --- Step 4.5: meta.yaml advisory checks (pack_format_version) ---
+    meta_path = content_root / "meta.yaml"
+    if meta_path in parsed:
+        meta = parsed[meta_path]
+        if isinstance(meta, dict):
+            if "pack_format_version" not in meta:
+                issues.append(ValidationIssue(
+                    severity="warning",
+                    file=_rel(pack_root, meta_path),
+                    path="pack_format_version",
+                    message="meta.yaml 沒有 pack_format_version 欄位。",
+                    hint='加上 `pack_format_version: "0.1"` 以鎖定 schema 版本。',
+                ))
+
+    # --- Step 5: dead-end + reachability warnings via PackInspector. ---
+    # Wrapped in try/except so a misformed pack that crashes the inspector
+    # still gets the previous diagnostics back to the caller.
+    try:
+        from .dev.pack_inspector import PackInspector
+        inspector = PackInspector(pack_root)
+        for de in inspector.dead_ends():
+            issues.append(ValidationIssue(
+                severity="warning",
+                file=de.file or "(pack)",
+                path=f"{de.kind}:{de.target}",
+                message=de.detail,
+                hint=_dead_end_hint(de.kind),
+            ))
+    except Exception as exc:
+        issues.append(ValidationIssue(
+            severity="warning", file="(pack)", path="",
+            message=f"dead-end analysis failed: {exc}",
+            hint="this is best-effort; fix earlier errors and rerun",
+        ))
+
     return issues
+
+
+def _dead_end_hint(kind: str) -> str | None:
+    if kind == "scene":
+        return ("scenes should either have a next_scene / play_scene out, "
+                "or be marked as an ending (id 'ending_*' or tag 'ending')")
+    if kind == "location":
+        return "give the location at least one exit or scene_hook"
+    if kind == "unreachable":
+        return ("either reference this scene via play_scene / next_scene / "
+                "scene_hook, or delete it")
+    return None

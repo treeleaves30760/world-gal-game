@@ -5,6 +5,12 @@
 # affection, achievements, multi-time backgrounds). All assets are
 # .gitkeep stubs — the engine renders purple placeholders for missing
 # images, so the demo runs even with no art.
+
+# Schema version of the pack format. The engine reads this so it can
+# upgrade old packs against future schema changes. Phase 1 just
+# records it; no migration runs yet.
+pack_format_version: "0.1"
+
 title: "小鎮的午後"
 subtitle: "Demo Pack — Engine Showcase"
 

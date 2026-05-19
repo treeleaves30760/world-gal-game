@@ -17,6 +17,11 @@ Condition 是「判斷一件事是否成立」的宣告。
 "affection_gte:heroine_1=25"             # = {kind: affection_gte, target: heroine_1, value: 25}
 ```
 
+> **本表列的是引擎內建 kind**。插件可以註冊新 kind 加進同一份 registry —
+> 跑 `wgg capabilities --pack <pack>` 或 `wgg capabilities --format json` 就能
+> 拿到該 pack 載入時實際可用的全套清單（含 plugin 提供的）。寫插件的方法見
+> [plugins.md](plugins.md)。
+
 ---
 
 ## 旗標（flags）

@@ -41,6 +41,11 @@ ROOT = Path(__file__).resolve().parent.parent
 
 META_TMPL = dedent('''\
     # Pack metadata for {pack}.
+
+    # Schema version of the pack format. Engine reads it to migrate old
+    # packs against future schema changes. Keep as "0.1" for new packs.
+    pack_format_version: "0.1"
+
     title: "{title}"
     subtitle: "{subtitle}"
 

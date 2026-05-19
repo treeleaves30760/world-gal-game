@@ -34,6 +34,7 @@ class MenuScene(Scene):
         self.on_achievements: Callable[[], None] | None = None
         self.on_inventory: Callable[[], None] | None = None
         self.on_quest_log: Callable[[], None] | None = None
+        self.on_clues: Callable[[], None] | None = None
         self.on_save: Callable[[], None] | None = None
         self.on_load: Callable[[], None] | None = None
         self.on_quit_to_title: Callable[[], None] | None = None
@@ -42,7 +43,7 @@ class MenuScene(Scene):
 
     def enter(self, *, on_close=None, on_map=None, on_affection=None,
               on_log=None, on_achievements=None, on_inventory=None,
-              on_quest_log=None,
+              on_quest_log=None, on_clues=None,
               on_save=None, on_load=None,
               on_quit_to_title=None, on_quit_app=None, **_) -> None:
         self.on_close = on_close
@@ -52,6 +53,7 @@ class MenuScene(Scene):
         self.on_achievements = on_achievements
         self.on_inventory = on_inventory
         self.on_quest_log = on_quest_log
+        self.on_clues = on_clues
         self.on_save = on_save
         self.on_load = on_load
         self.on_quit_to_title = on_quit_to_title
@@ -82,9 +84,16 @@ class MenuScene(Scene):
         col_h = 52
         gap = 12
         # Two-column grid of action buttons.
+        # Format the clue-journal label with an unread-count badge so the
+        # menu surfaces "you have new hints" without an extra widget.
+        clue_unread = self.ctx.state.clues.unread_count()
+        clue_label = "線索筆記 (J)"
+        if clue_unread > 0:
+            clue_label = f"線索筆記 (J) · 新 {clue_unread}"
         actions: list[tuple[str, Callable[[], None] | None, str]] = [
             ("地圖 (M)",       self.on_map,          "view"),
             ("好感 (A)",       self.on_affection,    "view"),
+            (clue_label,       self.on_clues,        "view"),
             ("事件 (L)",       self.on_log,          "view"),
             ("成就 (T)",       self.on_achievements, "view"),
             ("物品 (I)",       self.on_inventory,    "view"),
