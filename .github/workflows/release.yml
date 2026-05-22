@@ -1,0 +1,123 @@
+name: Release
+
+# Builds distributables on a version tag (v*) and attaches them to the
+# GitHub Release.
+#
+# IMPORTANT: PyInstaller CANNOT cross-compile. Each desktop OS must build on
+# its own runner with `--target current` (NOT `--target windows/macos/linux`
+# from a foreign host). The matrix below runs the same build on each native
+# runner; do not be tempted to pass per-OS target values.
+
+on:
+  push:
+    tags: ["v*"]
+
+# Override per-pack: the demo pack + app name shipped by this repo.
+env:
+  PACK_PATH: games/demo_pack
+  APP_NAME: WorldGalGameDemo
+
+jobs:
+  desktop:
+    name: desktop (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install Python
+        run: uv python install 3.12
+
+      - name: Sync dependencies + build extra
+        run: uv sync --extra build
+
+      - name: Build desktop binary (native target only)
+        # --target current: PyInstaller builds for the runner's own OS.
+        run: uv run python build.py ${{ env.PACK_PATH }} --name ${{ env.APP_NAME }} --target current --output dist
+
+      - name: Upload desktop artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.APP_NAME }}-${{ runner.os }}
+          path: dist/${{ env.APP_NAME }}
+
+  web:
+    name: web (pygbag/WASM)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install Python
+        run: uv python install 3.12
+
+      - name: Sync dependencies + web extra
+        run: uv sync --extra web
+
+      - name: Build web bundle
+        run: uv run python build.py ${{ env.PACK_PATH }} --name ${{ env.APP_NAME }} --target web --output build/web
+
+      - name: Upload web artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.APP_NAME }}-web
+          # pygbag emits its build under build/web/.../build/web; grab the
+          # whole staging tree so index.html + the archive travel together.
+          path: build/web
+
+  release:
+    name: attach artifacts to release
+    needs: [desktop, web]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Attach to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/**/*
+
+  # --------------------------------------------------------------------------
+  # Future additions (intentionally stubbed — uncomment + configure secrets):
+  #
+  # steam:
+  #   name: steam (SteamPipe upload)
+  #   needs: [desktop]
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - uses: actions/download-artifact@v4
+  #       with: { path: artifacts }
+  #     # Upload the desktop builds to a Steam depot via steamcmd / SteamPipe.
+  #     # Requires STEAM_USERNAME / STEAM_CONFIG_VDF secrets and an app/depot
+  #     # config. The steam_api redistributable is supplied by the depot, not
+  #     # this repo. See docs/distribution-steam.md.
+  #     # - uses: game-ci/steam-deploy@v3
+  #     #   with:
+  #     #     username: ${{ secrets.STEAM_USERNAME }}
+  #     #     configVdf: ${{ secrets.STEAM_CONFIG_VDF }}
+  #     #     appId: <YOUR_APP_ID>
+  #     #     buildDescription: ${{ github.ref_name }}
+  #     #     rootPath: artifacts
+  #
+  # android:
+  #   name: android (PWA / pygbag APK + signing)
+  #   needs: [web]
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     # Wrap the web build as an APK (pygbag --android) or ship the PWA, then
+  #     # sign with apksigner using a keystore from secrets. Out of scope for
+  #     # M3; see the mobile workflow notes in the plan.
+  #     - run: echo "android packaging stub"

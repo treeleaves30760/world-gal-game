@@ -1,0 +1,67 @@
+name: CI
+
+# Run the test suite + pack validation on every push and pull request.
+# A web build-only smoke is included but allowed to be skipped/no-op when
+# pygbag isn't installable, so CI never hard-fails on the optional web extra.
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+
+# Cancel superseded runs on the same ref to save minutes.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      # Headless SDL so pygame-ce initialises with no display/audio device.
+      SDL_VIDEODRIVER: dummy
+      SDL_AUDIODRIVER: dummy
+      PYGAME_HIDE_SUPPORT_PROMPT: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install Python
+        run: uv python install 3.12
+
+      - name: Sync dependencies (engine + dev/test extras)
+        run: uv sync --extra dev
+
+      - name: Run tests
+        run: uv run pytest tests/ -q
+
+      - name: Validate demo pack
+        run: uv run python main.py validate games/demo_pack
+
+      - name: Self-check demo pack (schema + refs + smoke)
+        run: uv run python main.py self-check games/demo_pack
+
+  web-smoke:
+    # Web build is the optional extra. This job stages + attempts a pygbag
+    # build but never blocks CI: continue-on-error keeps a missing/incompatible
+    # pygbag from turning the whole run red.
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install Python
+        run: uv python install 3.12
+
+      - name: Sync dependencies + web extra
+        # If pygbag can't be resolved this step fails, but continue-on-error
+        # on the job keeps CI green — the web build is best-effort here.
+        run: uv sync --extra web
+
+      - name: Web build-only smoke
+        run: uv run python build.py games/demo_pack --target web --output build/web
