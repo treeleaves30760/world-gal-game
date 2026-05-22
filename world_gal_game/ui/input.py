@@ -23,16 +23,30 @@ class InputState:
     quit_requested: bool = False
     confirm: bool = False         # Enter / Space / Z
     cancel: bool = False          # Esc / X
-    advance_dialogue: bool = False  # click / Enter / Space
+    advance_dialogue: bool = False  # click / tap / Enter / Space
+    swipe: str | None = None      # "left" / "right" (touch), set by the App
+    touch_active: bool = False    # a finger is currently down
 
     def is_key_down(self, key: int) -> bool:
         return key in self.keys_down
 
     @classmethod
-    def collect(cls, events: list[pygame.event.Event]) -> "InputState":
+    def collect(cls, events: list[pygame.event.Event], *,
+                transform=None, window_size: tuple[int, int] | None = None
+                ) -> "InputState":
+        """Build a frame's input snapshot.
+
+        ``transform`` (window-pixel -> logical-canvas point) lets the App map
+        coordinates back when the window is scaled/letterboxed; pass ``None``
+        for an identity mapping (the default, so existing callers are
+        unchanged). ``window_size`` is needed to turn normalized touch
+        coordinates into pixels before transforming.
+        """
         s = cls(events=events)
-        s.mouse_pos = pygame.mouse.get_pos()
         s.mouse_pressed = pygame.mouse.get_pressed(num_buttons=3)
+        mouse_pos = pygame.mouse.get_pos()
+        if transform is not None:
+            mouse_pos = transform(mouse_pos)
         for e in events:
             if e.type == pygame.QUIT:
                 s.quit_requested = True
@@ -58,4 +72,17 @@ class InputState:
                     s.cancel = True
             elif e.type == pygame.TEXTINPUT:
                 s.text_input += e.text
+            elif e.type == pygame.FINGERDOWN:
+                # Treat a touch as a click/advance at the touched point.
+                s.touch_active = True
+                if window_size is not None:
+                    wx = e.x * window_size[0]
+                    wy = e.y * window_size[1]
+                    mouse_pos = (transform((wx, wy)) if transform is not None
+                                 else (int(wx), int(wy)))
+                s.mouse_clicked = True
+                s.advance_dialogue = True
+            elif e.type == pygame.FINGERUP:
+                s.touch_active = False
+        s.mouse_pos = mouse_pos
         return s

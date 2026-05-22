@@ -31,19 +31,28 @@ def resource_root() -> Path:
     return Path(__file__).resolve().parent.parent
 
 
-def writable_root() -> Path:
+def writable_root(app_name: str = "WorldGalGame") -> Path:
     """A writable location for save files / user-local data.
 
-    Inside a frozen exe we can't necessarily write next to the binary, so
-    fall back to the user's home directory.
+    - On the web (Emscripten/pygbag) saves must live under the IDBFS mount
+      that gets persisted to IndexedDB — ``/data/<app_name>``.
+    - Inside a frozen exe we can't necessarily write next to the binary, so
+      fall back to the per-platform user data directory.
+    - In development, write next to the project.
+
+    ``app_name`` lets a shipping title pin its folder (e.g. so Steam
+    Auto-Cloud's configured path matches the runtime path exactly).
     """
-    if getattr(sys, "frozen", False):
+    if sys.platform == "emscripten":
+        # pygbag mounts /data as IDBFS; flushed to IndexedDB on save.
+        base = Path("/data") / app_name
+    elif getattr(sys, "frozen", False):
         if sys.platform == "darwin":
-            base = Path.home() / "Library" / "Application Support" / "WorldGalGame"
+            base = Path.home() / "Library" / "Application Support" / app_name
         elif sys.platform == "win32":
-            base = Path(os.environ.get("APPDATA", Path.home())) / "WorldGalGame"
+            base = Path(os.environ.get("APPDATA", Path.home())) / app_name
         else:
-            base = Path.home() / ".local" / "share" / "WorldGalGame"
+            base = Path.home() / ".local" / "share" / app_name
     else:
         base = Path(__file__).resolve().parent.parent
     base.mkdir(parents=True, exist_ok=True)
@@ -63,6 +72,17 @@ def resolve_asset(path: str | Path | None) -> Path | None:
 # ---------- runtime config --------------------------------------------------
 
 
+# Minimum touch-target edge length, in logical canvas pixels, recommended for
+# tappable widgets when ``EngineConfig.touch_mode`` is on. ~44px is the floor
+# both Apple's HIG and Google's Material guidelines cite for finger targets;
+# at the engine's 1280x720 logical canvas that is comfortably tappable on a
+# phone-sized viewport. Widgets MUST only consult this when ``touch_mode`` is
+# True so desktop (mouse) layouts stay byte-identical. Hit-target enlargement
+# itself is deferred to a follow-up; this constant documents the intended
+# minimum so the flag and the number live together.
+MIN_TOUCH_TARGET_PX: int = 44
+
+
 @dataclass
 class EngineConfig:
     # Engine framework default — every pack should override this in
@@ -70,6 +90,10 @@ class EngineConfig:
     # Gal-Game" and not a game-specific title leaking through.
     title: str = "World Gal-Game"
     subtitle: str = ""
+    # Folder name under the OS user-data dir (and the web IDBFS mount). A
+    # shipping title overrides this so saves land in a stable, brandable
+    # location that Steam Auto-Cloud can be pointed at.
+    app_data_name: str = "WorldGalGame"
     screen_size: tuple[int, int] = (1280, 720)
     fps: int = 60
     vsync: bool = True
@@ -107,11 +131,24 @@ class EngineConfig:
         "~/.world-gal-game/packs",    # user-wide pack cache
     )
 
+    # audio volumes (0.0 - 1.0)
+    bgm_volume: float = 0.6
+    sfx_volume: float = 1.0
+    voice_volume: float = 1.0
+
     # text speed (chars/sec); 0 = instant
     text_speed: float = 45.0
 
     # seconds between auto-advances when auto-play mode is on
     auto_play_delay: float = 2.5
+
+    # Touch-friendly UI mode. Off by default so desktop (mouse) input and
+    # widget sizing are unchanged. Intended to be auto-enabled on web/mobile
+    # in a follow-up; when on, tappable widgets should honour
+    # ``MIN_TOUCH_TARGET_PX`` for their hit areas. Any such enlargement MUST
+    # be gated behind this flag — with ``touch_mode`` False the engine renders
+    # and hit-tests exactly as before.
+    touch_mode: bool = False
 
     # dev-mode toggles — populated by from_env(); all off by default
     dev_mode: bool = False
@@ -130,7 +167,7 @@ class EngineConfig:
         )
 
     def save_dir(self) -> Path:
-        d = writable_root() / self.save_subdir
+        d = writable_root(self.app_data_name) / self.save_subdir
         d.mkdir(parents=True, exist_ok=True)
         return d
 

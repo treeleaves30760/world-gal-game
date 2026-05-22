@@ -48,6 +48,26 @@ from .ui.input import InputState
 from .ui.widgets.toast import Toast, ToastStack
 
 
+def _letterbox_view(logical: tuple[int, int], window: tuple[int, int]
+                    ) -> tuple[float, tuple[int, int], tuple[int, int]]:
+    """Fit ``logical`` into ``window`` preserving aspect; return
+    ``(scale, offset, view_size)`` for a centered letterbox blit."""
+    lw, lh = logical
+    dw, dh = window
+    scale = min(dw / lw, dh / lh) if (lw and lh) else 1.0
+    vw, vh = max(1, int(lw * scale)), max(1, int(lh * scale))
+    return scale, ((dw - vw) // 2, (dh - vh) // 2), (vw, vh)
+
+
+def _unproject(pos: tuple[int, int], scale: float,
+               offset: tuple[int, int]) -> tuple[int, int]:
+    """Map a window-pixel point back into logical-canvas coords."""
+    x, y = pos
+    ox, oy = offset
+    s = scale or 1.0
+    return (int((x - ox) / s), int((y - oy) / s))
+
+
 class GalGameApp:
     def __init__(self, *, config: EngineConfig, pack: str | None = None,
                  brain: LLMBrain | None = None, headless: bool = False):
@@ -67,20 +87,39 @@ class GalGameApp:
         if not headless:
             try:
                 pygame.mixer.init()
+                # Reserve channel 0 for per-line voice so auto-allocated SFX
+                # never steal it; 8 total mixing channels is plenty for a VN.
+                pygame.mixer.set_num_channels(8)
+                pygame.mixer.set_reserved(1)
             except pygame.error:
                 # Fine in CI / no-audio environments.
                 pass
-        flags = 0
-        if config.fullscreen and not headless:
-            flags |= pygame.FULLSCREEN
-        if headless:
-            # tiny surface — no actual window
-            self.screen = pygame.Surface(config.screen_size)
-        else:
-            self.screen = pygame.display.set_mode(
-                config.screen_size, flags, vsync=1 if config.vsync else 0,
+        # ----- logical canvas + (optional) real window -----
+        # Everything draws to ``self.screen`` at the fixed design resolution
+        # (config.screen_size). In windowed mode we scale-blit that canvas onto
+        # ``self.display`` (a resizable OS window) each frame, letterboxing to
+        # preserve aspect ratio; input is mapped back from window space to
+        # canvas space. Screenshots / visual baselines / the dev driver all
+        # capture ``self.screen`` directly, so they stay resolution-stable
+        # regardless of window size. In headless mode there is no window and
+        # the canvas is the only surface.
+        self.screen = pygame.Surface(config.screen_size)
+        self.display: pygame.Surface | None = None
+        self._view_scale: float = 1.0
+        self._view_offset: tuple[int, int] = (0, 0)
+        self._view_size: tuple[int, int] = tuple(config.screen_size)
+        self._touch_start: tuple[float, float] | None = None
+        if not headless:
+            display_flags = 0
+            if config.fullscreen:
+                display_flags |= pygame.FULLSCREEN
+            else:
+                display_flags |= pygame.RESIZABLE
+            self.display = pygame.display.set_mode(
+                config.screen_size, display_flags, vsync=1 if config.vsync else 0,
             )
             pygame.display.set_caption(config.title)
+            self._compute_view()
         self.clock = pygame.time.Clock()
 
         # ----- load content -----
@@ -130,6 +169,9 @@ class GalGameApp:
         self.fonts = FontRegistry(self.config.font_candidates,
                                   bundled=bundled_font_path)
         self.assets = AssetManager(pack_root=pack_root)
+        # Push configured audio volumes into the asset manager so voice lines
+        # play at the user's chosen level.
+        self.assets._voice_volume = self.config.voice_volume
         # Theme + localization come from meta.yaml so packs can fully restyle.
         from .ui.theme import Theme as _Theme
         self.theme = _Theme.from_meta(self.meta)
@@ -177,6 +219,17 @@ class GalGameApp:
         for ach_id in list(self.state.achievements.unlocked):
             self.state.achievements.mark_seen(ach_id)
 
+        # ----- optional Steam integration -----
+        # Off by default. Enabled when meta.yaml has `steam.enabled: true`
+        # OR the WGG_STEAM env var is set. Never on the web. Any failure
+        # (lib missing, init false) leaves self._steam = None → the game
+        # runs identically without Steam, so headless / CI / itch builds
+        # are byte-identical.
+        self._steam = None
+        self._init_steam()
+
+        # Dev tools (no-op if WGG_DEV not set)
+
         # Dev tools (no-op if WGG_DEV not set)
         self._dev_mode = bool(os.environ.get("WGG_DEV"))
         if self._dev_mode:
@@ -197,6 +250,66 @@ class GalGameApp:
         else:
             self._debug_overlay = None
             self._hot_reloader = None
+
+    # ----------- optional Steam integration -----------------------------
+
+    def _init_steam(self) -> None:
+        """Bring up the Steam bridge when enabled; otherwise stay a no-op.
+
+        Gated on ``meta.yaml: steam.enabled`` or the ``WGG_STEAM`` env var.
+        Never constructs the bridge on the web. Every step is wrapped so a
+        failure degrades to ``self._steam = None`` (no Steam) rather than
+        breaking startup. On success the bridge is parked on
+        ``state.meta["__steam_bridge__"]`` (a transient ``__`` key, stripped
+        on save) so the achievement hook can find it, the hook module is
+        imported (registering its handler), and already-unlocked
+        achievements are pre-seeded to Steam.
+        """
+        try:
+            from .platform_web import is_web
+            if is_web():
+                return  # never on the browser
+            steam_meta = self.meta.get("steam", {}) if isinstance(self.meta, dict) else {}
+            if not isinstance(steam_meta, dict):
+                steam_meta = {}
+            enabled = bool(steam_meta.get("enabled")) or bool(os.environ.get("WGG_STEAM"))
+            if not enabled:
+                return
+            app_id = steam_meta.get("app_id") or os.environ.get("WGG_STEAM", "480")
+            mapping = steam_meta.get("achievements") or None
+            if mapping is not None and not isinstance(mapping, dict):
+                mapping = None
+
+            from .integrations.steam_bridge import SteamBridge
+            from .integrations.steam_plugin import (
+                push_achievements,  # noqa: F401 — import registers the hook
+                STEAM_BRIDGE_META_KEY,
+            )
+            bridge = SteamBridge.try_init(app_id, mapping=mapping)
+            if bridge is None:
+                return  # Steam absent; run without it.
+            self._steam = bridge
+            # Park the bridge where the EFFECT_AFTER_APPLY hook reads it.
+            self.state.meta[STEAM_BRIDGE_META_KEY] = bridge
+            # Pre-seed: push everything already unlocked (e.g. a loaded save).
+            try:
+                bridge.push_unlocked(list(self.state.achievements.unlocked.keys()))
+                bridge.run_callbacks()
+            except Exception:
+                pass
+        except Exception as exc:
+            # Total isolation — Steam must never break a normal launch.
+            print(f"[steam] init skipped: {exc}", file=sys.stderr)
+            self._steam = None
+
+    def _shutdown_steam(self) -> None:
+        """Tear down the Steam bridge if one is live (idempotent)."""
+        if self._steam is not None:
+            try:
+                self._steam.shutdown()
+            except Exception:
+                pass
+            self._steam = None
 
     # ----------- scene navigation helpers -------------------------------
 
@@ -424,48 +537,148 @@ class GalGameApp:
     # ----------- main loop ----------------------------------------------
 
     def run(self) -> None:
+        """Synchronous main loop (desktop / PyInstaller)."""
         while self._running:
             dt = self.clock.tick(self.config.fps) / 1000.0
-            events = pygame.event.get()
-            inp = InputState.collect(events)
-            if inp.quit_requested:
-                self._running = False
-            # F12 screenshot
-            for e in events:
-                if e.type == pygame.KEYDOWN and e.key == pygame.K_F12:
-                    self.take_screenshot()
-                elif e.type == pygame.KEYDOWN and e.key == pygame.K_F11:
-                    self.dump_state(verbose=True)
-            # Dev-mode key handling (F1 overlay toggle, F5 hot reload)
-            if self._dev_mode:
-                for e in inp.events:
-                    if e.type == pygame.KEYDOWN:
-                        if e.key == pygame.K_F1 and self._debug_overlay:
-                            self._debug_overlay.toggle()
-                        elif e.key == pygame.K_F5 and self._hot_reloader:
-                            self._do_hot_reload()
-            self.manager.update(dt, inp)
-            self._poll_achievement_toasts()
-            self.toast_stack.update(dt, inp)
-            self.manager.draw(self.screen)
-            # Dev overlay drawn after scene stack, before toasts.
-            if self._dev_mode and self._debug_overlay:
-                try:
-                    self._debug_overlay.set_state(self.state)
-                    self._debug_overlay.update(dt, inp)
-                    self._debug_overlay.draw(self.screen)
-                except Exception as _ov_exc:
-                    import sys as _sys
-                    print(f"[dev] overlay error: {_ov_exc}", file=_sys.stderr)
-            self.toast_stack.draw(self.screen)
-            self._maybe_take_pending_screenshot()
-            if self._inspect_pending:
-                self._do_inspect_dump()
-                self._inspect_pending = False
-            if not self.headless:
-                pygame.display.flip()
-
+            self._step(dt)
+        self._shutdown_steam()
         pygame.quit()
+
+    async def run_async(self) -> None:
+        """Async main loop for the web (pygbag/Emscripten) target.
+
+        Identical to :meth:`run` but yields to the browser event loop once
+        per frame via ``await asyncio.sleep(0)`` — without this the WASM tab
+        would freeze. Desktop never uses this path, so its behavior is
+        unchanged.
+        """
+        import asyncio
+        while self._running:
+            dt = self.clock.tick(self.config.fps) / 1000.0
+            self._step(dt)
+            await asyncio.sleep(0)
+        self._shutdown_steam()
+        pygame.quit()
+
+    def _step(self, dt: float) -> None:
+        """Run exactly one frame: input -> update -> draw -> present.
+
+        Contains no blocking calls, so it is safe under both the sync and
+        async drivers. ``dt`` is clamped to absorb the huge spikes that
+        happen after a stall (e.g. a backgrounded browser tab).
+        """
+        dt = min(dt, 0.1)
+        events = pygame.event.get()
+        win_size = self.display.get_size() if self.display is not None else None
+        inp = InputState.collect(
+            events, transform=self._window_to_logical, window_size=win_size,
+        )
+        if inp.quit_requested:
+            self._running = False
+        # Window resize -> recompute the letterbox view transform.
+        for e in events:
+            if e.type == pygame.VIDEORESIZE and self.display is not None:
+                self._on_resize(e.w, e.h)
+        # Touch swipe (spans frames) -> populate inp.swipe.
+        self._update_touch_gesture(events, inp)
+        # F12 screenshot / F11 state dump
+        for e in events:
+            if e.type == pygame.KEYDOWN and e.key == pygame.K_F12:
+                self.take_screenshot()
+            elif e.type == pygame.KEYDOWN and e.key == pygame.K_F11:
+                self.dump_state(verbose=True)
+        # Dev-mode key handling (F1 overlay toggle, F5 hot reload)
+        if self._dev_mode:
+            for e in inp.events:
+                if e.type == pygame.KEYDOWN:
+                    if e.key == pygame.K_F1 and self._debug_overlay:
+                        self._debug_overlay.toggle()
+                    elif e.key == pygame.K_F5 and self._hot_reloader:
+                        self._do_hot_reload()
+        self.manager.update(dt, inp)
+        self._poll_achievement_toasts()
+        # Pump Steam callbacks once per frame (flushes stored stats when
+        # dirty). No-op when Steam is not enabled / not present.
+        if self._steam is not None:
+            self._steam.run_callbacks()
+        self.toast_stack.update(dt, inp)
+        self.manager.draw(self.screen)
+        # Dev overlay drawn after scene stack, before toasts.
+        if self._dev_mode and self._debug_overlay:
+            try:
+                self._debug_overlay.set_state(self.state)
+                self._debug_overlay.update(dt, inp)
+                self._debug_overlay.draw(self.screen)
+            except Exception as _ov_exc:
+                import sys as _sys
+                print(f"[dev] overlay error: {_ov_exc}", file=_sys.stderr)
+        self.toast_stack.draw(self.screen)
+        self._maybe_take_pending_screenshot()
+        if self._inspect_pending:
+            self._do_inspect_dump()
+            self._inspect_pending = False
+        self._present()
+
+    # ----------- responsive presentation --------------------------------
+
+    def _compute_view(self) -> None:
+        """Recompute the scale + letterbox offset that fits the logical
+        canvas into the current display, preserving 16:9 aspect ratio."""
+        if self.display is None:
+            return
+        self._view_scale, self._view_offset, self._view_size = _letterbox_view(
+            tuple(self.config.screen_size), self.display.get_size(),
+        )
+
+    def _on_resize(self, w: int, h: int) -> None:
+        flags = pygame.FULLSCREEN if self.config.fullscreen else pygame.RESIZABLE
+        self.display = pygame.display.set_mode(
+            (max(1, w), max(1, h)), flags, vsync=1 if self.config.vsync else 0,
+        )
+        self._compute_view()
+
+    def _window_to_logical(self, pos: tuple[int, int]) -> tuple[int, int]:
+        """Map a point in window pixels back to logical canvas coords."""
+        return _unproject(pos, self._view_scale, self._view_offset)
+
+    def _present(self) -> None:
+        """Scale-blit the logical canvas onto the real window + flip.
+
+        No-op in headless mode (no window). When the window matches the
+        logical size exactly (the default), blits 1:1 for a pixel-identical
+        result and skips the smoothscale.
+        """
+        if self.display is None:
+            return
+        if (self._view_scale == 1.0 and self._view_offset == (0, 0)
+                and self._view_size == tuple(self.config.screen_size)):
+            self.display.blit(self.screen, (0, 0))
+        else:
+            self.display.fill((0, 0, 0))
+            scaled = pygame.transform.smoothscale(self.screen, self._view_size)
+            self.display.blit(scaled, self._view_offset)
+        pygame.display.flip()
+
+    def _update_touch_gesture(self, events, inp) -> None:
+        """Classify a touch drag into inp.swipe ('left'/'right').
+
+        FINGERDOWN / FINGERUP can land on different frames, so the start
+        point is tracked on the app. Coordinates are normalized [0,1].
+        """
+        for e in events:
+            if e.type == pygame.FINGERDOWN:
+                self._touch_start = (e.x, e.y)
+            elif e.type == pygame.FINGERUP and self._touch_start is not None:
+                sx, _sy = self._touch_start
+                dx = e.x - sx
+                dy = e.y - self._touch_start[1]
+                self._touch_start = None
+                if abs(dx) > 0.12 and abs(dx) > abs(dy):
+                    inp.swipe = "right" if dx > 0 else "left"
+
+    def quit(self) -> None:
+        """Stop the main loop (used by the web entry / external drivers)."""
+        self._running = False
 
     def _poll_achievement_toasts(self) -> None:
         """Surface any unlocked-but-unseen achievements as toasts, plus
