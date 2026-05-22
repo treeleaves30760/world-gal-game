@@ -45,6 +45,163 @@ def _rel(pack_root: Path, path: Path) -> str:
         return str(path)
 
 
+def _resolve_asset_path(ref: str, *, pack_root: Path) -> Path | None:
+    """Resolve a pack asset reference to a filesystem path, mirroring
+    :meth:`world_gal_game.ui.assets.AssetManager._resolve` for the static
+    case (no display needed).
+
+    - An absolute path is used as-is.
+    - An ``assets/...`` (or ``./assets/...``) path resolves against the pack
+      root — the recommended relocatable form.
+    - Anything else is resolved against the pack root too (best-effort; the
+      validator can't see the engine resource root, and pack-relative is the
+      only thing it can verify deterministically).
+
+    Returns the resolved path (which may or may not exist) or ``None`` for an
+    empty reference.
+    """
+    if not ref or not isinstance(ref, str):
+        return None
+    p = Path(ref)
+    if p.is_absolute():
+        return p
+    parts = p.parts
+    if parts and parts[0] in ("assets", "./assets"):
+        return (pack_root / p)
+    return (pack_root / p)
+
+
+def _check_line_assets(raw_line: dict, *, file: str, path: str,
+                       pack_root: Path) -> list[ValidationIssue]:
+    """Warn about referenced line assets that don't exist on disk.
+
+    Covers ``voice`` / ``cg`` / ``sfx`` / ``bgm`` (direct path each) and every
+    ``portraits[*]`` entry (via :meth:`PortraitSpec.candidate_paths`). Missing
+    files are *warnings*, not errors: the engine renders placeholders for
+    images and silently no-ops missing audio, so a pack still runs while art /
+    voice is in progress.
+    """
+    from world_gal_game.core.portrait_spec import PortraitSpec
+
+    issues: list[ValidationIssue] = []
+
+    # Direct single-path fields.
+    for fld, label in (("voice", "語音"), ("cg", "CG"),
+                       ("sfx", "音效"), ("bgm", "背景音樂")):
+        ref = raw_line.get(fld)
+        if isinstance(ref, str) and ref:
+            resolved = _resolve_asset_path(ref, pack_root=pack_root)
+            if resolved is not None and not resolved.exists():
+                issues.append(ValidationIssue(
+                    severity="warning", file=file, path=f"{path}.{fld}",
+                    message=f"{label}檔案不存在：{ref}",
+                    hint="引擎會以 placeholder/靜音降級；補上檔案或修正路徑。",
+                ))
+
+    # Multi-slot portraits: only warn if *all* candidate paths are missing.
+    raw_ports = raw_line.get("portraits")
+    if isinstance(raw_ports, list):
+        for pi, raw_p in enumerate(raw_ports):
+            if not isinstance(raw_p, dict):
+                continue
+            try:
+                spec = PortraitSpec.model_validate(raw_p)
+            except Exception:
+                # Schema problems are reported elsewhere; skip asset check.
+                continue
+            candidates = spec.candidate_paths()
+            if not candidates:
+                continue
+            any_exists = False
+            for cand in candidates:
+                resolved = _resolve_asset_path(cand, pack_root=pack_root)
+                if resolved is not None and resolved.exists():
+                    any_exists = True
+                    break
+            if not any_exists:
+                issues.append(ValidationIssue(
+                    severity="warning", file=file,
+                    path=f"{path}.portraits[{pi}]",
+                    message=(f"立繪 '{spec.character}' 找不到任何候選圖檔"
+                             f"（{candidates[0]} 等）。"),
+                    hint="引擎會畫紫色 placeholder；補上立繪圖檔或修正 character。",
+                ))
+    return issues
+
+
+def _check_line_markup(raw_line: dict, *, file: str,
+                       path: str) -> list[ValidationIssue]:
+    """Lint a line's rich-text ``text`` for unbalanced / unknown / malformed
+    markup. Each problem is an *error* with a closest-match hint for unknown
+    tags (the parser tolerates these at runtime, but they're almost always a
+    typo the author wants to know about).
+    """
+    from world_gal_game.dialogue.richtext import lint_markup, RICHTEXT_TAGS
+
+    issues: list[ValidationIssue] = []
+    text = raw_line.get("text")
+    if not isinstance(text, str) or not text:
+        return issues
+    tags = sorted(RICHTEXT_TAGS)
+    for problem in lint_markup(text):
+        hint = None
+        # "未知標記 [name]。" -> suggest closest known tag.
+        if problem.startswith("未知標記 ["):
+            bad = problem[len("未知標記 ["):].rstrip("。]")
+            suggestion = _suggest(bad, tags)
+            if suggestion:
+                hint = f"最接近的標記是 [{suggestion}]。"
+        issues.append(ValidationIssue(
+            severity="error", file=file, path=f"{path}.text",
+            message=f"富文本標記問題：{problem}",
+            hint=hint,
+        ))
+    return issues
+
+
+def _check_line_animations(raw_line: dict, *, file: str,
+                           path: str) -> list[ValidationIssue]:
+    """Validate ``portraits[*].enter`` / ``.exit`` against
+    :data:`PORTRAIT_ANIMATIONS` and any ``.easing`` against
+    :data:`EASING_NAMES`. Unknown names are errors with a closest-match hint
+    (mirrors the effect-kind membership check).
+    """
+    from world_gal_game.core.portrait_spec import PORTRAIT_ANIMATIONS
+    from world_gal_game.ui.easing import EASING_NAMES
+
+    issues: list[ValidationIssue] = []
+    raw_ports = raw_line.get("portraits")
+    if not isinstance(raw_ports, list):
+        return issues
+    anims = sorted(PORTRAIT_ANIMATIONS)
+    easings = list(EASING_NAMES)
+    for pi, raw_p in enumerate(raw_ports):
+        if not isinstance(raw_p, dict):
+            continue
+        pp = f"{path}.portraits[{pi}]"
+        for fld in ("enter", "exit"):
+            val = raw_p.get(fld)
+            if isinstance(val, str) and val and val not in PORTRAIT_ANIMATIONS:
+                suggestion = _suggest(val, anims)
+                hint = (f"最接近的動畫是 '{suggestion}'。"
+                        if suggestion else
+                        f"可用動畫：{anims}")
+                issues.append(ValidationIssue(
+                    severity="error", file=file, path=f"{pp}.{fld}",
+                    message=f"立繪動畫 '{val}' 不存在。", hint=hint,
+                ))
+        easing = raw_p.get("easing")
+        if isinstance(easing, str) and easing and easing not in EASING_NAMES:
+            suggestion = _suggest(easing, easings)
+            hint = (f"最接近的 easing 是 '{suggestion}'。"
+                    if suggestion else f"可用 easing：{easings}")
+            issues.append(ValidationIssue(
+                severity="error", file=file, path=f"{pp}.easing",
+                message=f"easing '{easing}' 不存在。", hint=hint,
+            ))
+    return issues
+
+
 # ---------------------------------------------------------------------------
 # Per-file YAML parse
 # ---------------------------------------------------------------------------
@@ -315,8 +472,14 @@ def _validate_condition_raw(raw: dict, *, file: str, path: str) -> list[Validati
     return issues
 
 
-def _validate_scenes_yaml(data: Any, *, file: str) -> list[ValidationIssue]:
-    """Validate a scenes YAML (list or {scenes:[...]} wrapper)."""
+def _validate_scenes_yaml(data: Any, *, file: str,
+                          pack_root: Path | None = None) -> list[ValidationIssue]:
+    """Validate a scenes YAML (list or {scenes:[...]} wrapper).
+
+    ``pack_root`` enables the asset-existence checks (resolving pack-relative
+    ``assets/...`` references). When ``None`` (rare standalone call) those
+    checks are skipped; markup + animation/easing checks still run.
+    """
     from pydantic import ValidationError
     from world_gal_game.core.story_graph import Scene, Line, Choice, Effect, Condition
 
@@ -360,6 +523,13 @@ def _validate_scenes_yaml(data: Any, *, file: str) -> list[ValidationIssue]:
                 if isinstance(raw_cond, dict):
                     issues.extend(_validate_condition_raw(
                         raw_cond, file=file, path=f"{lp}.requires[{ci2}]"))
+            # New field-aware checks: asset existence (warning), rich-text
+            # well-formedness (error), animation/easing names (error).
+            if pack_root is not None:
+                issues.extend(_check_line_assets(
+                    raw_line, file=file, path=lp, pack_root=pack_root))
+            issues.extend(_check_line_markup(raw_line, file=file, path=lp))
+            issues.extend(_check_line_animations(raw_line, file=file, path=lp))
 
         # Validate choices
         for ci, raw_choice in enumerate(raw_scene.get("choices") or []):
@@ -903,7 +1073,8 @@ def validate_pack(pack_root: Path) -> list[ValidationIssue]:
         elif name == "achievements.yaml":
             issues.extend(_validate_achievements_yaml(data, file=rel))
         elif yaml_path.parent.name == "scenes" or "scene" in stem:
-            issues.extend(_validate_scenes_yaml(data, file=rel))
+            issues.extend(_validate_scenes_yaml(
+                data, file=rel, pack_root=pack_root))
         else:
             # Unknown YAML — at least it parsed; no schema to check
             pass
@@ -986,6 +1157,72 @@ def validate_pack(pack_root: Path) -> list[ValidationIssue]:
             severity="warning", file="(pack)", path="",
             message=f"dead-end analysis failed: {exc}",
             hint="this is best-effort; fix earlier errors and rerun",
+        ))
+
+    return issues
+
+
+def validate_for_web(pack_root: Path,
+                     meta: dict[str, Any] | None = None) -> list[ValidationIssue]:
+    """Web-target-only gate. **Opt-in** — ``validate_pack`` never calls this.
+
+    The browser has two failure modes the desktop doesn't:
+
+    - **No system fonts.** ``pygame.font.match_font`` finds nothing under
+      Emscripten, so a pack relying on a system CJK face renders tofu
+      (missing-glyph boxes). The pack therefore *must* ship a
+      ``bundled_font`` in ``meta.yaml``. Missing → **error**.
+    - **Limited audio codecs.** ``.mp3`` decoding is patchy and ``.wav`` is
+      huge over the wire; OGG/Vorbis is the reliable, compact choice.
+      Any ``.mp3`` / ``.wav`` asset under the pack → **warning**.
+
+    Parameters
+    ----------
+    pack_root:
+        The pack root (the dir containing ``content/`` and ``assets/``).
+    meta:
+        Already-parsed ``content/meta.yaml`` dict. When ``None`` it is read
+        from disk (best-effort; an unreadable meta yields the font error).
+    """
+    pack_root = Path(pack_root).resolve()
+    issues: list[ValidationIssue] = []
+
+    content_root = (pack_root / "content"
+                    if (pack_root / "content").is_dir() else pack_root)
+
+    # Resolve meta if not supplied.
+    if meta is None:
+        meta_path = content_root / "meta.yaml"
+        meta = {}
+        if meta_path.exists():
+            try:
+                with open(meta_path, encoding="utf-8") as fh:
+                    loaded = yaml.safe_load(fh)
+                if isinstance(loaded, dict):
+                    meta = loaded
+            except yaml.YAMLError:
+                meta = {}
+
+    # 1) bundled_font is mandatory on the web (CJK tofu risk otherwise).
+    if not (isinstance(meta, dict) and meta.get("bundled_font")):
+        issues.append(ValidationIssue(
+            severity="error",
+            file="content/meta.yaml",
+            path="bundled_font",
+            message="Web 目標必須在 meta.yaml 指定 bundled_font；"
+                    "瀏覽器沒有系統字型，CJK 會變成豆腐方塊。",
+            hint='加上 `bundled_font: assets/fonts/YourFont.ttf`（建議用 '
+                 'subset 後的 CJK 字型以縮小首載體積）。',
+        ))
+
+    # 2) Audio assets in mp3/wav -> warning (prefer ogg on the web).
+    for audio in sorted(pack_root.rglob("*.mp3")) + sorted(pack_root.rglob("*.wav")):
+        issues.append(ValidationIssue(
+            severity="warning",
+            file=_rel(pack_root, audio),
+            path="",
+            message=f"音訊 '{audio.name}' 在 Web 上相容性不佳；建議改用 OGG。",
+            hint="瀏覽器對 .mp3 解碼不一致、.wav 體積大；轉成 .ogg 最穩定。",
         ))
 
     return issues

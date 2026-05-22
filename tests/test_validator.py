@@ -10,7 +10,9 @@ from pathlib import Path
 import pytest
 import yaml
 
-from world_gal_game.validator import ValidationIssue, validate_pack
+from world_gal_game.validator import (
+    ValidationIssue, validate_pack, validate_for_web,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -243,3 +245,263 @@ def test_issue_type_is_dataclass(tmp_path: Path) -> None:
         assert isinstance(iss.file, str)
         assert isinstance(iss.path, str)
         assert isinstance(iss.message, str)
+
+
+# ---------------------------------------------------------------------------
+# C-WS2.3: asset existence (warning)
+# ---------------------------------------------------------------------------
+
+def test_missing_voice_file_warns(tmp_path: Path) -> None:
+    _make_minimal_pack(tmp_path)
+    scenes_dir = tmp_path / "content" / "scenes"
+    _write(scenes_dir / "voiced.yaml", {"scenes": [
+        {
+            "id": "scene_voiced",
+            "title": "Voiced",
+            "lines": [
+                {"text": "Hi.", "voice": "assets/voice/missing.ogg"},
+            ],
+        }
+    ]})
+    issues = validate_pack(tmp_path)
+    errors = [i for i in issues if i.severity == "error"]
+    assert errors == [], f"asset miss must not be an error: {errors}"
+    warnings = [i for i in issues if i.severity == "warning"]
+    voice_w = [w for w in warnings if "missing.ogg" in w.message]
+    assert len(voice_w) == 1, f"expected one voice warning, got: {warnings}"
+
+
+def test_present_voice_file_ok(tmp_path: Path) -> None:
+    _make_minimal_pack(tmp_path)
+    # Create the referenced asset so the check passes silently.
+    voice = tmp_path / "assets" / "voice" / "present.ogg"
+    voice.parent.mkdir(parents=True, exist_ok=True)
+    voice.write_bytes(b"\x00")
+    scenes_dir = tmp_path / "content" / "scenes"
+    _write(scenes_dir / "voiced_ok.yaml", {"scenes": [
+        {
+            "id": "scene_voiced_ok",
+            "title": "Voiced OK",
+            "lines": [
+                {"text": "Hi.", "voice": "assets/voice/present.ogg"},
+            ],
+        }
+    ]})
+    issues = validate_pack(tmp_path)
+    voice_issues = [i for i in issues if "present.ogg" in i.message]
+    assert voice_issues == [], f"present asset should not warn: {voice_issues}"
+
+
+def test_missing_portrait_all_candidates_warns(tmp_path: Path) -> None:
+    _make_minimal_pack(tmp_path)
+    scenes_dir = tmp_path / "content" / "scenes"
+    _write(scenes_dir / "portrait.yaml", {"scenes": [
+        {
+            "id": "scene_portrait",
+            "title": "Portrait",
+            "lines": [
+                {"text": "Hi.", "portraits": [
+                    {"character": "nobody_here"},
+                ]},
+            ],
+        }
+    ]})
+    issues = validate_pack(tmp_path)
+    errors = [i for i in issues if i.severity == "error"]
+    assert errors == [], f"missing portrait must not error: {errors}"
+    warnings = [i for i in issues if i.severity == "warning"]
+    port_w = [w for w in warnings if "nobody_here" in w.message]
+    assert len(port_w) == 1, f"expected one portrait warning, got: {warnings}"
+
+
+# ---------------------------------------------------------------------------
+# C-WS2.3: rich-text well-formedness (error)
+# ---------------------------------------------------------------------------
+
+def test_unbalanced_richtext_tag_errors(tmp_path: Path) -> None:
+    _make_minimal_pack(tmp_path)
+    scenes_dir = tmp_path / "content" / "scenes"
+    _write(scenes_dir / "rich_bad.yaml", {"scenes": [
+        {
+            "id": "scene_rich_bad",
+            "title": "Rich Bad",
+            "lines": [{"text": "[b]never closed"}],
+        }
+    ]})
+    issues = validate_pack(tmp_path)
+    errors = [i for i in issues if i.severity == "error"]
+    rich_errors = [e for e in errors if "富文本" in e.message]
+    assert len(rich_errors) >= 1, f"expected rich-text error, got: {errors}"
+
+
+def test_unknown_richtext_tag_errors(tmp_path: Path) -> None:
+    _make_minimal_pack(tmp_path)
+    scenes_dir = tmp_path / "content" / "scenes"
+    # "[bold]" is not a known tag (the known one is "[b]").
+    _write(scenes_dir / "rich_unknown.yaml", {"scenes": [
+        {
+            "id": "scene_rich_unknown",
+            "title": "Rich Unknown",
+            "lines": [{"text": "[bold]hi[/bold]"}],
+        }
+    ]})
+    issues = validate_pack(tmp_path)
+    errors = [i for i in issues if i.severity == "error"]
+    unknown = [e for e in errors if "bold" in e.message]
+    assert len(unknown) >= 1, f"expected unknown-tag error, got: {errors}"
+
+
+def test_unknown_richtext_tag_suggests_close_match(tmp_path: Path) -> None:
+    _make_minimal_pack(tmp_path)
+    scenes_dir = tmp_path / "content" / "scenes"
+    # "[colr]" is a near-miss for the known tag "[color]".
+    _write(scenes_dir / "rich_typo.yaml", {"scenes": [
+        {
+            "id": "scene_rich_typo",
+            "title": "Rich Typo",
+            "lines": [{"text": "[colr=#fff]hi[/colr]"}],
+        }
+    ]})
+    issues = validate_pack(tmp_path)
+    errors = [i for i in issues if i.severity == "error"]
+    unknown = [e for e in errors if "colr" in e.message]
+    assert len(unknown) >= 1, f"expected unknown-tag error, got: {errors}"
+    assert any(e.hint and "[color]" in e.hint for e in unknown), \
+        f"expected a [color] suggestion, got: {[e.hint for e in unknown]}"
+
+
+def test_wellformed_richtext_no_error(tmp_path: Path) -> None:
+    _make_minimal_pack(tmp_path)
+    scenes_dir = tmp_path / "content" / "scenes"
+    _write(scenes_dir / "rich_ok.yaml", {"scenes": [
+        {
+            "id": "scene_rich_ok",
+            "title": "Rich OK",
+            "lines": [{"text": "[color=#ffcc66][b]hi[/b][/color][w=0.5]"}],
+        }
+    ]})
+    issues = validate_pack(tmp_path)
+    rich_errors = [i for i in issues
+                   if i.severity == "error" and "富文本" in i.message]
+    assert rich_errors == [], f"well-formed markup should not error: {rich_errors}"
+
+
+# ---------------------------------------------------------------------------
+# C-WS2.3: animation / easing name validity (error)
+# ---------------------------------------------------------------------------
+
+def test_unknown_portrait_animation_errors_with_suggestion(tmp_path: Path) -> None:
+    _make_minimal_pack(tmp_path)
+    scenes_dir = tmp_path / "content" / "scenes"
+    # "slide_lft" is a typo for "slide_left".
+    _write(scenes_dir / "anim_bad.yaml", {"scenes": [
+        {
+            "id": "scene_anim_bad",
+            "title": "Anim Bad",
+            "lines": [{"text": "Hi.", "portraits": [
+                {"character": "hero_a", "enter": "slide_lft"},
+            ]}],
+        }
+    ]})
+    issues = validate_pack(tmp_path)
+    errors = [i for i in issues if i.severity == "error"]
+    anim_errors = [e for e in errors if "slide_lft" in e.message]
+    assert len(anim_errors) >= 1, f"expected animation error, got: {errors}"
+    assert any(e.hint and "slide_left" in e.hint for e in anim_errors), \
+        f"expected slide_left suggestion, got: {[e.hint for e in anim_errors]}"
+
+
+def test_known_portrait_animation_ok(tmp_path: Path) -> None:
+    _make_minimal_pack(tmp_path)
+    scenes_dir = tmp_path / "content" / "scenes"
+    _write(scenes_dir / "anim_ok.yaml", {"scenes": [
+        {
+            "id": "scene_anim_ok",
+            "title": "Anim OK",
+            "lines": [{"text": "Hi.", "portraits": [
+                {"character": "hero_a", "enter": "fade", "exit": "slide_right"},
+            ]}],
+        }
+    ]})
+    issues = validate_pack(tmp_path)
+    anim_errors = [i for i in issues
+                   if i.severity == "error" and "動畫" in i.message]
+    assert anim_errors == [], f"known animation should not error: {anim_errors}"
+
+
+def test_unknown_easing_errors_with_suggestion(tmp_path: Path) -> None:
+    _make_minimal_pack(tmp_path)
+    scenes_dir = tmp_path / "content" / "scenes"
+    # "out_quat" is a typo for "out_quad". easing isn't a PortraitSpec model
+    # field, so this exercises the raw-dict animation check directly.
+    _write(scenes_dir / "easing_bad.yaml", {"scenes": [
+        {
+            "id": "scene_easing_bad",
+            "title": "Easing Bad",
+            "lines": [{"text": "Hi.", "portraits": [
+                {"character": "hero_a", "enter": "fade", "easing": "out_quat"},
+            ]}],
+        }
+    ]})
+    issues = validate_pack(tmp_path)
+    errors = [i for i in issues if i.severity == "error"]
+    easing_errors = [e for e in errors if "out_quat" in e.message]
+    assert len(easing_errors) >= 1, f"expected easing error, got: {errors}"
+    assert any(e.hint and "out_quad" in e.hint for e in easing_errors), \
+        f"expected out_quad suggestion, got: {[e.hint for e in easing_errors]}"
+
+
+# ---------------------------------------------------------------------------
+# B1: web-target gate (validate_for_web) — opt-in, not run by validate_pack
+# ---------------------------------------------------------------------------
+
+def test_web_gate_missing_bundled_font_errors(tmp_path: Path) -> None:
+    """A pack with no bundled_font is a web ERROR (CJK tofu risk)."""
+    _make_minimal_pack(tmp_path)
+    _write(tmp_path / "content" / "meta.yaml", {
+        "title": "No Font", "pack_format_version": "0.1",
+    })
+    issues = validate_for_web(tmp_path)
+    font_errs = [i for i in issues
+                 if i.severity == "error" and i.path == "bundled_font"]
+    assert len(font_errs) == 1, f"expected a bundled_font error, got: {issues}"
+
+
+def test_web_gate_with_bundled_font_no_font_error(tmp_path: Path) -> None:
+    """With bundled_font present, the font error is gone."""
+    _make_minimal_pack(tmp_path)
+    _write(tmp_path / "content" / "meta.yaml", {
+        "title": "Has Font", "pack_format_version": "0.1",
+        "bundled_font": "assets/fonts/font.ttf",
+    })
+    issues = validate_for_web(tmp_path)
+    font_errs = [i for i in issues if i.path == "bundled_font"]
+    assert font_errs == [], f"bundled_font present should not error: {font_errs}"
+
+
+def test_web_gate_warns_on_mp3_and_wav(tmp_path: Path) -> None:
+    """mp3/wav audio assets become web warnings (prefer OGG)."""
+    _make_minimal_pack(tmp_path)
+    _write(tmp_path / "content" / "meta.yaml", {
+        "title": "Audio", "pack_format_version": "0.1",
+        "bundled_font": "assets/fonts/font.ttf",
+    })
+    (tmp_path / "assets" / "audio").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "assets" / "audio" / "bgm.mp3").write_bytes(b"\x00")
+    (tmp_path / "assets" / "audio" / "sfx.wav").write_bytes(b"\x00")
+    issues = validate_for_web(tmp_path)
+    warns = [i for i in issues if i.severity == "warning"]
+    names = " ".join(w.message for w in warns)
+    assert "bgm.mp3" in names and "sfx.wav" in names, f"got: {warns}"
+
+
+def test_web_gate_does_not_affect_validate_pack(tmp_path: Path) -> None:
+    """validate_pack must NOT fail a fontless / mp3 pack — web gate is opt-in."""
+    _make_minimal_pack(tmp_path)  # no bundled_font in this minimal meta
+    (tmp_path / "assets").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "assets" / "a.mp3").write_bytes(b"\x00")
+    issues = validate_pack(tmp_path)
+    # No bundled_font / mp3 errors should appear from the normal validator.
+    assert not any(i.path == "bundled_font" for i in issues)
+    assert not any(".mp3" in i.message for i in issues
+                   if i.severity == "error")
