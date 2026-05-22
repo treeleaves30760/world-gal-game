@@ -19,9 +19,9 @@ class TitleScene(Scene):
         self.subtitle_text: str = ctx.config.subtitle
 
     def enter(self, *, bg: str | None = None, title: str | None = None,
-              subtitle: str | None = None, on_new_game=None, on_load=None,
-              on_quit=None, on_cg_gallery=None, on_music_room=None,
-              on_endings=None, **_) -> None:
+              subtitle: str | None = None, on_continue=None, on_new_game=None,
+              on_load=None, on_quit=None, on_cg_gallery=None,
+              on_music_room=None, on_endings=None, **_) -> None:
         self.bg_path = bg
         self.title_text = title or self.title_text
         self.subtitle_text = subtitle or self.subtitle_text
@@ -37,28 +37,16 @@ class TitleScene(Scene):
             max_length=12,
         )
         # Menu
+        self.on_continue = on_continue
         self.on_new_game = on_new_game
         self.on_load = on_load
         self.on_quit = on_quit
         self.on_cg_gallery = on_cg_gallery
         self.on_music_room = on_music_room
         self.on_endings = on_endings
-        items = [
-            MenuItem("開始新遊戲", self._start_new),
-            MenuItem("載入存檔", lambda: on_load and on_load()),
-        ]
-        # "Extras" (鑑賞模式): only shown when the app wired the gallery
-        # callbacks. Opens whichever gallery scenes are available straight
-        # from the title — galleries read from the loaded pack's trackers.
-        if any((on_cg_gallery, on_music_room, on_endings)):
-            items.append(MenuItem(self.ctx.t("extras", "鑑賞模式"),
-                                  self._open_extras))
-        items.append(MenuItem("離開遊戲", lambda: on_quit and on_quit()))
-        self.menu = MenuList(
-            pygame.Rect(cx - panel_w // 2, sh // 2 + 90, panel_w, panel_h),
-            items,
-            fonts=self.ctx.fonts, theme=self.ctx.theme, row_h=52,
-        )
+        self._menu_origin = (cx - panel_w // 2, sh // 2 + 90, panel_w)
+        self._extras_mode = False
+        self._build_menu()
 
     def _start_new(self) -> None:
         name = (self.name_input.text or "玩家").strip()
@@ -66,17 +54,47 @@ class TitleScene(Scene):
         if self.on_new_game:
             self.on_new_game()
 
-    def _open_extras(self) -> None:
-        """Enter the extras (鑑賞模式) galleries from the title.
+    def _build_menu(self) -> None:
+        """(Re)build the title menu for the current mode (main vs extras)."""
+        ox, oy, pw = self._menu_origin
+        row_h = 52
+        items = []
+        if self._extras_mode:
+            if self.on_cg_gallery:
+                items.append(MenuItem(self.ctx.t("cg_gallery", "CG鑑賞"),
+                                      self.on_cg_gallery))
+            if self.on_music_room:
+                items.append(MenuItem(self.ctx.t("music_room", "音樂室"),
+                                      self.on_music_room))
+            if self.on_endings:
+                items.append(MenuItem(self.ctx.t("endings", "結局"),
+                                      self.on_endings))
+            items.append(MenuItem("← 返回", self._close_extras))
+        else:
+            if self.on_continue:
+                items.append(MenuItem("繼續遊戲", lambda: self.on_continue()))
+            items.append(MenuItem("開始新遊戲", self._start_new))
+            items.append(MenuItem("載入存檔",
+                                  lambda: self.on_load and self.on_load()))
+            if any((self.on_cg_gallery, self.on_music_room, self.on_endings)):
+                items.append(MenuItem(self.ctx.t("extras", "鑑賞模式"),
+                                      self._open_extras))
+            items.append(MenuItem("離開遊戲",
+                                  lambda: self.on_quit and self.on_quit()))
+        h = len(items) * row_h + 12
+        self.menu = MenuList(
+            pygame.Rect(ox, oy, pw, h), items,
+            fonts=self.ctx.fonts, theme=self.ctx.theme, row_h=row_h,
+        )
 
-        F3 keeps this minimal: it opens the first available gallery (CG →
-        music → endings). A later WP can swap this for a dedicated chooser
-        listing all of them; the per-scene callbacks already flow through.
-        """
-        for cb in (self.on_cg_gallery, self.on_music_room, self.on_endings):
-            if cb is not None:
-                cb()
-                return
+    def _open_extras(self) -> None:
+        """Swap the title menu to the extras (鑑賞模式) submenu."""
+        self._extras_mode = True
+        self._build_menu()
+
+    def _close_extras(self) -> None:
+        self._extras_mode = False
+        self._build_menu()
 
     def update(self, dt: float, inp) -> None:
         if self.name_input:

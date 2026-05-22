@@ -6,7 +6,7 @@ from typing import Callable
 import pygame
 
 from .base import Scene, SceneContext
-from ..ui.widgets import DialogueBox, ChoiceMenu, PortraitView
+from ..ui.widgets import DialogueBox, ChoiceMenu, PortraitView, QuickMenuBar
 from ..ui.nvl_box import NVLBox
 from ..ui.transitions import PortraitCrossfade, BackgroundFade
 from ..ui.camera import Camera, ScreenShake, ScreenFlash, ColorTint
@@ -29,6 +29,7 @@ class DialogueScene(Scene):
         self._nvl_scene_id: str | None = None
         self.choices: ChoiceMenu | None = None
         self.portrait: PortraitView | None = None
+        self._quick_bar: QuickMenuBar | None = None
         self.cg_surface_path: str | None = None
         self.background_path: str | None = None
         self.scene_id: str | None = None
@@ -80,6 +81,12 @@ class DialogueScene(Scene):
     def enter(self, *, scene_id: str | None = None,
               on_done: Callable[[], None] | None = None,
               on_scrollback: Callable[[], None] | None = None,
+              on_save: Callable[[], None] | None = None,
+              on_load: Callable[[], None] | None = None,
+              on_config: Callable[[], None] | None = None,
+              on_menu: Callable[[], None] | None = None,
+              on_qsave: Callable[[], None] | None = None,
+              on_qload: Callable[[], None] | None = None,
               **_) -> None:
         self.scene_id = scene_id
         self.on_done = on_done
@@ -118,6 +125,28 @@ class DialogueScene(Scene):
             pygame.Rect(sw // 2 - portrait_w // 2, 30,
                         portrait_w, portrait_h),
             self.ctx.assets, side="center",
+        )
+        # Persistent quick-menu bar (VN convention): a slim row of compact
+        # actions just above the text box in ADV (near the bottom in NVL).
+        bar_h = 34
+        if getattr(self.ctx.config, "nvl_mode", False):
+            bar_y = sh - bar_h - 14
+        else:
+            bar_y = (sh - box_h - margin) - bar_h - 10
+        self._quick_bar = QuickMenuBar(
+            sw - margin, bar_y, fonts=self.ctx.fonts, theme=self.ctx.theme,
+            height=bar_h, font_size=14,
+            items=[
+                ("自動", self._toggle_auto_play, lambda: self.auto_play_enabled),
+                ("快進", self._trigger_skip, lambda: self._skip_active),
+                ("記錄", on_scrollback, None),
+                ("快存", on_qsave, None),
+                ("快讀", on_qload, None),
+                ("存檔", on_save, None),
+                ("讀取", on_load, None),
+                (self.ctx.t("settings", "設定"), on_config, None),
+                ("選單", on_menu, None),
+            ],
         )
         if scene_id is not None:
             self._start(scene_id)
@@ -341,6 +370,18 @@ class DialogueScene(Scene):
         self.auto_play_enabled = not self.auto_play_enabled
         self._auto_play_timer = 0.0
 
+    def _update_quick_bar(self, dt: float, inp) -> bool:
+        """Update the quick-menu bar; return True when the pointer is over it
+        so the caller suppresses click-to-advance. Hidden while choices show."""
+        if self._quick_bar is None:
+            return False
+        showing_choices = bool(self.choices and self.choices.visible)
+        self._quick_bar.visible = not showing_choices
+        if showing_choices:
+            return False
+        self._quick_bar.update(dt, inp)
+        return self._quick_bar.consumed(inp)
+
     def _trigger_skip(self) -> None:
         """Advance one skip step.
 
@@ -471,6 +512,10 @@ class DialogueScene(Scene):
             if self._bg_fade.done:
                 self._bg_fade = None
 
+        # Quick-menu bar: update before the advance logic so a click that
+        # lands on it is handled by the bar and does NOT also advance the line.
+        bar_consumed = self._update_quick_bar(dt, inp)
+
         # Open scrollback on wheel-up or B key.
         if inp.mouse_wheel > 0 and self.on_scrollback:
             self.on_scrollback()
@@ -520,7 +565,8 @@ class DialogueScene(Scene):
         if self.portrait:
             self.portrait.update(dt, inp)
         # advance on click/space — but only if click isn't on a button etc.
-        if inp.advance_dialogue and self._current_line is not None:
+        if inp.advance_dialogue and not bar_consumed \
+                and self._current_line is not None:
             if not self.box.fully_revealed():
                 self.box.force_reveal()
             else:
@@ -684,6 +730,12 @@ class DialogueScene(Scene):
             self._tint.draw(surface)
         for flash in self._flashes:
             flash.draw(surface)
+
+        # Quick-menu bar — drawn on the real surface (stable, unshaken) and
+        # hidden while choices are showing.
+        if self._quick_bar is not None and not (
+                self.choices and self.choices.visible):
+            self._quick_bar.draw(surface)
 
         # Playback-mode badges (top-right): functional AUTO / SKIP labels.
         # Drawn last on the real surface so they stay crisp and unshaken.

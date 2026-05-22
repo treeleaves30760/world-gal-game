@@ -70,11 +70,17 @@ def test_stub_scenes_reachable_through_menu(driver):
 
 
 def test_title_extras_entry_opens_gallery(driver):
-    """The title screen exposes an 鑑賞模式 entry wired to the galleries."""
+    """The title 鑑賞模式 entry swaps to an extras submenu, whose CG entry
+    opens the gallery."""
     title = driver.app.manager.current
     assert type(title).__name__ == "TitleScene"
     assert title.on_cg_gallery is not None
-    # The extras router opens the first available gallery (CG gallery).
+    # Opening extras swaps the title menu in place (no scene pushed yet).
     title._open_extras()
+    driver.advance_frames(2)
+    assert type(driver.app.manager.current).__name__ == "TitleScene"
+    assert title._extras_mode is True
+    # The CG-gallery entry in the submenu opens the gallery scene.
+    title.on_cg_gallery()
     driver.advance_frames(3)
     assert type(driver.app.manager.current).__name__ == "CGGalleryScene"

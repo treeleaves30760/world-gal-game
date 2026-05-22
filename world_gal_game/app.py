@@ -220,6 +220,8 @@ class GalGameApp:
                              title=self.config.title,
                              subtitle=self.config.subtitle,
                              bg=self.meta.get("title_bg"),
+                             on_continue=(self._continue_game
+                                          if self._has_saves() else None),
                              on_new_game=self._start_new_game,
                              on_load=self._open_load_menu,
                              on_quit=self._quit_app,
@@ -465,6 +467,8 @@ class GalGameApp:
                               title=self.config.title,
                               subtitle=self.config.subtitle,
                               bg=self.meta.get("title_bg"),
+                              on_continue=(self._continue_game
+                                           if self._has_saves() else None),
                               on_new_game=self._start_new_game,
                               on_load=self._open_load_menu,
                               on_quit=self._quit_app,
@@ -551,21 +555,20 @@ class GalGameApp:
         except Exception as exc:
             print(f"[quicksave] skipped: {exc}", file=sys.stderr)
 
-    def _quickload(self) -> None:
-        """Load ``config.quicksave_slot`` and restore like a normal load.
+    def _load_slot(self, slot: str) -> bool:
+        """Load ``slot`` and restore into exploration; return True on success.
 
-        Mirrors ``save_scene._on_action`` (load branch) for the state swap
-        + ``_after_load_pop`` for the scene restore. A missing/invalid
-        quicksave is a no-op (the game keeps running unchanged).
+        Shared by quick-load (F9) and the title-screen Continue. Mirrors
+        ``save_scene._on_action`` (load branch) for the state swap. A
+        missing/invalid save is a no-op returning False.
         """
         try:
-            slot = self.config.quicksave_slot
             sm = SaveManager(self.config.save_dir())
             from .core.save_manager import SaveError
             try:
                 data = sm.load(slot)
             except SaveError:
-                return  # nothing to load yet
+                return False  # nothing to load yet
             from .core.pack_migration import (
                 check_and_migrate_pack, PACK_MIGRATIONS,
                 SavePackMismatchError, SavePackSchemaError,
@@ -580,8 +583,8 @@ class GalGameApp:
                     registry=PACK_MIGRATIONS,
                 )
             except (SavePackMismatchError, SavePackSchemaError) as exc:
-                print(f"[quickload] incompatible save: {exc}", file=sys.stderr)
-                return
+                print(f"[load] incompatible save: {exc}", file=sys.stderr)
+                return False
             for key in ("_saved_at", "_label", "_summary",
                         "_schema_version", "_thumbnail_path",
                         "_pack_id", "_pack_format_version", "_engine_version"):
@@ -604,8 +607,29 @@ class GalGameApp:
             if self.state.map.current_location_id:
                 self.manager.clear_to(ExplorationScene(self.ctx),
                                       **self._exploration_callbacks())
+            return True
         except Exception as exc:
-            print(f"[quickload] skipped: {exc}", file=sys.stderr)
+            print(f"[load] skipped: {exc}", file=sys.stderr)
+            return False
+
+    def _quickload(self) -> None:
+        """Load ``config.quicksave_slot`` (F9). No-op if none exists."""
+        self._load_slot(self.config.quicksave_slot)
+
+    def _continue_game(self) -> None:
+        """Title-screen Continue: resume the most recently written save."""
+        try:
+            saves = SaveManager(self.config.save_dir()).list_saves()
+        except Exception:
+            saves = []
+        if saves:
+            self._load_slot(saves[0]["slot"])
+
+    def _has_saves(self) -> bool:
+        try:
+            return bool(SaveManager(self.config.save_dir()).list_saves())
+        except Exception:
+            return False
 
     def _open_npc_actions(self, npc_id: str) -> None:
         """Show the lightweight NPC overlay (gift + shop).
@@ -631,7 +655,13 @@ class GalGameApp:
             self._check_ambient_hooks()
         self.manager.push(DialogueScene(self.ctx),
                           scene_id=scene_id, on_done=_after_dialogue,
-                          on_scrollback=self._open_scrollback)
+                          on_scrollback=self._open_scrollback,
+                          on_save=self._open_save_menu,
+                          on_load=self._open_load_menu,
+                          on_config=self._open_settings,
+                          on_menu=self._open_menu,
+                          on_qsave=self._quicksave,
+                          on_qload=self._quickload)
 
     def _check_ambient_hooks(self) -> bool:
         """Fire the first eligible enter/auto hook at the current location.

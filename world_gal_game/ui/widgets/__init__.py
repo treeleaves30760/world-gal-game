@@ -16,12 +16,13 @@ from .toast import Toast, ToastStack
 from .debug_overlay import DebugOverlay
 from .quest_log import QuestLog
 from .clue_log import ClueLog
+from .quick_menu import QuickMenuBar
 
 __all__ = [
     "Widget", "Rect",
     "Button", "Label", "WrappedText", "RichText", "Panel", "TextInput",
     "MenuList", "DialogueBox", "ChoiceMenu", "PortraitView", "MapView",
-    "ScrollArea",
+    "ScrollArea", "QuickMenuBar",
     "Toast", "ToastStack",
     "DebugOverlay",
     "QuestLog",
