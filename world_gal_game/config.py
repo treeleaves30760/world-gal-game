@@ -180,8 +180,8 @@ class EngineConfig:
     nvl_mode: bool = False
 
     # Per-character voice volume overrides keyed by speaker id; speakers
-    # absent here fall back to ``voice_volume``. UI for this lands in a
-    # later work package — the field + persistence live here.
+    # absent here fall back to ``voice_volume``. UI lives in the settings
+    # scene.
     per_character_voice_volume: dict[str, float] = field(default_factory=dict)
 
     # Quicksave / autosave behaviour.

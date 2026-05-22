@@ -1,4 +1,4 @@
-"""Scene replay overlay (WP-3C).
+"""Scene replay overlay.
 
 Lists the scenes the player has completed (``state.read_log.scenes``) and
 lets them re-watch any one in a **read-only sandbox**: a throwaway copy of

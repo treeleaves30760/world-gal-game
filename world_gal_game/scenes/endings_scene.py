@@ -1,4 +1,4 @@
-"""Endings & completion overlay (WP-C).
+"""Endings & completion overlay.
 
 Lists every ending the player can see, grouped by the story ``route_id``
 it belongs to (heroine routes are labelled with the heroine's name via

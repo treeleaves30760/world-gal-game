@@ -6,7 +6,6 @@ objects so we don't re-open the file on every draw call.
 """
 from __future__ import annotations
 
-from functools import lru_cache
 from pathlib import Path
 
 import pygame

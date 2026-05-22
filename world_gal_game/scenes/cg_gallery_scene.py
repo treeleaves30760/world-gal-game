@@ -1,4 +1,4 @@
-"""CG gallery overlay (WP-A).
+"""CG gallery overlay.
 
 A scrollable thumbnail grid of the pack's event illustrations (CGs).
 Unlocked CGs (recorded in ``state.cg_gallery``) render their thumbnail;

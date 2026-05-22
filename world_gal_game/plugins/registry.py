@@ -102,7 +102,7 @@ class InspectFieldEntry:
 class WidgetEntry:
     """A plugin-registered pygame widget class.
 
-    Phase 2 use-cases:
+    Use-cases:
     - PluginContext.spawn_widget(name, ...) instantiates the class
     - Scene authors look up plugin widgets by name in their ``enter()``
     - Capability Manifest reports widget availability
@@ -151,8 +151,8 @@ class DialogueOpEntry:
     """A plugin-registered inline dialogue directive.
 
     Directives appear in line text as ``[[name:arg]]`` and fire a hook
-    at parse time. Phase 2 minimal: registry + payload extraction; no
-    UI rendering, plugin hooks do whatever they want with the payload.
+    at parse time. This is registry + payload extraction only; there is
+    no UI rendering, plugin hooks do whatever they want with the payload.
     """
 
     name: str

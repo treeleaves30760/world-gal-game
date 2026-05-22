@@ -10,7 +10,7 @@ the plugin decorators and registers handler callables.
 
 Both halves get loaded together by :class:`PluginManager.load`.
 
-The manifest is intentionally narrow in Phase 1:
+The manifest is intentionally narrow:
 
 - ``id`` / ``name`` / ``version`` / ``description``    — metadata
 - ``engine_version``                                   — semver range against engine's __version__
@@ -19,7 +19,8 @@ The manifest is intentionally narrow in Phase 1:
 - ``extends.{effects,conditions,hooks,inspect_fields}``— declared extension points
 - ``side_effects.{reads_filesystem,network,subprocess}`` — boolean disclosure flags
 
-Phase 2 will add ``extends.{widgets,scenes,brains}`` etc.
+Widget / scene / brain / dialogue_op handlers register in code but are
+not declared here yet.
 """
 from __future__ import annotations
 
@@ -59,7 +60,7 @@ class ExtensionDeclaration(BaseModel):
 class SideEffectFlags(BaseModel):
     """What the plugin admits to doing.
 
-    Purely advisory in Phase 1 — the engine never blocks based on these,
+    Purely advisory — the engine never blocks based on these,
     but it does print a one-line summary at load time so the player /
     developer sees which plugins ask for network or filesystem access.
     """

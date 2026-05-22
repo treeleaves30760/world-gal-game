@@ -1,6 +1,6 @@
 """Builtin condition handlers.
 
-Each engine-shipped condition kind (16 of them, as of Phase 1) is
+Each engine-shipped condition kind (16 of them) is
 registered here via ``@condition("kind", plugin_id="builtin")``.
 :meth:`GameState.evaluate` dispatches through :data:`CONDITION_REGISTRY`
 so third-party plugins use the same registration path the engine does.

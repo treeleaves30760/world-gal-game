@@ -2,8 +2,8 @@
 
 This module defines the abstract `LLMBrain` and a deterministic
 `EchoBrain` placeholder. The actual LLM-backed brain (e.g. ClaudeBrain)
-has been **deferred to a future release** — the interface below is the
-seam where it will plug back in.
+is not yet implemented; EchoBrain is a deterministic placeholder — the
+interface below is the seam where it will plug in.
 
 The dialogue engine takes an optional `llm_provider` callable, so
 content with `llm_speaker: true` lines gracefully falls back to

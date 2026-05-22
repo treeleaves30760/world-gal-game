@@ -289,8 +289,8 @@ class DialogueEngine:
         # the ReadLog, but it's consistent with "user has now seen this").
         self.state.read_log.mark_line(scene.id, idx)
         # Auto-unlock the CG / BGM this line shows so the gallery and music
-        # room can offer them later. This is the single engine edit that
-        # populates those trackers; the Phase-2 viewer scenes stay read-only.
+        # room can offer them later. Scene-level cg / bgm unlock similarly in
+        # start_scene(); the viewer scenes themselves stay read-only.
         if line.cg:
             self.state.cg_gallery.unlock(line.cg)
         if line.bgm:

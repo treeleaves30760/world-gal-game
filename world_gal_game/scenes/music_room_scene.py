@@ -1,4 +1,4 @@
-"""Music room overlay (WP-B).
+"""Music room overlay.
 
 A jukebox for the pack's background music. Tracks are enumerated by
 listing the pack's ``assets/bgm/`` directory (``*.ogg`` / ``*.mp3`` /

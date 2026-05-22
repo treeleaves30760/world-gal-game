@@ -37,7 +37,7 @@ class HookEvent:
     """Engine lifecycle events that plugins can hook into.
 
     These are plain strings — declared as class attributes for IDE
-    autocompletion and as a one-stop reference. The Phase-2 set:
+    autocompletion and as a one-stop reference. Supported events:
 
     ============================== ==========================================
     Event                          Fired when

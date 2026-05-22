@@ -4,7 +4,6 @@ Persisted with the save file so skip-mode can distinguish new from old text.
 """
 from __future__ import annotations
 
-from typing import Annotated
 from pydantic import BaseModel, Field, field_serializer
 
 

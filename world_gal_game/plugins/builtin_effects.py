@@ -1,7 +1,7 @@
 """Builtin effect handlers.
 
 Every effect kind that the engine has historically shipped (23 of
-them, as of Phase 1) is implemented here as a free function registered
+them) is implemented here as a free function registered
 with ``@effect("kind", plugin_id="builtin")``. The :meth:`GameState.apply`
 dispatcher looks them up in the global :data:`EFFECT_REGISTRY`.
 

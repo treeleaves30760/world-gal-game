@@ -198,7 +198,7 @@ class HeadlessSession:
     def chat(self, npc_id: str, message: str) -> dict:
         """Free-chat with an NPC.
 
-        LLM-backed chat is deferred for this release — the deterministic
+        LLM-backed chat is not yet wired up — the deterministic
         EchoBrain returns a placeholder line and the +1 affection /
         event-log side effects still fire. Useful for testing the
         envelope around the future LLM integration.
