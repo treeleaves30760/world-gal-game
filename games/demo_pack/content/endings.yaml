@@ -1,0 +1,22 @@
+# Endings catalogue — unlocked when their flag is set (see scenes/9x_ending_*).
+# Shown in the endings / completion overlay, grouped by route_id.
+endings:
+  - id: ending_lover
+    title: "結局 · 戀人"
+    description: "與林清雪的故事，走到了戀人結局。湖畔的那一頁，被留了下來。"
+    route_id: heroine_1
+    requires:
+      - {kind: flag, target: ending_lover}
+
+  - id: ending_friend
+    title: "結局 · 朋友"
+    description: "與林清雪以朋友的身分繼續往來 —— 剛剛好的距離。"
+    route_id: heroine_1
+    requires:
+      - {kind: flag, target: ending_friend}
+
+  - id: ending_alone
+    title: "結局 · 一個人"
+    description: "離開了廣場，沒有再回頭。有些故事，還沒準備好往下走。"
+    requires:
+      - {kind: flag, target: ending_alone}

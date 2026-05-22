@@ -24,6 +24,7 @@ my_game/
 │   ├── items.yaml          # 選填
 │   ├── resources.yaml      # 選填（或寫在 meta.yaml）
 │   ├── achievements.yaml   # 選填
+│   ├── endings.yaml        # 選填 — 結局與完成度
 │   └── scenes/             # 選填，多檔散裝
 │       ├── 00_*.yaml
 │       └── ...
@@ -128,6 +129,87 @@ resources:
 - [theme-and-locale.md](theme-and-locale.md) — theme / locale 區塊
 - [resources.md](resources.md) — resources 區塊
 - [locations.md](locations.md) — locations / regions / exits 完整 schema
+
+## endings.yaml（選填）
+
+宣告遊戲的結局；顯示在「結局與完成度」鑑賞 overlay 裡，依 `route_id` 分組。
+每個結局靠 `requires` 條件解鎖 —— 慣例是綁一個在路線收尾場景 `on_end` set 的
+`ending_*` flag。檔案結構與 `achievements.yaml` 對齊（`requires` / `forbids` 走標準
+condition 載入器，任何 condition kind 都能用）。
+
+```yaml
+endings:
+  - id: ending_lover
+    title: "結局 · 戀人"
+    description: "與林清雪的故事，走到了戀人結局。"
+    route_id: heroine_1          # 用 heroine 的 route_id 分組（可選）
+    requires:
+      - {kind: flag, target: ending_lover}
+
+  - id: ending_secret
+    title: "隱藏結局"
+    hidden: true                 # 未解鎖時不出現在清單（解鎖後才顯示）
+    requires:
+      - {kind: flag, target: ending_secret}
+
+  - id: ending_alone
+    title: "結局 · 一個人"
+    description: "離開了廣場，沒有再回頭。"
+    # 沒有 route_id → 落在「其他」分組
+    requires:
+      - {kind: flag, target: ending_alone}
+```
+
+每個 ending 的欄位：
+
+| 欄位 | 型別 | 說明 |
+|---|---|---|
+| `id` | str（必要） | 唯一識別 |
+| `title` | str | 顯示名稱 |
+| `description` | str | 解鎖後顯示的描述 |
+| `icon` | str | 選填圖示路徑（`assets/...`） |
+| `route_id` | str | 分組用；對應標了 `is_heroine` + `route_id` 的 NPC 名字 |
+| `hidden` | bool | `true` = 未解鎖時不進清單 |
+| `requires` | condition list | 全部成立才解鎖（典型是 `ending_*` flag） |
+| `forbids` | condition list | 任何一個成立就不解鎖 |
+
+路線收尾場景照常 set flag：
+
+```yaml
+on_end:
+  - kind: set_flag
+    target: ending_lover
+    value: true
+  - kind: end_scene
+```
+
+完成度（劇情已讀 / 結局 / CG）由引擎自動計算，作者不用做任何事。玩家視角、分組與
+完成度的細節見 [presentation-and-extras.md](presentation-and-extras.md)。
+
+## Line 演出 effect（鏡頭 / 畫面特效）
+
+除了一般 effect，引擎內建五個**演出 effect**，寫在某一行 line 的 `effects:` 裡，
+line 演到時觸發。它們不碰存檔、不碰 pygame，只把指令排進場景的視覺佇列：
+
+| kind | `value`（dict） |
+|---|---|
+| `camera_pan` | `{x, y, duration?, easing?}` |
+| `camera_zoom` | `{scale, duration?, easing?}` |
+| `screen_shake` | `{intensity?, duration?, easing?}` |
+| `screen_flash` | `{color:[r,g,b]?, duration?, max_alpha?, easing?}` |
+| `screen_tint` | `{color:[r,g,b]?, duration?, max_alpha?, persist?, clear?, easing?}` |
+
+```yaml
+- speaker: "林清雪"
+  text: "「下次。」"
+  effects:
+    - kind: camera_zoom
+      value: {scale: 1.12, duration: 0.9}
+```
+
+完整簽章、預設值、`screen_tint` 的 clear 用法見
+[presentation-and-extras.md](presentation-and-extras.md)。權威清單（含外掛新增的）跑
+`wgg capabilities --pack <pack>`。
 
 ## 引擎在哪裡找 pack？
 

@@ -7,6 +7,9 @@ scenes:
     lines:
       - text: |
           天色慢慢暗下來，湖面映著最後一點橘色。
+        effects:
+          - kind: screen_tint
+            value: {color: [255, 150, 70], duration: 1.2, max_alpha: 70}
       - text: |
           她沒有立刻回答你的話，
           只是把素描本闔上，輕輕放回包裡。
@@ -14,6 +17,9 @@ scenes:
         text: "「下次。」"
         portrait: assets/characters/heroine_1_normal.png
         expression: smile
+        effects:
+          - kind: camera_zoom
+            value: {scale: 1.12, duration: 0.9}
       - speaker: "林清雪"
         text: |
           「下次見面之前，
@@ -24,6 +30,10 @@ scenes:
           肩膀靠得不近也不遠，但比一開始近了一點。
       - text: |
           這個小鎮的故事，從這裡開始有了不一樣的形狀。
+        cg: assets/cgs/lover_lakeside.png
+        effects:
+          - kind: screen_tint
+            value: {clear: true}
     on_end:
       - kind: set_flag
         target: ending_lover

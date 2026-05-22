@@ -38,6 +38,7 @@ AI 協作者進場速查 [../CLAUDE.md](../CLAUDE.md)。
 | [resources.md](resources.md) | 自訂資源（金錢、體力、學分…）、`gain_resource` |
 | [quests.md](quests.md) | 任務系統、目標追蹤、Quest Log UI |
 | [achievements.md](achievements.md) | 成就、隱藏成就、觸發條件 |
+| [presentation-and-extras.md](presentation-and-extras.md) | CG鑑賞 / 音樂室 / 場景重溫 / 結局 + 完成度、Auto / Skip、NVL、鏡頭 / 畫面特效、角色語音、快速 / 自動存檔 |
 | [theme-and-locale.md](theme-and-locale.md) | 換色、換語系、`affection_levels` 在地化 |
 | [cookbook.md](cookbook.md) | 常見模式食譜（鎖路線、限時事件、商店折扣…） |
 

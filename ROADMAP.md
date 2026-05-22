@@ -3,8 +3,9 @@
 Where the engine is going next. Read alongside [CLAUDE.md](CLAUDE.md) (AI
 onboarding) and [docs/architecture.md](docs/architecture.md) (engine internals).
 
-> Last updated: 2026-05-22. Phase 1 done, Phase 2 mostly done. A Phase 3
-> distribution + platform push is currently in the working tree (uncommitted).
+> Last updated: 2026-05-23. Phase 1 done, Phase 2 mostly done. A Phase 3
+> distribution + platform push (incl. VN presentation/extras table-stakes) is
+> currently in the working tree (uncommitted).
 
 ---
 
@@ -22,7 +23,7 @@ The engine is built around three pillars (see CLAUDE.md for the framing):
   points work in code, but the manifest schema only declares four of them (the
   one real gap — see [Extension points](#extension-points-pillar-c)).
 
-Test suite: 614 cases across 45 files, all green.
+Test suite: 766 cases, all green.
 
 ---
 
@@ -65,6 +66,14 @@ not yet folded into the phase plan below. Landing now:
 - **Presentation:** rich text (`dialogue/richtext.py` — BBCode-style parser with
   color/size/waits/speed/ruby/per-glyph effects), `ui/easing.py`, portrait
   animation, responsive/letterbox rendering, touch input, per-line voice channel.
+- **VN table-stakes (presentation + extras):** CG gallery / music room / scene
+  replay / endings + completion overlays (reached from the in-game menu and the
+  title "鑑賞模式"), Auto/Skip polish + on-screen indicators, NVL mode,
+  builtin camera/screen FX (`camera_pan`/`camera_zoom`/`screen_shake`/
+  `screen_flash`/`screen_tint`), per-character voice volume, quicksave (F6) /
+  quickload (F9), bundled autosave plugin, save thumbnails + scrollable save UX,
+  and settings persistence (`settings.json`). Media auto-unlocks when a line
+  displays a `cg` / plays a `bgm`. Docs: `docs/presentation-and-extras.md`.
 - **Versioning:** `core/pack_migration.py` — load-time, plugin-extensible pack
   save migration (`@save_migration`), plus `PackEditor.scaffold_save_migration`.
 
@@ -193,5 +202,6 @@ namespace vs git submodule vs `pyproject.toml`-pinned, and seek review.
 | 2026-05-19 | Phase 2: AI dev loop (SelfCheck + SmokeRunner + VisualCheck + asset_studio) | done |
 | 2026-05-19 | Clue / Journal system (`core/clue.py`, `scenes/clues_scene.py`, `ui/widgets/clue_log.py`, `content/clues.yaml`) | done |
 | 2026-05-22 | Phase 3: distribution + platform + presentation (web/Steam/mobile, rich text, voice, touch, responsive, pack migration) | in progress (working tree) |
+| 2026-05-23 | Phase 3 presentation/extras table-stakes: CG gallery, music room, scene replay, endings + completion, Auto/Skip polish, NVL mode, camera/screen FX, per-character voice, quicksave/autosave + save-UX | done |
 | — | Phase 2 wrap-up: manifest schema alignment / dynamic references / `wgg edit` hints | open (Next PRs #1–3) |
 | — | Phase 3: LLM NPC, autonomous spec-to-pack, cross-pack plugins | deferred |

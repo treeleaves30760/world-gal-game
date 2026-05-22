@@ -107,6 +107,7 @@ uv run python main.py --pack /Users/me/Code/My-First-Game
 - 加金錢 / 體力 / 學分系統 → 看 [resources.md](resources.md)
 - 加店家、物品 → 看 [items.md](items.md) + [shops.md](shops.md)
 - 加成就 → 看 [achievements.md](achievements.md)
+- 加 CG鑑賞 / 音樂室 / 結局 / 鏡頭特效 / 快速存檔 → 看 [presentation-and-extras.md](presentation-and-extras.md)
 - 換配色、改 UI 文字 → 看 [theme-and-locale.md](theme-and-locale.md)
 
 ## 開發小工具
