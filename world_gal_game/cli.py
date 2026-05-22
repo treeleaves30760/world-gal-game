@@ -210,22 +210,31 @@ def edit_main(argv: list[str]) -> int:
         prog="world-gal-game edit",
         description="Structured edits to a game pack (comment-preserving).")
     p.add_argument("pack", help="path to the pack directory")
-    p.add_argument("op", choices=[
-        "add-scene", "add-choice", "add-npc",
+    p.add_argument("op", nargs="?", choices=[
+        "add-scene", "add-choice", "update-line", "add-npc",
         "add-location", "add-item",
         "remove-scene", "remove-npc", "remove-location",
-    ], help="operation")
+    ], default=None,
+       help="operation (optional when only --gen-migration is used)")
     p.add_argument("--payload", default=None,
                    help="JSON payload describing the entity to add/update")
     p.add_argument("--payload-file", default=None,
                    help="read JSON payload from a file")
     p.add_argument("--scene-id", default=None,
-                   help="parent scene id (for add-choice)")
+                   help="parent scene id (for add-choice / update-line)")
+    p.add_argument("--line-index", type=int, default=None,
+                   help="0-based line index (for update-line)")
     p.add_argument("--id", dest="target_id", default=None,
                    help="id of the target (for remove-*)")
     p.add_argument("--into-file", default=None,
                    help="target YAML file under content/ "
                         "(default: scenes/_generated.yaml etc)")
+    p.add_argument("--gen-migration", default=None, metavar="FROM:TO",
+                   help="scaffold a @save_migration stub bridging the given "
+                        "pack content versions and bump meta.yaml's "
+                        "pack_format_version (e.g. --gen-migration 0.1:0.2)")
+    p.add_argument("--reason", default="",
+                   help="(--gen-migration) human description of the change")
     p.add_argument("--dry-run", action="store_true",
                    help="don't write; print diff and exit")
     args = p.parse_args(argv)
@@ -240,6 +249,11 @@ def edit_main(argv: list[str]) -> int:
         payload = _json.loads(Path(args.payload_file).read_text(encoding="utf-8"))
     elif args.payload:
         payload = _json.loads(args.payload)
+
+    if args.op is None and not args.gen_migration:
+        print("[error] an operation or --gen-migration is required",
+              file=sys.stderr)
+        return 2
 
     from world_gal_game.dev.pack_editor import PackEditor, PackEditError
     editor = PackEditor(pack_path, dry_run=args.dry_run)
@@ -257,6 +271,12 @@ def edit_main(argv: list[str]) -> int:
                       file=sys.stderr)
                 return 2
             editor.add_choice(args.scene_id, payload)
+        elif args.op == "update-line":
+            if not args.scene_id or args.line_index is None or payload is None:
+                print("[error] update-line needs --scene-id, --line-index "
+                      "and --payload", file=sys.stderr)
+                return 2
+            editor.update_line(args.scene_id, args.line_index, payload)
         elif args.op == "add-npc":
             if payload is None:
                 print("[error] --payload required", file=sys.stderr); return 2
@@ -281,6 +301,18 @@ def edit_main(argv: list[str]) -> int:
             if not args.target_id:
                 print("[error] remove-location needs --id", file=sys.stderr); return 2
             editor.remove_location(args.target_id)
+
+        if args.gen_migration:
+            spec = args.gen_migration
+            if ":" not in spec:
+                print("[error] --gen-migration expects FROM:TO "
+                      "(e.g. 0.1:0.2)", file=sys.stderr)
+                return 2
+            from_v, to_v = spec.split(":", 1)
+            editor.scaffold_save_migration(
+                from_version=from_v.strip(), to_version=to_v.strip(),
+                reason=args.reason, pack_id=pack_path.name,
+            )
     except PackEditError as e:
         print(f"[error] {e}", file=sys.stderr)
         return 1

@@ -146,6 +146,127 @@ def test_add_choice_unknown_scene_raises(tiny_pack: Path):
 
 
 # ----------------------------------------------------------------------
+# update_line
+
+
+def test_update_line_changes_text_and_keeps_siblings(tiny_pack: Path):
+    # Scene 'a' has one line {text: hi}; scene 'b' has {text: hello}.
+    # Add a second line to 'a' first so we can prove siblings + comments
+    # survive the in-place edit.
+    ed = PackEditor(tiny_pack)
+    # The starter comment "# A starter scene" must remain after the edit.
+    ed.update_line("a", 0, {"text": "greetings", "speaker": "Hero"})
+    content = (tiny_pack / "content/scenes/all.yaml").read_text(encoding="utf-8")
+    assert "greetings" in content
+    assert "speaker: Hero" in content
+    # Sibling scene b's line untouched.
+    assert "hello" in content
+    # Author comment preserved.
+    assert "# A starter scene" in content
+
+
+def test_update_line_returns_validated_line(tiny_pack: Path):
+    ed = PackEditor(tiny_pack)
+    line = ed.update_line("b", 0, {"text": "new body"})
+    assert line.text == "new body"
+
+
+def test_update_line_out_of_range_raises_with_field_hint(tiny_pack: Path):
+    ed = PackEditor(tiny_pack)
+    with pytest.raises(PackEditError) as ei:
+        ed.update_line("a", 5, {"text": "x"})
+    assert ei.value.op == "update_line"
+    assert ei.value.field == "line_index"
+    assert ei.value.hint  # actionable
+    assert "out of range" in ei.value.message
+
+
+def test_update_line_unknown_field_raises(tiny_pack: Path):
+    ed = PackEditor(tiny_pack)
+    with pytest.raises(PackEditError) as ei:
+        ed.update_line("a", 0, {"not_a_field": "oops"})
+    assert ei.value.op == "update_line"
+    assert "not_a_field" in ei.value.field
+    assert "valid fields" in ei.value.hint
+
+
+def test_update_line_unknown_scene_raises(tiny_pack: Path):
+    ed = PackEditor(tiny_pack)
+    with pytest.raises(PackEditError):
+        ed.update_line("ghost", 0, {"text": "x"})
+
+
+def test_update_line_dry_run_shows_diff_without_writing(tiny_pack: Path):
+    before = (tiny_pack / "content/scenes/all.yaml").read_text(encoding="utf-8")
+    ed = PackEditor(tiny_pack, dry_run=True)
+    ed.update_line("a", 0, {"text": "deferred edit"})
+    after = (tiny_pack / "content/scenes/all.yaml").read_text(encoding="utf-8")
+    assert before == after  # nothing written
+    diff = ed.diff()
+    assert "deferred edit" in diff
+    assert diff.startswith("---")
+
+
+# ----------------------------------------------------------------------
+# scaffold_save_migration
+
+
+def test_scaffold_save_migration_bumps_meta_and_writes_stub(tiny_pack: Path):
+    ed = PackEditor(tiny_pack)
+    out = ed.scaffold_save_migration(
+        from_version="0.1", to_version="0.2",
+        reason="rename hp to health", pack_id="tinypack",
+    )
+    # meta.yaml bumped, comment-preserving path.
+    meta = (tiny_pack / "content/meta.yaml").read_text(encoding="utf-8")
+    assert 'pack_format_version: "0.2"' in meta or "pack_format_version: 0.2" in meta
+    # title comment / other keys preserved.
+    assert "title: tiny" in meta
+    # Stub file written under plugins/<id>_migrations/.
+    stub_path = tiny_pack / "plugins/tinypack_migrations/migration_0_1_0_2.py"
+    assert stub_path.is_file()
+    stub = stub_path.read_text(encoding="utf-8")
+    assert '@save_migration("0.1", "0.2"' in stub
+    assert "rename hp to health" in stub
+    assert "from world_gal_game.plugins import save_migration" in stub
+    assert out["stub_file"].endswith("migration_0_1_0_2.py")
+
+
+def test_scaffold_save_migration_dry_run_writes_nothing(tiny_pack: Path):
+    meta_before = (tiny_pack / "content/meta.yaml").read_text(encoding="utf-8")
+    ed = PackEditor(tiny_pack, dry_run=True)
+    ed.scaffold_save_migration(from_version="0.1", to_version="0.2",
+                               pack_id="tinypack")
+    # meta.yaml untouched on disk.
+    assert (tiny_pack / "content/meta.yaml").read_text(encoding="utf-8") == meta_before
+    # Stub NOT written.
+    stub_path = tiny_pack / "plugins/tinypack_migrations/migration_0_1_0_2.py"
+    assert not stub_path.exists()
+    # But the diff shows both pending changes.
+    diff = ed.diff()
+    assert "pack_format_version" in diff
+    assert "@save_migration" in diff
+
+
+def test_scaffold_save_migration_default_pack_id(tiny_pack: Path):
+    ed = PackEditor(tiny_pack)
+    ed.scaffold_save_migration(from_version="0.1", to_version="0.2")
+    # pack_id="" -> dir slug "pack".
+    assert (tiny_pack / "plugins/pack_migrations/migration_0_1_0_2.py").is_file()
+
+
+def test_scaffold_save_migration_existing_stub_raises(tiny_pack: Path):
+    ed = PackEditor(tiny_pack)
+    ed.scaffold_save_migration(from_version="0.1", to_version="0.2",
+                               pack_id="tinypack")
+    ed2 = PackEditor(tiny_pack)
+    with pytest.raises(PackEditError) as ei:
+        ed2.scaffold_save_migration(from_version="0.1", to_version="0.2",
+                                    pack_id="tinypack")
+    assert "already exists" in ei.value.message
+
+
+# ----------------------------------------------------------------------
 # add_npc / add_location / add_item
 
 
