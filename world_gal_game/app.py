@@ -401,6 +401,7 @@ class GalGameApp:
             on_clues=from_menu(self._open_clues),
             on_save=from_menu(self._open_save_menu),
             on_load=from_menu(self._open_load_menu),
+            on_settings=from_menu(self._open_settings),
             on_quit_to_title=from_menu(self._quit_to_title),
             on_quit_app=self._quit_app,
         )

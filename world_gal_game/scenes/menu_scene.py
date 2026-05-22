@@ -1,16 +1,16 @@
-"""In-game main menu overlay.
+"""In-game system menu overlay.
 
-The exploration top bar used to carry seven action buttons + a time
-label. That was both visually cramped and overlapped the time text. This
-overlay is the consolidated home for everything that isn't day-to-day
-gameplay:
+Following mainstream visual-novel convention, entries are split into
+labelled groups rather than one flat list, and live settings controls do
+NOT live here — "設定" opens the dedicated config screen. The body scrolls,
+so the menu never overflows regardless of how many records/extras a pack
+exposes.
 
-- View screens:        map, affection, event log, achievements, inventory
-- Save / load:         opens the existing SaveScene
-- Game settings:       text speed, BGM volume, fullscreen toggle
-- Exit:                back to title, quit to desktop
+- 紀錄 (records):  map, affection, clues, events, achievements, items, quests
+- 鑑賞 (extras):   CG gallery, music room, endings, scene replay
+- 系統 (system):   save, load, settings, back to title, quit
 
-Keyboard shortcuts (M / A / L / T / I / S) keep working from the
+Keyboard shortcuts (M / A / L / T / I / S / J) keep working from the
 exploration scene so power users don't have to open this menu every time.
 """
 from __future__ import annotations
@@ -27,30 +27,30 @@ class MenuScene(Scene):
     def __init__(self, ctx: SceneContext):
         super().__init__(ctx)
         self.is_overlay = True
+        self._scroll_y = 0
         self.on_close: Callable[[], None] | None = None
-        self.on_map: Callable[[], None] | None = None
-        self.on_affection: Callable[[], None] | None = None
-        self.on_log: Callable[[], None] | None = None
-        self.on_achievements: Callable[[], None] | None = None
-        self.on_inventory: Callable[[], None] | None = None
-        self.on_cg_gallery: Callable[[], None] | None = None
-        self.on_music_room: Callable[[], None] | None = None
-        self.on_endings: Callable[[], None] | None = None
-        self.on_scene_replay: Callable[[], None] | None = None
-        self.on_quest_log: Callable[[], None] | None = None
-        self.on_clues: Callable[[], None] | None = None
-        self.on_save: Callable[[], None] | None = None
-        self.on_load: Callable[[], None] | None = None
-        self.on_quit_to_title: Callable[[], None] | None = None
-        self.on_quit_app: Callable[[], None] | None = None
-        self._show_kb_hint = False
+        self.on_map = None
+        self.on_affection = None
+        self.on_log = None
+        self.on_achievements = None
+        self.on_inventory = None
+        self.on_cg_gallery = None
+        self.on_music_room = None
+        self.on_endings = None
+        self.on_scene_replay = None
+        self.on_quest_log = None
+        self.on_clues = None
+        self.on_save = None
+        self.on_load = None
+        self.on_settings = None
+        self.on_quit_to_title = None
+        self.on_quit_app = None
 
     def enter(self, *, on_close=None, on_map=None, on_affection=None,
               on_log=None, on_achievements=None, on_inventory=None,
               on_cg_gallery=None, on_music_room=None, on_endings=None,
-              on_scene_replay=None,
-              on_quest_log=None, on_clues=None,
-              on_save=None, on_load=None,
+              on_scene_replay=None, on_quest_log=None, on_clues=None,
+              on_save=None, on_load=None, on_settings=None,
               on_quit_to_title=None, on_quit_app=None, **_) -> None:
         self.on_close = on_close
         self.on_map = on_map
@@ -66,218 +66,159 @@ class MenuScene(Scene):
         self.on_clues = on_clues
         self.on_save = on_save
         self.on_load = on_load
+        self.on_settings = on_settings
         self.on_quit_to_title = on_quit_to_title
         self.on_quit_app = on_quit_app
         self._build()
 
     def _build(self) -> None:
+        theme = self.ctx.theme
         sw, sh = self.ctx.screen_size
-        panel_w = min(760, sw - 120)
-        panel_h = min(560, sh - 80)
-        self._panel_rect = pygame.Rect(0, 0, panel_w, panel_h)
+        pw = min(860, sw - 100)
+        ph = min(680, sh - 70)
+        self._panel_rect = pygame.Rect(0, 0, pw, ph)
         self._panel_rect.center = (sw // 2, sh // 2)
-        self._panel = Panel(self._panel_rect, self.ctx.theme,
-                            fill=(*self.ctx.theme.bg_overlay[:3], 240),
-                            border=self.ctx.theme.border_strong,
-                            radius=self.ctx.theme.radius_l, border_width=2)
+        self._panel = Panel(self._panel_rect, theme,
+                            fill=(*theme.bg_overlay[:3], 255),
+                            border=theme.border_strong,
+                            radius=theme.radius_l, border_width=2)
+        self._header_h = 78
+        self._body_rect = pygame.Rect(
+            self._panel_rect.x + 30,
+            self._panel_rect.y + self._header_h,
+            self._panel_rect.width - 60,
+            self._panel_rect.height - self._header_h - 22,
+        )
         self.close_btn = Button(
-            pygame.Rect(self._panel_rect.right - 120 - 16,
-                        self._panel_rect.y + 16, 120, 36),
+            pygame.Rect(self._panel_rect.right - 116 - 20,
+                        self._panel_rect.y + 20, 116, 40),
             self.ctx.localization.t("close", "關閉 (Esc)"),
-            fonts=self.ctx.fonts, theme=self.ctx.theme,
+            fonts=self.ctx.fonts, theme=theme,
             font_size=15, style="ghost",
             on_click=(lambda: self.on_close() if self.on_close else None),
         )
 
-        # Each row holds two buttons of equal width.
-        col_w = (panel_w - 80) // 2
-        col_h = 52
-        gap = 12
-        # Two-column grid of action buttons.
-        # Format the clue-journal label with an unread-count badge so the
-        # menu surfaces "you have new hints" without an extra widget.
         clue_unread = self.ctx.state.clues.unread_count()
         clue_label = "線索筆記 (J)"
         if clue_unread > 0:
-            clue_label = f"線索筆記 (J) · 新 {clue_unread}"
-        actions: list[tuple[str, Callable[[], None] | None, str]] = [
-            ("地圖 (M)",       self.on_map,          "view"),
-            ("好感 (A)",       self.on_affection,    "view"),
-            (clue_label,       self.on_clues,        "view"),
-            ("事件 (L)",       self.on_log,          "view"),
-            ("成就 (T)",       self.on_achievements, "view"),
-            ("物品 (I)",       self.on_inventory,    "view"),
-            ("任務記錄",       self.on_quest_log,    "view"),
-            (self.ctx.t("cg_gallery", "CG鑑賞"),     self.on_cg_gallery,   "view"),
-            (self.ctx.t("music_room", "音樂室"),     self.on_music_room,   "view"),
-            (self.ctx.t("endings", "結局"),          self.on_endings,      "view"),
-            (self.ctx.t("scene_replay", "場景重溫"), self.on_scene_replay, "view"),
-            ("存檔",           self.on_save,         "save"),
-            ("載入存檔",       self.on_load,         "save"),
-            ("回標題畫面",     self.on_quit_to_title,"exit"),
+            clue_label += f" · 新 {clue_unread}"
+
+        groups: list[tuple[str, list[tuple]]] = [
+            ("紀錄", [
+                ("地圖 (M)", self.on_map, "primary"),
+                ("好感 (A)", self.on_affection, "primary"),
+                (clue_label, self.on_clues, "primary"),
+                ("事件 (L)", self.on_log, "primary"),
+                ("成就 (T)", self.on_achievements, "primary"),
+                ("物品 (I)", self.on_inventory, "primary"),
+                ("任務記錄", self.on_quest_log, "primary"),
+            ]),
+            ("鑑賞", [
+                (self.ctx.t("cg_gallery", "CG鑑賞"), self.on_cg_gallery, "primary"),
+                (self.ctx.t("music_room", "音樂室"), self.on_music_room, "primary"),
+                (self.ctx.t("endings", "結局"), self.on_endings, "primary"),
+                (self.ctx.t("scene_replay", "場景重溫"), self.on_scene_replay, "primary"),
+            ]),
+            ("系統", [
+                ("存檔", self.on_save, "ghost"),
+                ("載入存檔", self.on_load, "ghost"),
+                (self.ctx.t("settings", "設定"), self.on_settings, "ghost"),
+                ("回標題畫面", self.on_quit_to_title, "ghost"),
+                ("離開遊戲", self.on_quit_app, "danger"),
+            ]),
         ]
-        start_x = self._panel_rect.x + 40
-        start_y = self._panel_rect.y + 80
-        self._action_buttons: list[Button] = []
-        for i, (label, cb, group) in enumerate(actions):
-            col = i % 2
-            row = i // 2
-            r = pygame.Rect(start_x + col * (col_w + gap),
-                            start_y + row * (col_h + gap),
-                            col_w, col_h)
-            style = "primary"
-            if group == "exit":
-                style = "danger"
-            elif group == "save":
-                style = "ghost"
-            b = Button(r, label, fonts=self.ctx.fonts, theme=self.ctx.theme,
-                       font_size=16, style=style, on_click=cb,
-                       enabled=cb is not None)
-            self._action_buttons.append(b)
 
-        # Settings panel below the grid.
-        settings_y = start_y + ((len(actions) + 1) // 2) * (col_h + gap) + 12
-        # Text-speed row.
-        self._text_speed_label_y = settings_y
-        self._text_speed_buttons: list[tuple[Button, float]] = []
-        sx = start_x + 130
-        for v, label in [(0.0, "瞬間"), (20.0, "慢"), (45.0, "中"), (80.0, "快")]:
-            btn = Button(
-                pygame.Rect(sx, settings_y - 6, 80, 36),
-                label, fonts=self.ctx.fonts, theme=self.ctx.theme,
-                font_size=14,
-                style="primary" if abs(self.ctx.config.text_speed - v) < 0.1
-                                    else "ghost",
-                on_click=(lambda v=v: self._set_text_speed(v)),
-            )
-            self._text_speed_buttons.append((btn, v))
-            sx += 88
+        self._buttons: list[tuple] = []   # (Button, cx, cy)
+        self._labels: list[tuple] = []    # (text, size, bold, color, cx, cy)
+        gap = 14
+        col_w = (self._body_rect.width - gap) // 2
+        bh = 54
+        cy = 4
+        for title, items in groups:
+            cy += 8
+            self._labels.append((title, 17, True, theme.accent_warm, 2, cy))
+            cy += 34
+            for i, (label, cb, style) in enumerate(items):
+                col = i % 2
+                row = i // 2
+                cx = col * (col_w + gap)
+                ry = cy + row * (bh + gap)
+                b = Button(pygame.Rect(0, 0, col_w, bh), label,
+                           fonts=self.ctx.fonts, theme=theme,
+                           font_size=16, style=style, on_click=cb,
+                           enabled=cb is not None)
+                self._buttons.append((b, cx, ry))
+            rows = (len(items) + 1) // 2
+            cy += rows * (bh + gap) + 8
+        self._content_height = cy
 
-        # BGM volume row
-        self._vol_label_y = settings_y + 48
-        self._vol_minus = Button(
-            pygame.Rect(start_x + 130, self._vol_label_y - 6, 36, 36),
-            "−", fonts=self.ctx.fonts, theme=self.ctx.theme,
-            font_size=18, on_click=lambda: self._adjust_volume(-0.1),
-        )
-        self._vol_plus = Button(
-            pygame.Rect(start_x + 220, self._vol_label_y - 6, 36, 36),
-            "+", fonts=self.ctx.fonts, theme=self.ctx.theme,
-            font_size=18, on_click=lambda: self._adjust_volume(0.1),
-        )
+    # ----- scroll plumbing ----------------------------------------------------
 
-        # Fullscreen
-        self._fs_label_y = settings_y + 96
-        self._fs_btn = Button(
-            pygame.Rect(start_x + 130, self._fs_label_y - 6, 160, 36),
-            "切換全螢幕", fonts=self.ctx.fonts, theme=self.ctx.theme,
-            font_size=14, style="ghost", on_click=self._toggle_fullscreen,
-        )
-        self._kb_btn = Button(
-            pygame.Rect(start_x + 300, self._fs_label_y - 6, 160, 36),
-            "顯示快捷鍵說明", fonts=self.ctx.fonts, theme=self.ctx.theme,
-            font_size=14, style="ghost",
-            on_click=lambda: setattr(self, "_show_kb_hint",
-                                      not self._show_kb_hint),
-        )
-        # Quit at the very bottom right of the panel.
-        self._quit_btn = Button(
-            pygame.Rect(self._panel_rect.right - 200,
-                        self._panel_rect.bottom - 60, 160, 40),
-            "離開遊戲", fonts=self.ctx.fonts, theme=self.ctx.theme,
-            font_size=15, style="danger",
-            on_click=(lambda: self.on_quit_app() if self.on_quit_app else None),
-        )
+    def _max_scroll(self) -> int:
+        return max(0, self._content_height - self._body_rect.height)
 
-    # ----- settings actions -------------------------------------------------
-
-    def _set_text_speed(self, v: float) -> None:
-        self.ctx.config.text_speed = v
-        self._build()  # rebuild so the "current" button highlights update
-
-    def _adjust_volume(self, delta: float) -> None:
-        try:
-            cur = pygame.mixer.music.get_volume()
-            new_v = max(0.0, min(1.0, cur + delta))
-            pygame.mixer.music.set_volume(new_v)
-        except pygame.error:
-            pass
-
-    def _toggle_fullscreen(self) -> None:
-        try:
-            pygame.display.toggle_fullscreen()
-        except pygame.error:
-            pass
-
-    # ----- lifecycle --------------------------------------------------------
+    def _reposition(self) -> None:
+        body = self._body_rect
+        for b, cx, cy in self._buttons:
+            b.rect.topleft = (body.x + cx, body.y + cy - self._scroll_y)
 
     def update(self, dt: float, inp) -> None:
         if inp.cancel and self.on_close:
             self.on_close()
             return
+        if self._body_rect.collidepoint(inp.mouse_pos):
+            self._scroll_y -= int(inp.mouse_wheel) * 44
+        self._scroll_y = max(0, min(self._scroll_y, self._max_scroll()))
+        self._reposition()
         self.close_btn.update(dt, inp)
-        for b in self._action_buttons:
-            b.update(dt, inp)
-        for b, _ in self._text_speed_buttons:
-            b.update(dt, inp)
-        self._vol_minus.update(dt, inp)
-        self._vol_plus.update(dt, inp)
-        self._fs_btn.update(dt, inp)
-        self._kb_btn.update(dt, inp)
-        self._quit_btn.update(dt, inp)
+        body = self._body_rect
+        for b, _cx, _cy in self._buttons:
+            if body.y <= b.rect.y and b.rect.bottom <= body.bottom:
+                b.update(dt, inp)
+            else:
+                b._hover = False
 
     def draw(self, surface: pygame.Surface) -> None:
+        theme = self.ctx.theme
         veil = pygame.Surface(surface.get_size(), pygame.SRCALPHA)
-        veil.fill((0, 0, 0, 170))
+        veil.fill((0, 0, 0, 236))
         surface.blit(veil, (0, 0))
         self._panel.draw(surface)
-        title = self.ctx.fonts.render("選單",
-                                      self.ctx.config.font_size_header,
-                                      self.ctx.theme.accent, bold=True)
-        surface.blit(title, (self._panel_rect.x + 32,
-                             self._panel_rect.y + 28))
+        title = self.ctx.fonts.render("選單", self.ctx.config.font_size_header,
+                                      theme.accent, bold=True)
+        surface.blit(title, (self._panel_rect.x + 32, self._panel_rect.y + 24))
         self.close_btn.draw(surface)
-        for b in self._action_buttons:
-            b.draw(surface)
-        # Section labels for the settings rows.
-        for y, text in [
-            (self._text_speed_label_y, "文字速度"),
-            (self._vol_label_y, "音量"),
-            (self._fs_label_y, "顯示 / 說明"),
-        ]:
-            lbl = self.ctx.fonts.render(text, 16,
-                                         self.ctx.theme.text_mute, bold=True)
-            surface.blit(lbl, (self._panel_rect.x + 40, y))
-        for b, _ in self._text_speed_buttons:
-            b.draw(surface)
-        try:
-            vol = int(pygame.mixer.music.get_volume() * 100)
-        except pygame.error:
-            vol = 0
-        vol_text = self.ctx.fonts.render(f"{vol}%", 16,
-                                          self.ctx.theme.text)
-        surface.blit(vol_text, (self._panel_rect.x + 174,
-                                 self._vol_label_y))
-        self._vol_minus.draw(surface)
-        self._vol_plus.draw(surface)
-        self._fs_btn.draw(surface)
-        self._kb_btn.draw(surface)
-        self._quit_btn.draw(surface)
-        if self._show_kb_hint:
-            tips = [
-                "Space / Enter / Z   推進對話",
-                "Ctrl                按住快進",
-                "Esc / X             關閉這個 overlay",
-                "M / A / L / T / I / S   地圖 / 好感 / 事件 / 成就 / 物品 / 存檔",
-                "B / 滾輪上          對話 scrollback",
-                "F12                 截圖",
-                "F11                 印當前狀態 (debug)",
-            ]
-            y = self._panel_rect.bottom + 12
-            for t in tips:
-                ts = self.ctx.fonts.render(t, 14, self.ctx.theme.text_mute)
-                surface.blit(ts, (self._panel_rect.x, y))
-                y += ts.get_height() + 2
+        pygame.draw.line(
+            surface, theme.border_soft,
+            (self._panel_rect.x + 24, self._panel_rect.y + self._header_h - 10),
+            (self._panel_rect.right - 24, self._panel_rect.y + self._header_h - 10),
+        )
+
+        self._reposition()
+        body = self._body_rect
+        prev_clip = surface.get_clip()
+        surface.set_clip(body)
+        oy = body.y - self._scroll_y
+        for text, size, bold, color, cx, cy in self._labels:
+            surface.blit(self.ctx.fonts.render(text, size, color, bold=bold),
+                         (body.x + cx, oy + cy))
+        for b, _cx, _cy in self._buttons:
+            if b.rect.bottom >= body.y and b.rect.y <= body.bottom:
+                b.draw(surface)
+        surface.set_clip(prev_clip)
+
+        max_scroll = self._max_scroll()
+        if max_scroll > 0:
+            track_h = body.height
+            knob_h = max(32, int(track_h * body.height / self._content_height))
+            knob_y = int(self._scroll_y / max_scroll * (track_h - knob_h))
+            x = self._panel_rect.right - 14
+            pygame.draw.rect(surface, (*theme.border_soft[:3], 70),
+                             (x, body.y, 4, track_h), border_radius=2)
+            pygame.draw.rect(surface, (*theme.accent[:3], 190),
+                             (x, body.y + knob_y, 4, knob_h), border_radius=2)
 
     def describe(self) -> dict:
-        return {"scene": "MenuScene"}
+        return {"scene": "MenuScene",
+                "content_height": getattr(self, "_content_height", 0),
+                "scroll_y": self._scroll_y}
