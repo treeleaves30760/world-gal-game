@@ -7,17 +7,26 @@ import pygame
 
 from .base import Scene, SceneContext
 from ..ui.widgets import DialogueBox, ChoiceMenu, PortraitView
+from ..ui.nvl_box import NVLBox
 from ..ui.transitions import PortraitCrossfade, BackgroundFade
+from ..ui.camera import Camera, ScreenShake, ScreenFlash, ColorTint
 from ..ui.portrait_anim import SlotAnimation
 from ..ui.layout import fit_rect
 from ..core.portrait_spec import PortraitSpec
+from ..plugins.builtin_effects import VISUAL_FX_QUEUE
 
 
 class DialogueScene(Scene):
     def __init__(self, ctx: SceneContext):
         super().__init__(ctx)
         self.is_overlay = True   # drawn over a darkened background
-        self.box: DialogueBox | None = None
+        # In ADV mode this is a DialogueBox; in NVL mode an NVLBox. Both expose
+        # the same surface (set_line / force_reveal / fully_revealed / update /
+        # draw) so the rest of the scene treats them uniformly.
+        self.box: DialogueBox | NVLBox | None = None
+        # Story scene id whose lines currently fill the NVL transcript; used to
+        # detect scene changes and clear the transcript. None until first line.
+        self._nvl_scene_id: str | None = None
         self.choices: ChoiceMenu | None = None
         self.portrait: PortraitView | None = None
         self.cg_surface_path: str | None = None
@@ -30,6 +39,11 @@ class DialogueScene(Scene):
         # Skip / auto-play state
         self.auto_play_enabled: bool = False
         self._auto_play_timer: float = 0.0
+        # Skip is "held": pressing Ctrl latches it on, releasing latches it
+        # off, so the on-screen SKIP indicator reflects an ongoing skip rather
+        # than a single keypress. Mode (skip-read vs skip-all) is read from
+        # config.skip_unread_only at the moment of each advance.
+        self._skip_active: bool = False
 
         # Portrait state: per-slot surface + active crossfade + spec.
         # Slots: "left", "center", "right"
@@ -53,6 +67,16 @@ class DialogueScene(Scene):
         self._bg_surface: pygame.Surface | None = None
         self._bg_fade: BackgroundFade | None = None
 
+        # Presentation FX (camera/screen). Driven by directives the camera_*
+        # / screen_* builtin effects queue onto state.meta[VISUAL_FX_QUEUE];
+        # update() drains that queue, spawns/updates these, draw() applies them.
+        # The camera persists across lines (a zoom/pan stays until changed); the
+        # tint likewise persists; shake/flash are transient and self-expire.
+        self._camera: Camera = Camera()
+        self._shakes: list[ScreenShake] = []
+        self._flashes: list[ScreenFlash] = []
+        self._tint: ColorTint | None = None
+
     def enter(self, *, scene_id: str | None = None,
               on_done: Callable[[], None] | None = None,
               on_scrollback: Callable[[], None] | None = None,
@@ -63,12 +87,24 @@ class DialogueScene(Scene):
         sw, sh = self.ctx.screen_size
         box_h = 230
         margin = 32
-        self.box = DialogueBox(
-            pygame.Rect(margin, sh - box_h - margin,
-                        sw - margin * 2, box_h),
-            fonts=self.ctx.fonts, theme=self.ctx.theme,
-            text_speed=self.ctx.config.text_speed,
-        )
+        # ADV uses the bottom dialogue box; NVL uses a tall transcript panel.
+        # Both expose the same set_line/force_reveal/fully_revealed/update/draw
+        # surface so everything downstream (advance, skip, auto-play) is shared.
+        if getattr(self.ctx.config, "nvl_mode", False):
+            nvl_margin = 60
+            self.box = NVLBox(
+                pygame.Rect(nvl_margin, nvl_margin,
+                            sw - nvl_margin * 2, sh - nvl_margin * 2),
+                fonts=self.ctx.fonts, theme=self.ctx.theme,
+                text_speed=self.ctx.config.text_speed,
+            )
+        else:
+            self.box = DialogueBox(
+                pygame.Rect(margin, sh - box_h - margin,
+                            sw - margin * 2, box_h),
+                fonts=self.ctx.fonts, theme=self.ctx.theme,
+                text_speed=self.ctx.config.text_speed,
+            )
         self.choices = ChoiceMenu(
             pygame.Rect(0, 0, sw, sh),
             fonts=self.ctx.fonts, theme=self.ctx.theme,
@@ -240,6 +276,14 @@ class DialogueScene(Scene):
         if pres.kind == "line":
             line = pres.line
             self._current_line = line
+            # NVL transcript is per-scene: clear it whenever the active story
+            # scene changes (a chained transition starts a new scene, so the
+            # previous scene's lines should not bleed into the new one).
+            if isinstance(self.box, NVLBox):
+                cur_sid = self.ctx.state.story.current_scene
+                if cur_sid != self._nvl_scene_id:
+                    self.box.reset()
+                    self._nvl_scene_id = cur_sid
             self.box.set_line(line.speaker, line.text)
             # SFX/BGM
             if line.bgm:
@@ -249,8 +293,11 @@ class DialogueScene(Scene):
             # Voice: cut any in-flight clip, then play this line's (if any).
             self.ctx.assets.stop_voice()
             if line.voice:
-                self.ctx.assets.play_voice(
-                    line.voice, volume=self.ctx.config.voice_volume)
+                # Per-character override falls back to the global voice volume
+                # for any speaker not listed in the config dict.
+                vol = self.ctx.config.per_character_voice_volume.get(
+                    line.speaker, self.ctx.config.voice_volume)
+                self.ctx.assets.play_voice(line.voice, volume=vol)
             # CG
             self.cg_surface_path = line.cg
             # Portrait (multi-slot or single)
@@ -295,7 +342,18 @@ class DialogueScene(Scene):
         self._auto_play_timer = 0.0
 
     def _trigger_skip(self) -> None:
-        """Skip-mode: jump past already-read lines, stop at unread or choice."""
+        """Advance one skip step.
+
+        Two-stage skip, switched by ``config.skip_unread_only``:
+
+        - ``True`` (default): jump past already-read lines, stopping at the
+          first unread line or any choice point (``skip_to_next_unread``).
+        - ``False`` (skip-all): race through *all* remaining lines — read or
+          unread — until a choice or scene end (``skip_all``).
+
+        Either way an in-progress typewriter is completed first, and the
+        current line's voice is cut so a held skip stays silent.
+        """
         if self.choices and self.choices.visible:
             return  # never skip choices
         if not self._current_line:
@@ -305,13 +363,95 @@ class DialogueScene(Scene):
             return
         # Skipping cuts the current line's voice immediately.
         self.ctx.assets.stop_voice()
-        pres = self.ctx.dialogue.skip_to_next_unread()
+        if self.ctx.config.skip_unread_only:
+            pres = self.ctx.dialogue.skip_to_next_unread()
+        else:
+            pres = self.ctx.dialogue.skip_all()
         if pres is not None:
             self._render_presentation(pres)
+        # Skip-all reaching the end returns None; the scene's _present_current
+        # already ended it (current_scene cleared), so flush the end here.
+        elif self.ctx.dialogue.current_scene() is None:
+            self._end()
+
+    # ------------------------------------------------------------------
+    # Visual FX (camera / shake / flash / tint)
+    #
+    # Effect handlers cannot touch pygame, so camera_* / screen_* effects only
+    # push directives onto state.meta[VISUAL_FX_QUEUE]. We drain that queue here
+    # each frame, turn each directive into the matching ui.camera object, then
+    # advance everything by dt and drop the transient ones once finished.
+
+    def _consume_visual_fx(self) -> None:
+        """Drain queued directives and spawn/update the matching FX objects."""
+        queue = self.ctx.state.meta.pop(VISUAL_FX_QUEUE, None)
+        if not queue:
+            return
+        for d in queue:
+            try:
+                self._spawn_visual_fx(d)
+            except Exception:
+                # A malformed directive must never crash the scene; skip it.
+                # (Handlers already coerce their inputs, but stay defensive.)
+                continue
+
+    def _spawn_visual_fx(self, d: dict) -> None:
+        fx = d.get("fx")
+        if fx == "camera_pan":
+            self._camera.pan_to(d.get("x", 0.0), d.get("y", 0.0),
+                                duration=d.get("duration", 0.6),
+                                easing=d.get("easing"))
+        elif fx == "camera_zoom":
+            self._camera.zoom_to(d.get("scale", 1.0),
+                                 duration=d.get("duration", 0.6),
+                                 easing=d.get("easing"))
+        elif fx == "screen_shake":
+            self._shakes.append(ScreenShake(
+                intensity=d.get("intensity", 12.0),
+                duration=d.get("duration", 0.4),
+                easing=d.get("easing")))
+        elif fx == "screen_flash":
+            self._flashes.append(ScreenFlash(
+                color=d.get("color", (255, 255, 255)),
+                duration=d.get("duration", 0.3),
+                max_alpha=d.get("max_alpha", 255),
+                easing=d.get("easing")))
+        elif fx == "screen_tint":
+            if d.get("clear"):
+                self._tint = None
+            else:
+                self._tint = ColorTint(
+                    color=d.get("color", (0, 0, 0)),
+                    duration=d.get("duration", 0.5),
+                    max_alpha=d.get("max_alpha", 120),
+                    easing=d.get("easing"))
+
+    def _advance_visual_fx(self, dt: float) -> None:
+        self._camera.update(dt)
+        for s in self._shakes:
+            s.update(dt)
+        self._shakes = [s for s in self._shakes if not s.done]
+        for f in self._flashes:
+            f.update(dt)
+        self._flashes = [f for f in self._flashes if not f.done]
+        if self._tint is not None:
+            self._tint.update(dt)   # fades in then persists; never auto-removed
+
+    def _active_shake_offset(self) -> tuple[int, int]:
+        ox = oy = 0
+        for s in self._shakes:
+            dx, dy = s.offset()
+            ox += dx
+            oy += dy
+        return (ox, oy)
 
     # ------------------------------------------------------------------
 
     def update(self, dt: float, inp) -> None:
+        # Drain queued camera/screen-FX directives, then advance all live FX.
+        self._consume_visual_fx()
+        self._advance_visual_fx(dt)
+
         # Tick portrait transitions (animation takes precedence over fade).
         for slot in ("left", "center", "right"):
             anim = self._slot_anims.get(slot)
@@ -340,19 +480,40 @@ class DialogueScene(Scene):
                 self.on_scrollback()
                 return
 
-        # Check for Skip (Ctrl held) and Auto toggle.
+        # Skip: each Ctrl-down fires one skip step (which itself jumps all the
+        # way to the next stopping point — see _trigger_skip). Ctrl-down also
+        # latches _skip_active so the on-screen SKIP indicator stays lit while
+        # the key is held; Ctrl-up clears it. [A] toggles auto-play. keys_down
+        # only carries this frame's KEYDOWNs, so the held flag is tracked
+        # across frames rather than re-read.
+        skip_pressed_this_frame = False
         for e in inp.events:
             if e.type == pygame.KEYDOWN:
                 if e.key in (pygame.K_LCTRL, pygame.K_RCTRL):
-                    self._trigger_skip()
+                    self._skip_active = True
+                    skip_pressed_this_frame = True
                 # [A] key toggles auto-play
                 if e.key == pygame.K_a and not (e.mod & pygame.KMOD_CTRL):
                     self._toggle_auto_play()
+            elif e.type == pygame.KEYUP:
+                if e.key in (pygame.K_LCTRL, pygame.K_RCTRL):
+                    self._skip_active = False
 
         if self.choices and self.choices.visible:
             self.auto_play_enabled = False   # stop auto-play at choices
             self._auto_play_timer = 0.0
+            self._skip_active = False         # a choice always halts skipping
             self.choices.update(dt, inp)
+            return
+
+        # A fresh Ctrl press performs one skip step. We deliberately do NOT
+        # repeat per-frame while held: each helper (skip_to_next_unread /
+        # skip_all) already loops internally to its natural stop — the next
+        # unread line, a choice, or the scene end — so a single call is a full
+        # skip. (Repeating would blow past the unread line a skip-read is meant
+        # to pause on.)
+        if skip_pressed_this_frame and self._current_line is not None:
+            self._trigger_skip()
             return
         if self.box:
             self.box.update(dt, inp)
@@ -367,13 +528,24 @@ class DialogueScene(Scene):
                 self._auto_play_timer = 0.0   # reset timer on manual advance
 
         # Auto-play: wait until text is fully revealed, then count down.
+        # The delay is scaled by config.auto_play_speed (higher = faster) and,
+        # when config.auto_play_wait_voice is on, we hold the advance until the
+        # current voice clip finishes playing before applying the delay.
         if self.auto_play_enabled and self._current_line is not None:
             if self.box and self.box.fully_revealed():
-                self._auto_play_timer += dt
-                delay = getattr(self.ctx.config, "auto_play_delay", 2.5)
-                if self._auto_play_timer >= delay:
+                if getattr(self.ctx.config, "auto_play_wait_voice", True) \
+                        and self.ctx.assets.voice_busy():
+                    # Voice still playing — pause the countdown so we never cut
+                    # a line off, and reset so the full delay starts afterward.
                     self._auto_play_timer = 0.0
-                    self._advance()
+                else:
+                    self._auto_play_timer += dt
+                    base = getattr(self.ctx.config, "auto_play_delay", 2.5)
+                    speed = getattr(self.ctx.config, "auto_play_speed", 1.0)
+                    delay = base / max(0.1, speed)
+                    if self._auto_play_timer >= delay:
+                        self._auto_play_timer = 0.0
+                        self._advance()
 
     def _slot_rect(self, slot: str, sw: int, sh: int,
                    spec: PortraitSpec | None = None) -> pygame.Rect:
@@ -405,15 +577,50 @@ class DialogueScene(Scene):
             rect.y += spec.offset[1]
         return rect
 
+    def _render_bg_fade(self, sw: int, sh: int) -> pygame.Surface:
+        """Compose the active background crossfade onto an opaque surface.
+
+        The fade historically drew straight onto the frame; routing it through
+        a surface lets the camera transform apply to it like a static bg.
+        """
+        buf = pygame.Surface((sw, sh))
+        buf.fill(self.ctx.theme.bg_deep)
+        self._bg_fade.draw(buf)
+        return buf
+
+    def _draw_with_camera(self, target: pygame.Surface,
+                          src: pygame.Surface) -> None:
+        """Blit a full-screen layer through the active camera transform.
+
+        A neutral camera blits ``src`` at ``(0, 0)`` unchanged (byte-identical
+        to the historical path); a zoomed/panned camera scales+offsets it.
+        """
+        out, topleft = self._camera.apply(src)
+        target.blit(out, topleft)
+
     def draw(self, surface: pygame.Surface) -> None:
+        real_surface = surface
         sw, sh = surface.get_size()
 
+        # Screen-shake shifts the whole composed frame. When a shake is active
+        # we compose into an offscreen surface and blit it with the offset (so
+        # the exposed border is the deep bg, not garbage); otherwise we draw
+        # straight to the real surface so the no-FX path is byte-identical.
+        # All the per-element draws below reference ``surface``, so we point it
+        # at the frame and restore the real target for the final composite.
+        shake_ox, shake_oy = self._active_shake_offset()
+        shaking = shake_ox != 0 or shake_oy != 0
+        if shaking:
+            surface = pygame.Surface((sw, sh))
+            surface.fill(self.ctx.theme.bg_deep)
+
         # Background: use fade if active, else static surface or solid fill.
+        # The camera transform (zoom/pan) is applied to the background blit.
         if self._bg_fade is not None and not self._bg_fade.done:
             surface.fill(self.ctx.theme.bg_deep)
-            self._bg_fade.draw(surface)
+            self._draw_with_camera(surface, self._render_bg_fade(sw, sh))
         elif self._bg_surface is not None:
-            surface.blit(self._bg_surface, (0, 0))
+            self._draw_with_camera(surface, self._bg_surface)
         else:
             surface.fill(self.ctx.theme.bg_deep)
 
@@ -422,10 +629,10 @@ class DialogueScene(Scene):
         veil.fill((0, 0, 0, 70))
         surface.blit(veil, (0, 0))
 
-        # CG (full-screen) takes over the background
+        # CG (full-screen) takes over the background; also rides the camera.
         if self.cg_surface_path:
             cg = self.ctx.assets.scaled(self.cg_surface_path, (sw, sh), fit="contain")
-            surface.blit(cg, (0, 0))
+            self._draw_with_camera(surface, cg)
 
         # Slot-based portrait rendering (new system).
         if not self.cg_surface_path:
@@ -463,6 +670,60 @@ class DialogueScene(Scene):
         if self.choices and self.choices.visible:
             self.choices.draw(surface)
 
+        # Composite the (possibly offscreen) frame back onto the real surface,
+        # shifted by the active screen-shake offset.
+        if shaking:
+            real_surface.fill(self.ctx.theme.bg_deep)
+            real_surface.blit(surface, (shake_ox, shake_oy))
+        surface = real_surface
+
+        # Persistent colour tint then transient flash, both full-screen and on
+        # top of everything (drawn on the real surface so shake never clips
+        # them). Tint sits under the flash so a flash still reads as a pop.
+        if self._tint is not None:
+            self._tint.draw(surface)
+        for flash in self._flashes:
+            flash.draw(surface)
+
+        # Playback-mode badges (top-right): functional AUTO / SKIP labels.
+        # Drawn last on the real surface so they stay crisp and unshaken.
+        self._draw_mode_indicators(surface)
+
+    def _draw_mode_indicators(self, surface: pygame.Surface) -> None:
+        """Draw small AUTO / SKIP status badges in the top-right corner.
+
+        These are functional state labels (not decoration): AUTO shows while
+        auto-play is on, SKIP while a skip is held. Stacked so both can show
+        at once if a skip is held while auto-play is enabled.
+        """
+        labels: list[str] = []
+        if self.auto_play_enabled:
+            labels.append("AUTO")
+        if self._skip_active:
+            labels.append("SKIP")
+        if not labels:
+            return
+        sw, _sh = surface.get_size()
+        pad_x, pad_y = 12, 6
+        gap = 8
+        x_right = sw - 16
+        y = 16
+        for text in labels:
+            ts = self.ctx.fonts.render(text, 16, self.ctx.theme.text, bold=True)
+            w = ts.get_width() + pad_x * 2
+            h = ts.get_height() + pad_y * 2
+            rect = pygame.Rect(x_right - w, y, w, h)
+            badge = pygame.Surface((w, h), pygame.SRCALPHA)
+            pygame.draw.rect(badge, (*self.ctx.theme.accent[:3], 210),
+                             badge.get_rect(),
+                             border_radius=self.ctx.theme.radius_s)
+            pygame.draw.rect(badge, (*self.ctx.theme.text[:3], 60),
+                             badge.get_rect(), 1,
+                             border_radius=self.ctx.theme.radius_s)
+            surface.blit(badge, rect.topleft)
+            surface.blit(ts, (rect.x + pad_x, rect.y + pad_y))
+            y += h + gap
+
     def describe(self) -> dict:
         return {
             "scene": "DialogueScene",
@@ -478,4 +739,19 @@ class DialogueScene(Scene):
                 } if self._current_line else None
             ),
             "choice_visible": bool(self.choices and self.choices.visible),
+            "auto_play": self.auto_play_enabled,
+            "skip_active": self._skip_active,
+            "nvl_mode": isinstance(self.box, NVLBox),
+            "nvl_lines": (self.box.line_count
+                          if isinstance(self.box, NVLBox) else 0),
+            "camera": {
+                "zoom": round(self._camera.zoom, 4),
+                "pan_x": round(self._camera.pan_x, 2),
+                "pan_y": round(self._camera.pan_y, 2),
+            },
+            "fx_active": {
+                "shakes": len(self._shakes),
+                "flashes": len(self._flashes),
+                "tint": self._tint is not None,
+            },
         }

@@ -388,6 +388,133 @@ def handle_fail_quest(state: "GameState", eff: "Effect") -> dict[str, Any]:
     return {"kind": eff.kind, "quest": eff.target, "failed": failed}
 
 
+# ----------------------------------------------------------------------
+# Presentation: camera + screen FX
+#
+# These are genre-agnostic *presentation* primitives, so they ship as
+# builtins. Critically, an effect handler runs inside ``GameState.apply``
+# and has no access to pygame or the active scene — it must NEVER touch the
+# display. Each handler instead records a small directive dict onto a private
+# meta queue and returns immediately. ``DialogueScene`` drains that queue once
+# per frame (``state.meta.pop(VISUAL_FX_QUEUE)``) and constructs the matching
+# ``Camera`` / ``ScreenShake`` / ``ScreenFlash`` / ``ColorTint`` from
+# ``ui/camera.py``, which it then animates and draws.
+#
+# Channel: ``state.meta["__visual_fx__"]`` — a list of directives, each
+#   ``{"fx": <name>, ...params}``. The ``__`` prefix keeps it out of saves:
+#   ``GameState._serialize_meta`` and ``SaveManager`` both strip ``__`` keys,
+#   so a queued (but not-yet-consumed) effect is never persisted. The values
+#   are plain JSON-able scalars, so even if the strip were bypassed it would
+#   round-trip cleanly.
+
+VISUAL_FX_QUEUE = "__visual_fx__"
+
+
+def _queue_visual_fx(state: "GameState", directive: dict[str, Any]) -> None:
+    """Append a presentation directive to the per-frame visual-fx queue.
+
+    The scene consumes (and clears) this list each frame. This function is the
+    single writer; it deliberately only mutates ``state.meta`` and touches no
+    rendering APIs, so it is safe to call from the pure-Python ``apply`` path.
+    """
+    queue = state.meta.setdefault(VISUAL_FX_QUEUE, [])
+    queue.append(directive)
+
+
+@effect("camera_pan", plugin_id=BUILTIN,
+        description="Pan the camera to an offset (source px) over a duration. "
+                    "Queued for the scene; does not touch the display.",
+        signature={"value": "dict {x:float, y:float, duration:float?, "
+                            "easing:str?}"})
+def handle_camera_pan(state: "GameState", eff: "Effect") -> dict[str, Any]:
+    p = eff.value if isinstance(eff.value, dict) else {}
+    x = float(p.get("x", 0.0))
+    y = float(p.get("y", 0.0))
+    duration = float(p.get("duration", 0.6))
+    easing = p.get("easing")
+    _queue_visual_fx(state, {"fx": "camera_pan", "x": x, "y": y,
+                             "duration": duration, "easing": easing})
+    return {"kind": eff.kind, "x": x, "y": y, "duration": duration}
+
+
+@effect("camera_zoom", plugin_id=BUILTIN,
+        description="Zoom the camera to a scale (1.0 = neutral) over a "
+                    "duration. Queued for the scene; does not touch the display.",
+        signature={"value": "dict {scale:float, duration:float?, easing:str?}"})
+def handle_camera_zoom(state: "GameState", eff: "Effect") -> dict[str, Any]:
+    p = eff.value if isinstance(eff.value, dict) else {}
+    scale = float(p.get("scale", 1.0))
+    duration = float(p.get("duration", 0.6))
+    easing = p.get("easing")
+    _queue_visual_fx(state, {"fx": "camera_zoom", "scale": scale,
+                             "duration": duration, "easing": easing})
+    return {"kind": eff.kind, "scale": scale, "duration": duration}
+
+
+@effect("screen_shake", plugin_id=BUILTIN,
+        description="Shake the whole frame with a decaying jitter. Queued for "
+                    "the scene; does not touch the display.",
+        signature={"value": "dict {intensity:float?, duration:float?, "
+                            "easing:str?}"})
+def handle_screen_shake(state: "GameState", eff: "Effect") -> dict[str, Any]:
+    p = eff.value if isinstance(eff.value, dict) else {}
+    intensity = float(p.get("intensity", 12.0))
+    duration = float(p.get("duration", 0.4))
+    easing = p.get("easing")
+    _queue_visual_fx(state, {"fx": "screen_shake", "intensity": intensity,
+                             "duration": duration, "easing": easing})
+    return {"kind": eff.kind, "intensity": intensity, "duration": duration}
+
+
+@effect("screen_flash", plugin_id=BUILTIN,
+        description="Flash a colour overlay that fades out over a duration. "
+                    "Queued for the scene; does not touch the display.",
+        signature={"value": "dict {color:[r,g,b]?, duration:float?, "
+                            "max_alpha:int?, easing:str?}"})
+def handle_screen_flash(state: "GameState", eff: "Effect") -> dict[str, Any]:
+    p = eff.value if isinstance(eff.value, dict) else {}
+    color = p.get("color", [255, 255, 255])
+    duration = float(p.get("duration", 0.3))
+    max_alpha = int(p.get("max_alpha", 255))
+    easing = p.get("easing")
+    _queue_visual_fx(state, {"fx": "screen_flash", "color": color,
+                             "duration": duration, "max_alpha": max_alpha,
+                             "easing": easing})
+    return {"kind": eff.kind, "color": color, "duration": duration}
+
+
+@effect("screen_tint", plugin_id=BUILTIN,
+        description="Apply a persistent colour tint over the frame; fades in "
+                    "over duration, or instantly when duration<=0. Pass a "
+                    "clear flag (or color null) to remove the active tint. "
+                    "Queued for the scene; does not touch the display.",
+        signature={"value": "dict {color:[r,g,b]?, duration:float?, "
+                            "max_alpha:int?, persist:bool?, clear:bool?, "
+                            "easing:str?}"})
+def handle_screen_tint(state: "GameState", eff: "Effect") -> dict[str, Any]:
+    p = eff.value if isinstance(eff.value, dict) else {}
+    clear = bool(p.get("clear", False)) or ("color" in p and p.get("color") is None)
+    if clear:
+        _queue_visual_fx(state, {"fx": "screen_tint", "clear": True})
+        return {"kind": eff.kind, "clear": True}
+    color = p.get("color", [0, 0, 0])
+    # A persist flag (or duration<=0) means "appear and hold"; the scene treats
+    # duration<=0 as instant-and-persistent in ColorTint.
+    persist = bool(p.get("persist", False))
+    duration = float(p.get("duration", 0.5))
+    if persist and duration > 0:
+        # Keep the fade-in but mark the directive persistent for clarity; the
+        # tint persists regardless once constructed (ColorTint never expires).
+        pass
+    max_alpha = int(p.get("max_alpha", 120))
+    easing = p.get("easing")
+    _queue_visual_fx(state, {"fx": "screen_tint", "color": color,
+                             "duration": duration, "max_alpha": max_alpha,
+                             "persist": persist, "easing": easing})
+    return {"kind": eff.kind, "color": color, "duration": duration,
+            "persist": persist}
+
+
 # Names re-exported for tests that want to invoke handlers directly without
 # going through GameState.apply.
 __all__ = [
@@ -399,4 +526,7 @@ __all__ = [
     "handle_buy_item", "handle_sell_item", "handle_gift",
     "handle_start_quest", "handle_complete_objective", "handle_complete_quest",
     "handle_fail_quest",
+    "handle_camera_pan", "handle_camera_zoom", "handle_screen_shake",
+    "handle_screen_flash", "handle_screen_tint",
+    "VISUAL_FX_QUEUE",
 ]

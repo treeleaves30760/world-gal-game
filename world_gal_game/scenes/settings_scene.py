@@ -1,8 +1,9 @@
-"""Settings overlay: text speed, fullscreen toggle, BGM volume.
+"""Settings overlay: text speed, volumes, playback, fullscreen toggle.
 
-Settings persist for the current process; they aren't written to disk
-yet. If you need persistence, hook this up to a user-config JSON in
-engine.config.writable_root().
+User-tunable settings persist to ``settings.json`` under
+``config.writable_root(app_data_name)``: any control change calls
+``ctx.config.save_to_disk()`` so the choice survives the next launch
+(loaded at boot via ``config.load_from_disk()``).
 """
 from __future__ import annotations
 
@@ -23,7 +24,7 @@ class SettingsScene(Scene):
     def enter(self, *, on_close=None, **_) -> None:
         self.on_close = on_close
         sw, sh = self.ctx.screen_size
-        self._panel_rect = pygame.Rect(sw // 2 - 320, sh // 2 - 250, 640, 500)
+        self._panel_rect = pygame.Rect(sw // 2 - 360, sh // 2 - 300, 720, 600)
         self._panel = Panel(self._panel_rect, self.ctx.theme,
                             fill=(*self.ctx.theme.bg_overlay[:3], 240),
                             border=self.ctx.theme.border_strong,
@@ -91,10 +92,78 @@ class SettingsScene(Scene):
             "看快捷鍵說明", fonts=self.ctx.fonts, theme=self.ctx.theme,
             font_size=15, on_click=self._show_shortcuts,
         )
+        # --- Playback column (right side): auto-play + skip + NVL -----------
+        col_x = self._panel_rect.x + 460
+        # Auto-play speed presets (scales auto_play_delay; higher = faster).
+        self._auto_speed_buttons: list[tuple[Button, float]] = []
+        auto_speeds = [(0.5, "慢"), (1.0, "中"), (1.5, "快"), (2.0, "極快")]
+        abw = 56
+        abx = col_x
+        aby = self._panel_rect.y + 110
+        for v, label in auto_speeds:
+            current = "*" if abs(self.ctx.config.auto_play_speed - v) < 0.05 else ""
+            b = Button(
+                pygame.Rect(abx, aby, abw, 38),
+                f"{label}{current}",
+                fonts=self.ctx.fonts, theme=self.ctx.theme,
+                font_size=14,
+                on_click=(lambda v=v: self._set_auto_play_speed(v)),
+            )
+            self._auto_speed_buttons.append((b, v))
+            abx += abw + 6
+        # Toggles: wait-for-voice, skip-unread-only, NVL mode.
+        self._wait_voice_btn = Button(
+            pygame.Rect(col_x, self._panel_rect.y + 180, 200, 38),
+            self._toggle_label("等待語音", self.ctx.config.auto_play_wait_voice),
+            fonts=self.ctx.fonts, theme=self.ctx.theme,
+            font_size=15, on_click=self._toggle_wait_voice,
+        )
+        self._skip_unread_btn = Button(
+            pygame.Rect(col_x, self._panel_rect.y + 240, 200, 38),
+            self._toggle_label("僅快進已讀", self.ctx.config.skip_unread_only),
+            fonts=self.ctx.fonts, theme=self.ctx.theme,
+            font_size=15, on_click=self._toggle_skip_unread,
+        )
+        self._nvl_btn = Button(
+            pygame.Rect(col_x, self._panel_rect.y + 300, 200, 38),
+            self._toggle_label("NVL 模式", self.ctx.config.nvl_mode),
+            fonts=self.ctx.fonts, theme=self.ctx.theme,
+            font_size=15, on_click=self._toggle_nvl,
+        )
+        # --- Per-character voice volume (right column, below the toggles) ---
+        # Each entry: (npc_id, display_name, minus_button, plus_button). We
+        # list characters from the NPC registry; absent volumes fall back to
+        # the global voice_volume. Capped so a large cast still fits the panel
+        # (overflow is dropped from the UI but its config values are untouched).
+        self._voice_char_rows: list[tuple] = []
+        self._voice_char_col_x = col_x
+        self._voice_char_top = self._panel_rect.y + 388
+        try:
+            npcs = self.ctx.npcs.all() if self.ctx.npcs is not None else []
+        except Exception:
+            npcs = []
+        row_h = 34
+        max_rows = 5
+        for i, npc in enumerate(npcs[:max_rows]):
+            ry = self._voice_char_top + i * row_h
+            minus = Button(
+                pygame.Rect(col_x + 130, ry, 30, 30),
+                "-", fonts=self.ctx.fonts, theme=self.ctx.theme,
+                font_size=16,
+                on_click=(lambda nid=npc.id: self._adjust_char_voice(nid, -0.1)),
+            )
+            plus = Button(
+                pygame.Rect(col_x + 200, ry, 30, 30),
+                "+", fonts=self.ctx.fonts, theme=self.ctx.theme,
+                font_size=16,
+                on_click=(lambda nid=npc.id: self._adjust_char_voice(nid, 0.1)),
+            )
+            self._voice_char_rows.append((npc.id, npc.name, minus, plus))
         self._show_shortcut_hint = False
 
     def _set_text_speed(self, v: float) -> None:
         self.ctx.config.text_speed = v
+        self.ctx.config.save_to_disk()
         self.enter(on_close=self.on_close)  # rebuild labels
 
     def _adjust_volume(self, delta: float) -> None:
@@ -109,6 +178,47 @@ class SettingsScene(Scene):
         new_v = max(0.0, min(1.0, self.ctx.config.voice_volume + delta))
         self.ctx.config.voice_volume = new_v
         self.ctx.assets._voice_volume = new_v
+        self.ctx.config.save_to_disk()
+
+    def _char_voice_volume(self, npc_id: str) -> float:
+        """Effective per-character voice volume (falls back to the global)."""
+        return self.ctx.config.per_character_voice_volume.get(
+            npc_id, self.ctx.config.voice_volume)
+
+    def _adjust_char_voice(self, npc_id: str, delta: float) -> None:
+        """Nudge one character's voice volume, seeding from the global default
+        the first time it's touched, then persist."""
+        cur = self._char_voice_volume(npc_id)
+        new_v = max(0.0, min(1.0, round(cur + delta, 3)))
+        self.ctx.config.per_character_voice_volume[npc_id] = new_v
+        self.ctx.config.save_to_disk()
+
+    @staticmethod
+    def _toggle_label(label: str, on: bool) -> str:
+        return f"{label}：{'開' if on else '關'}"
+
+    def _set_auto_play_speed(self, v: float) -> None:
+        self.ctx.config.auto_play_speed = v
+        self.ctx.config.save_to_disk()
+        self.enter(on_close=self.on_close)  # rebuild labels
+
+    def _toggle_wait_voice(self) -> None:
+        cfg = self.ctx.config
+        cfg.auto_play_wait_voice = not cfg.auto_play_wait_voice
+        cfg.save_to_disk()
+        self.enter(on_close=self.on_close)
+
+    def _toggle_skip_unread(self) -> None:
+        cfg = self.ctx.config
+        cfg.skip_unread_only = not cfg.skip_unread_only
+        cfg.save_to_disk()
+        self.enter(on_close=self.on_close)
+
+    def _toggle_nvl(self) -> None:
+        cfg = self.ctx.config
+        cfg.nvl_mode = not cfg.nvl_mode
+        cfg.save_to_disk()
+        self.enter(on_close=self.on_close)
 
     def _toggle_fullscreen(self) -> None:
         try:
@@ -135,6 +245,14 @@ class SettingsScene(Scene):
         self._voice_plus.update(dt, inp)
         self._fullscreen_btn.update(dt, inp)
         self._shortcuts_btn.update(dt, inp)
+        for b, _ in self._auto_speed_buttons:
+            b.update(dt, inp)
+        self._wait_voice_btn.update(dt, inp)
+        self._skip_unread_btn.update(dt, inp)
+        self._nvl_btn.update(dt, inp)
+        for _nid, _name, minus, plus in self._voice_char_rows:
+            minus.update(dt, inp)
+            plus.update(dt, inp)
 
     def draw(self, surface: pygame.Surface) -> None:
         veil = pygame.Surface(surface.get_size(), pygame.SRCALPHA)
@@ -187,6 +305,36 @@ class SettingsScene(Scene):
         surface.blit(kb_lbl, (self._panel_rect.x + 40,
                               self._panel_rect.y + 375))
         self._shortcuts_btn.draw(surface)
+        # --- Playback column (right side) ----------------------------------
+        col_x = self._panel_rect.x + 460
+        auto_lbl = self.ctx.fonts.render("自動播放速度", 18,
+                                         self.ctx.theme.text_mute, bold=True)
+        surface.blit(auto_lbl, (col_x, self._panel_rect.y + 88))
+        for b, _ in self._auto_speed_buttons:
+            b.draw(surface)
+        self._wait_voice_btn.draw(surface)
+        self._skip_unread_btn.draw(surface)
+        self._nvl_btn.draw(surface)
+        # Per-character voice volume section.
+        pc_lbl = self.ctx.fonts.render("角色語音音量", 18,
+                                       self.ctx.theme.text_mute, bold=True)
+        surface.blit(pc_lbl, (col_x, self._voice_char_top - 26))
+        if self._voice_char_rows:
+            for nid, name, minus, plus in self._voice_char_rows:
+                row_y = minus.rect.y
+                name_show = self.ctx.fonts.render(
+                    name[:5], 14, self.ctx.theme.text)
+                surface.blit(name_show, (col_x, row_y + 6))
+                pct = int(self._char_voice_volume(nid) * 100)
+                pct_show = self.ctx.fonts.render(
+                    f"{pct}%", 13, self.ctx.theme.text_mute)
+                surface.blit(pct_show, (col_x + 86, row_y + 8))
+                minus.draw(surface)
+                plus.draw(surface)
+        else:
+            none_show = self.ctx.fonts.render(
+                "（無角色）", 14, self.ctx.theme.text_mute)
+            surface.blit(none_show, (col_x, self._voice_char_top + 2))
         if self._show_shortcut_hint:
             tips = [
                 "Space / Enter / Z   推進對話",

@@ -58,3 +58,124 @@ def test_apply_advance_time():
     assert s.time.time_of_day.value == "morning"
     s.apply(Effect(kind="advance_time", value=1))
     assert s.time.time_of_day.value == "noon"
+
+
+# ----------------------------------------------------------------------
+# Presentation effects (camera / screen FX).
+#
+# These handlers must run inside the pure-Python apply() path: they return a
+# dict AND record a directive onto the private state.meta["__visual_fx__"]
+# queue, and must never import or touch pygame (DialogueScene drains the queue
+# and drives the actual animation). The "__" prefix keeps the queue out of
+# saves (see _serialize_meta).
+
+VISUAL_FX_QUEUE = "__visual_fx__"
+
+
+def test_apply_camera_pan_returns_dict_and_queues():
+    s = GameState()
+    out = s.apply(Effect(kind="camera_pan",
+                         value={"x": 80, "y": -30, "duration": 0.5}))
+    assert out["kind"] == "camera_pan"
+    assert out["x"] == 80 and out["y"] == -30
+    queue = s.meta[VISUAL_FX_QUEUE]
+    assert queue[-1]["fx"] == "camera_pan"
+    assert queue[-1]["x"] == 80 and queue[-1]["duration"] == 0.5
+
+
+def test_apply_camera_zoom_returns_dict_and_queues():
+    s = GameState()
+    out = s.apply(Effect(kind="camera_zoom", value={"scale": 1.5}))
+    assert out["kind"] == "camera_zoom"
+    assert out["scale"] == 1.5
+    assert s.meta[VISUAL_FX_QUEUE][-1] == {
+        "fx": "camera_zoom", "scale": 1.5, "duration": 0.6, "easing": None}
+
+
+def test_apply_screen_shake_returns_dict_and_queues():
+    s = GameState()
+    out = s.apply(Effect(kind="screen_shake",
+                         value={"intensity": 14, "duration": 0.3}))
+    assert out["kind"] == "screen_shake"
+    assert out["intensity"] == 14
+    assert s.meta[VISUAL_FX_QUEUE][-1]["fx"] == "screen_shake"
+
+
+def test_apply_screen_flash_returns_dict_and_queues():
+    s = GameState()
+    out = s.apply(Effect(kind="screen_flash",
+                         value={"color": [255, 240, 200], "duration": 0.25}))
+    assert out["kind"] == "screen_flash"
+    d = s.meta[VISUAL_FX_QUEUE][-1]
+    assert d["fx"] == "screen_flash" and d["color"] == [255, 240, 200]
+
+
+def test_apply_screen_tint_persistent_and_clear():
+    s = GameState()
+    s.apply(Effect(kind="screen_tint",
+                   value={"color": [80, 0, 0], "duration": 0.5}))
+    s.apply(Effect(kind="screen_tint", value={"clear": True}))
+    q = s.meta[VISUAL_FX_QUEUE]
+    assert q[0]["fx"] == "screen_tint" and q[0]["color"] == [80, 0, 0]
+    assert q[1] == {"fx": "screen_tint", "clear": True}
+
+
+def test_screen_tint_duration_zero_marks_persist_path():
+    s = GameState()
+    out = s.apply(Effect(kind="screen_tint",
+                         value={"color": [0, 0, 0], "duration": 0,
+                                "persist": True}))
+    assert out["persist"] is True
+    assert s.meta[VISUAL_FX_QUEUE][-1]["duration"] == 0
+
+
+def test_visual_fx_effects_accumulate_in_one_queue():
+    s = GameState()
+    s.apply_all([
+        Effect(kind="camera_zoom", value={"scale": 1.2}),
+        Effect(kind="screen_shake", value={"intensity": 8}),
+        Effect(kind="screen_flash", value={}),
+    ])
+    kinds = [d["fx"] for d in s.meta[VISUAL_FX_QUEUE]]
+    assert kinds == ["camera_zoom", "screen_shake", "screen_flash"]
+
+
+def test_visual_fx_queue_stripped_from_save_dump():
+    s = GameState()
+    s.apply(Effect(kind="screen_shake", value={"intensity": 10}))
+    assert VISUAL_FX_QUEUE in s.meta                 # present live...
+    dumped = s.model_dump(mode="json")
+    assert VISUAL_FX_QUEUE not in dumped.get("meta", {})  # ...stripped on save
+
+
+def test_visual_fx_handlers_do_not_import_pygame():
+    # The whole point of the queue is that apply() stays pygame-free. Drop
+    # pygame from sys.modules, apply each kind, and assert it was not imported.
+    import sys
+    had = {k: v for k, v in sys.modules.items()
+           if k == "pygame" or k.startswith("pygame.")}
+    for k in list(had):
+        del sys.modules[k]
+    try:
+        s = GameState()
+        for kind, val in [
+            ("camera_pan", {"x": 1, "y": 2}),
+            ("camera_zoom", {"scale": 2.0}),
+            ("screen_shake", {"intensity": 5}),
+            ("screen_flash", {}),
+            ("screen_tint", {"color": [1, 2, 3]}),
+        ]:
+            s.apply(Effect(kind=kind, value=val))
+        assert "pygame" not in sys.modules
+    finally:
+        sys.modules.update(had)
+
+
+def test_visual_fx_effects_tolerate_missing_value():
+    # eff.value defaulting to None must not raise (handlers coerce to {}).
+    s = GameState()
+    for kind in ("camera_pan", "camera_zoom", "screen_shake",
+                 "screen_flash", "screen_tint"):
+        out = s.apply(Effect(kind=kind))
+        assert out["kind"] == kind
+    assert len(s.meta[VISUAL_FX_QUEUE]) == 5
