@@ -280,6 +280,15 @@ def load_pack(content_root: Path) -> tuple[GameState, NPCRegistry, dict]:
     # Park the plugin manager on state.meta with a double-underscore
     # private key so SaveManager filters it out on serialise.
     state.meta["__plugin_manager__"] = plugin_manager
+    # Pack identity bridge: lets SaveManager stamp saves with which pack +
+    # content version produced them (for cross-version migration / mismatch
+    # detection on load). Double-underscore so it's stripped from serialised
+    # state — the identity is written to the save envelope, not the body.
+    state.meta["__pack_meta__"] = {
+        "pack_id": str(meta.get("id") or pack_root.name),
+        "pack_format_version": str(meta.get("pack_format_version", "0")),
+        "engine_version": engine_version,
+    }
 
     # ------------------------------------------------------------------
     # Stage 3: plugin post-load hooks + clue sweep

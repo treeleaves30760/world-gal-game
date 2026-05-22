@@ -63,6 +63,22 @@ def _migrate_0_to_1(data: dict) -> dict:
     return data
 
 
+def _flush_web_storage() -> None:
+    """Ask the web runtime to persist saves to IndexedDB (no-op off-web).
+
+    Imported lazily so this module stays display- and platform-free at
+    import time, and wrapped so a flush failure can never abort a save —
+    :func:`world_gal_game.platform_web.flush_storage` is already guarded,
+    but the import itself is shielded too for total safety.
+    """
+    try:
+        from ..platform_web import flush_storage
+        flush_storage()
+    except Exception:
+        # Persisting to IndexedDB is best-effort; never let it break a save.
+        pass
+
+
 # ---------- manager ----------------------------------------------------------
 
 class SaveManager:
@@ -122,6 +138,9 @@ class SaveManager:
                     "summary": data.get("_summary", ""),
                     "label": data.get("_label", slot),
                     "thumbnail_path": thumb_path if Path(thumb_path).exists() else None,
+                    "pack_id": data.get("_pack_id", ""),
+                    "pack_format_version": data.get("_pack_format_version", ""),
+                    "engine_version": data.get("_engine_version", ""),
                 })
             except Exception:
                 continue
@@ -135,6 +154,7 @@ class SaveManager:
         label: str = "",
         summary: str = "",
         thumbnail=None,  # pygame.Surface | None  (avoid hard import at module level)
+        pack_meta: dict[str, Any] | None = None,
     ) -> Path:
         """Persist state_dict to <slot>.json and optionally a sibling <slot>.png.
 
@@ -155,6 +175,13 @@ class SaveManager:
         payload["_saved_at"] = datetime.now(timezone.utc).isoformat()
         payload["_label"] = label or slot
         payload["_summary"] = summary
+        # Pack identity: which pack + content version + engine produced this
+        # save. Used on load to detect a mismatched pack or run pack-level
+        # content migrations. Empty defaults keep legacy saves valid.
+        pm = pack_meta or {}
+        payload["_pack_id"] = str(pm.get("pack_id", ""))
+        payload["_pack_format_version"] = str(pm.get("pack_format_version", "0"))
+        payload["_engine_version"] = str(pm.get("engine_version", ""))
 
         # Save thumbnail first so we can record its path in the JSON.
         thumb_path: str | None = None
@@ -176,6 +203,10 @@ class SaveManager:
         with open(path, "w", encoding="utf-8") as f:
             json.dump(payload, f, ensure_ascii=False, indent=2,
                       default=_json_default)
+        # On the web, push the freshly-written file from the in-memory IDBFS
+        # cache down to IndexedDB so it survives a hard reload. No-op on
+        # desktop / headless.
+        _flush_web_storage()
         return path
 
     def load(self, slot: str) -> dict[str, Any]:
@@ -205,5 +236,8 @@ class SaveManager:
             thumb = self._thumb_path(slot)
             if thumb.exists():
                 thumb.unlink()
+            # Mirror the save path: persist the deletion to IndexedDB on the
+            # web so a hard reload doesn't resurrect the slot. No-op off-web.
+            _flush_web_storage()
             return True
         return False

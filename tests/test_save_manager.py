@@ -162,3 +162,87 @@ def test_delete_removes_json_and_png(sm: SaveManager) -> None:
 
 def test_delete_nonexistent_returns_false(sm: SaveManager) -> None:
     assert sm.delete("ghost") is False
+
+
+# ---------- pack identity ----------------------------------------------------
+
+
+def test_save_writes_pack_identity(sm: SaveManager) -> None:
+    sm.save(
+        "p1", _minimal_state(),
+        pack_meta={"pack_id": "demo_pack",
+                   "pack_format_version": "0.2",
+                   "engine_version": "0.1.0"},
+    )
+    loaded = sm.load("p1")
+    assert loaded["_pack_id"] == "demo_pack"
+    assert loaded["_pack_format_version"] == "0.2"
+    assert loaded["_engine_version"] == "0.1.0"
+
+
+def test_save_without_pack_meta_uses_safe_defaults(sm: SaveManager) -> None:
+    sm.save("p2", _minimal_state())
+    loaded = sm.load("p2")
+    assert loaded["_pack_id"] == ""
+    assert loaded["_pack_format_version"] == "0"
+    assert loaded["_engine_version"] == ""
+
+
+def test_list_saves_includes_pack_identity(sm: SaveManager) -> None:
+    sm.save(
+        "p3", _minimal_state(),
+        pack_meta={"pack_id": "demo_pack",
+                   "pack_format_version": "0.1",
+                   "engine_version": "0.1.0"},
+    )
+    rows = sm.list_saves()
+    row = next(r for r in rows if r["slot"] == "p3")
+    assert row["pack_id"] == "demo_pack"
+    assert row["pack_format_version"] == "0.1"
+    assert row["engine_version"] == "0.1.0"
+
+
+# ---------- web storage flush hook -------------------------------------------
+# On the web, save()/delete() must trigger an IDBFS->IndexedDB flush. Off-web
+# (the test host) it's a no-op, and these tests pin both: that save still
+# round-trips, and that the flush hook is invoked exactly where expected.
+
+
+def test_save_invokes_flush_storage_but_still_round_trips(
+    sm: SaveManager, monkeypatch,
+) -> None:
+    import world_gal_game.platform_web as pw
+    calls = {"n": 0}
+    monkeypatch.setattr(pw, "flush_storage", lambda: calls.__setitem__("n", calls["n"] + 1))
+    sm.save("flushed", _minimal_state())
+    # flush hook fired once on save...
+    assert calls["n"] == 1
+    # ...and the data still round-trips unchanged.
+    loaded = sm.load("flushed")
+    assert loaded["player"]["name"] == "TestPlayer"
+
+
+def test_delete_invokes_flush_storage(sm: SaveManager, monkeypatch) -> None:
+    import world_gal_game.platform_web as pw
+    sm.save("to_delete", _minimal_state())
+    calls = {"n": 0}
+    monkeypatch.setattr(pw, "flush_storage", lambda: calls.__setitem__("n", calls["n"] + 1))
+    assert sm.delete("to_delete") is True
+    assert calls["n"] == 1  # delete flushed
+    # Deleting a missing slot must NOT flush (nothing changed on disk).
+    calls["n"] = 0
+    assert sm.delete("never_existed") is False
+    assert calls["n"] == 0
+
+
+def test_save_unaffected_when_flush_raises(sm: SaveManager, monkeypatch) -> None:
+    """A flush failure must never abort the save (it's best-effort)."""
+    import world_gal_game.platform_web as pw
+
+    def _boom() -> None:
+        raise RuntimeError("indexeddb exploded")
+
+    monkeypatch.setattr(pw, "flush_storage", _boom)
+    # save() swallows the flush error and still persists.
+    sm.save("resilient", _minimal_state())
+    assert sm.load("resilient")["player"]["name"] == "TestPlayer"

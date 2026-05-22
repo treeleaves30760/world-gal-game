@@ -27,6 +27,7 @@ class PackInfo:
     name: str               # directory name (URL-safe slug)
     root: Path              # absolute path
     title: str              # display title from meta.yaml
+    id: str = ""            # stable pack identity (meta.id, else dir name)
     subtitle: str = ""
     start_location: str | None = None
     intro_scene: str | None = None
@@ -47,6 +48,7 @@ def _scan_pack(root: Path, source: str = "") -> PackInfo | None:
         name=root.name,
         root=root.resolve(),
         title=str(meta.get("title", root.name)),
+        id=str(meta.get("id") or root.name),
         subtitle=str(meta.get("subtitle", "")),
         start_location=meta.get("start_location"),
         intro_scene=meta.get("intro_scene"),
