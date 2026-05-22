@@ -6,10 +6,34 @@ bundle (where data lives next to the executable under sys._MEIPASS).
 """
 from __future__ import annotations
 
+import json
+import logging
 import os
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
+
+_log = logging.getLogger(__name__)
+
+# User-tunable settings that round-trip through settings.json. Only these
+# fields are serialized; pack/path/dev fields are intentionally excluded so
+# the on-disk file stays a pure user-preferences document.
+_PERSISTED_SETTING_FIELDS: tuple[str, ...] = (
+    "bgm_volume",
+    "sfx_volume",
+    "voice_volume",
+    "text_speed",
+    "auto_play_delay",
+    "touch_mode",
+    "auto_play_speed",
+    "auto_play_wait_voice",
+    "skip_unread_only",
+    "nvl_mode",
+    "per_character_voice_volume",
+    "autosave_enabled",
+    "autosave_slot_count",
+    "quicksave_slot",
+)
 
 
 # ---------- path resolution (dev + pyinstaller) -----------------------------
@@ -142,6 +166,29 @@ class EngineConfig:
     # seconds between auto-advances when auto-play mode is on
     auto_play_delay: float = 2.5
 
+    # Auto/skip playback tuning (consumed by the dialogue scene).
+    # ``auto_play_speed`` scales ``auto_play_delay`` (higher = faster).
+    auto_play_speed: float = 1.0
+    # When auto-play is on, wait for the current voice clip to finish
+    # before advancing to the next line.
+    auto_play_wait_voice: bool = True
+    # Skip only advances through already-read lines when True; when False
+    # skip races through unread lines too.
+    skip_unread_only: bool = True
+
+    # NVL (full-screen accumulating text) presentation mode toggle.
+    nvl_mode: bool = False
+
+    # Per-character voice volume overrides keyed by speaker id; speakers
+    # absent here fall back to ``voice_volume``. UI for this lands in a
+    # later work package — the field + persistence live here.
+    per_character_voice_volume: dict[str, float] = field(default_factory=dict)
+
+    # Quicksave / autosave behaviour.
+    autosave_enabled: bool = True
+    autosave_slot_count: int = 3
+    quicksave_slot: str = "quicksave"
+
     # Touch-friendly UI mode. Off by default so desktop (mouse) input and
     # widget sizing are unchanged. Intended to be auto-enabled on web/mobile
     # in a follow-up; when on, tappable widgets should honour
@@ -170,6 +217,43 @@ class EngineConfig:
         d = writable_root(self.app_data_name) / self.save_subdir
         d.mkdir(parents=True, exist_ok=True)
         return d
+
+    def settings_path(self) -> Path:
+        """Location of the user-preferences JSON document."""
+        return writable_root(self.app_data_name) / "settings.json"
+
+    def save_to_disk(self) -> None:
+        """Persist only the user-tunable settings to ``settings.json``.
+
+        Pack/path/dev fields are deliberately excluded; the file is a pure
+        preferences document so it stays portable across packs.
+        """
+        data = {name: getattr(self, name) for name in _PERSISTED_SETTING_FIELDS}
+        path = self.settings_path()
+        path.write_text(json.dumps(data, indent=2, sort_keys=True),
+                        encoding="utf-8")
+
+    def load_from_disk(self) -> None:
+        """Overwrite known settings fields from ``settings.json`` if present.
+
+        Robust by contract: a missing file is a no-op, a corrupt/unparseable
+        file is logged and ignored (defaults are kept), and unknown keys are
+        skipped. This never raises.
+        """
+        path = self.settings_path()
+        try:
+            if not path.exists():
+                return
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            _log.warning("Ignoring unreadable settings file %s: %s", path, exc)
+            return
+        if not isinstance(raw, dict):
+            _log.warning("Ignoring settings file %s: expected an object", path)
+            return
+        for name in _PERSISTED_SETTING_FIELDS:
+            if name in raw:
+                setattr(self, name, raw[name])
 
     def pack_root(self, pack: str | None = None) -> Path:
         """Resolve a pack identifier to its on-disk root directory.
