@@ -98,6 +98,7 @@ class Line(BaseModel):
     cg: str | None = None            # full-screen CG to display
     sfx: str | None = None
     bgm: str | None = None
+    voice: str | None = None         # per-line voice clip (played on a reserved channel)
     effects: list[Effect] = Field(default_factory=list)
     requires: list[Condition] = Field(default_factory=list)
     llm_speaker: bool = False        # if true, generate text via LLM

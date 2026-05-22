@@ -13,6 +13,13 @@ from pydantic import BaseModel
 
 Slot = Literal["left", "center", "right"]
 
+# Legal values for PortraitSpec.enter / .exit. Single vocabulary source shared
+# by the animation runner (ui/portrait_anim.py), the validator, and the
+# capability manifest so they never drift. "none" means snap with no animation.
+PORTRAIT_ANIMATIONS: frozenset[str] = frozenset(
+    {"none", "fade", "slide_left", "slide_right", "bounce", "pop"}
+)
+
 
 class PortraitSpec(BaseModel):
     """A composed portrait reference.
@@ -32,6 +39,13 @@ class PortraitSpec(BaseModel):
     pose: str = "stand"
     outfit: str = "default"
     slot: Slot = "center"
+    # Optional staging fields. All default to neutral so legacy specs render
+    # exactly as before (no offset, full size, no flip, no enter/exit anim).
+    offset: tuple[int, int] = (0, 0)   # pixel nudge from the slot anchor
+    scale: float = 1.0                 # size multiplier on the slot rect
+    flip: bool = False                 # mirror horizontally
+    enter: str | None = None           # entry animation (see PORTRAIT_ANIMATIONS)
+    exit: str | None = None            # exit animation (see PORTRAIT_ANIMATIONS)
 
     def candidate_paths(self) -> list[str]:
         """Return paths to try, most specific first."""

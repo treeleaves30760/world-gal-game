@@ -23,7 +23,7 @@ class SettingsScene(Scene):
     def enter(self, *, on_close=None, **_) -> None:
         self.on_close = on_close
         sw, sh = self.ctx.screen_size
-        self._panel_rect = pygame.Rect(sw // 2 - 320, sh // 2 - 220, 640, 440)
+        self._panel_rect = pygame.Rect(sw // 2 - 320, sh // 2 - 250, 640, 500)
         self._panel = Panel(self._panel_rect, self.ctx.theme,
                             fill=(*self.ctx.theme.bg_overlay[:3], 240),
                             border=self.ctx.theme.border_strong,
@@ -66,14 +66,27 @@ class SettingsScene(Scene):
             "+", fonts=self.ctx.fonts, theme=self.ctx.theme,
             font_size=18, on_click=lambda: self._adjust_volume(0.1),
         )
+        # Voice volume controls (mirrors the BGM row).
+        self._voice_minus = Button(
+            pygame.Rect(self._panel_rect.x + 200, self._panel_rect.y + 230,
+                        38, 38),
+            "-", fonts=self.ctx.fonts, theme=self.ctx.theme,
+            font_size=18, on_click=lambda: self._adjust_voice_volume(-0.1),
+        )
+        self._voice_plus = Button(
+            pygame.Rect(self._panel_rect.x + 320, self._panel_rect.y + 230,
+                        38, 38),
+            "+", fonts=self.ctx.fonts, theme=self.ctx.theme,
+            font_size=18, on_click=lambda: self._adjust_voice_volume(0.1),
+        )
         self._fullscreen_btn = Button(
-            pygame.Rect(self._panel_rect.x + 200, self._panel_rect.y + 250,
+            pygame.Rect(self._panel_rect.x + 200, self._panel_rect.y + 300,
                         180, 38),
             "切換全螢幕 (F)", fonts=self.ctx.fonts, theme=self.ctx.theme,
             font_size=15, on_click=self._toggle_fullscreen,
         )
         self._shortcuts_btn = Button(
-            pygame.Rect(self._panel_rect.x + 200, self._panel_rect.y + 320,
+            pygame.Rect(self._panel_rect.x + 200, self._panel_rect.y + 370,
                         180, 38),
             "看快捷鍵說明", fonts=self.ctx.fonts, theme=self.ctx.theme,
             font_size=15, on_click=self._show_shortcuts,
@@ -91,6 +104,11 @@ class SettingsScene(Scene):
             pygame.mixer.music.set_volume(new_v)
         except pygame.error:
             pass
+
+    def _adjust_voice_volume(self, delta: float) -> None:
+        new_v = max(0.0, min(1.0, self.ctx.config.voice_volume + delta))
+        self.ctx.config.voice_volume = new_v
+        self.ctx.assets._voice_volume = new_v
 
     def _toggle_fullscreen(self) -> None:
         try:
@@ -113,6 +131,8 @@ class SettingsScene(Scene):
             b.update(dt, inp)
         self._vol_minus.update(dt, inp)
         self._vol_plus.update(dt, inp)
+        self._voice_minus.update(dt, inp)
+        self._voice_plus.update(dt, inp)
         self._fullscreen_btn.update(dt, inp)
         self._shortcuts_btn.update(dt, inp)
 
@@ -146,15 +166,26 @@ class SettingsScene(Scene):
                               self._panel_rect.y + 185))
         self._vol_minus.draw(surface)
         self._vol_plus.draw(surface)
+        voice_lbl = self.ctx.fonts.render("語音音量", 18,
+                                          self.ctx.theme.text_mute, bold=True)
+        surface.blit(voice_lbl, (self._panel_rect.x + 40,
+                                 self._panel_rect.y + 235))
+        voice_pct = int(self.ctx.config.voice_volume * 100)
+        voice_show = self.ctx.fonts.render(f"{voice_pct}%", 18,
+                                           self.ctx.theme.text)
+        surface.blit(voice_show, (self._panel_rect.x + 260,
+                                  self._panel_rect.y + 235))
+        self._voice_minus.draw(surface)
+        self._voice_plus.draw(surface)
         fs_lbl = self.ctx.fonts.render("顯示", 18,
                                        self.ctx.theme.text_mute, bold=True)
         surface.blit(fs_lbl, (self._panel_rect.x + 40,
-                              self._panel_rect.y + 255))
+                              self._panel_rect.y + 305))
         self._fullscreen_btn.draw(surface)
         kb_lbl = self.ctx.fonts.render("快捷鍵", 18,
                                        self.ctx.theme.text_mute, bold=True)
         surface.blit(kb_lbl, (self._panel_rect.x + 40,
-                              self._panel_rect.y + 325))
+                              self._panel_rect.y + 375))
         self._shortcuts_btn.draw(surface)
         if self._show_shortcut_hint:
             tips = [

@@ -58,6 +58,49 @@ def test_slot_explicit():
 
 
 # ---------------------------------------------------------------------------
+# Staging fields: defaults are neutral; legacy candidate_paths unchanged
+# ---------------------------------------------------------------------------
+
+
+def test_staging_fields_default_neutral():
+    spec = PortraitSpec(character="heroine_1")
+    assert spec.offset == (0, 0)
+    assert spec.scale == 1.0
+    assert spec.flip is False
+    assert spec.enter is None
+    assert spec.exit is None
+
+
+def test_staging_fields_explicit():
+    spec = PortraitSpec(character="heroine_1", offset=(10, -20), scale=1.2,
+                        flip=True, enter="slide_left", exit="fade")
+    assert spec.offset == (10, -20)
+    assert spec.scale == 1.2
+    assert spec.flip is True
+    assert spec.enter == "slide_left"
+    assert spec.exit == "fade"
+
+
+def test_staging_does_not_change_candidate_paths():
+    legacy = PortraitSpec(character="hero", expression="smile", pose="stand",
+                          outfit="uniform")
+    staged = PortraitSpec(character="hero", expression="smile", pose="stand",
+                          outfit="uniform", offset=(5, 5), scale=2.0,
+                          flip=True, enter="pop", exit="bounce")
+    assert legacy.candidate_paths() == staged.candidate_paths()
+
+
+def test_portrait_animations_constant():
+    from world_gal_game.core.portrait_spec import PORTRAIT_ANIMATIONS
+    assert "none" in PORTRAIT_ANIMATIONS
+    assert "fade" in PORTRAIT_ANIMATIONS
+    assert "slide_left" in PORTRAIT_ANIMATIONS
+    assert "slide_right" in PORTRAIT_ANIMATIONS
+    assert "bounce" in PORTRAIT_ANIMATIONS
+    assert "pop" in PORTRAIT_ANIMATIONS
+
+
+# ---------------------------------------------------------------------------
 # script_loader three YAML forms
 # ---------------------------------------------------------------------------
 

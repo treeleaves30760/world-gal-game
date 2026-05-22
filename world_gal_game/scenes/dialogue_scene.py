@@ -8,6 +8,8 @@ import pygame
 from .base import Scene, SceneContext
 from ..ui.widgets import DialogueBox, ChoiceMenu, PortraitView
 from ..ui.transitions import PortraitCrossfade, BackgroundFade
+from ..ui.portrait_anim import SlotAnimation
+from ..ui.layout import fit_rect
 from ..core.portrait_spec import PortraitSpec
 
 
@@ -29,12 +31,21 @@ class DialogueScene(Scene):
         self.auto_play_enabled: bool = False
         self._auto_play_timer: float = 0.0
 
-        # Portrait state: per-slot surface + active crossfade.
+        # Portrait state: per-slot surface + active crossfade + spec.
         # Slots: "left", "center", "right"
         self._slot_surfaces: dict[str, pygame.Surface | None] = {
             "left": None, "center": None, "right": None,
         }
         self._slot_fades: dict[str, PortraitCrossfade | None] = {
+            "left": None, "center": None, "right": None,
+        }
+        # Active SlotAnimation per slot (enter/exit/move). When set it takes
+        # precedence over the plain crossfade for that slot. Specs remember
+        # offset/scale/flip so the static draw can keep applying them.
+        self._slot_anims: dict[str, SlotAnimation | None] = {
+            "left": None, "center": None, "right": None,
+        }
+        self._slot_specs: dict[str, PortraitSpec | None] = {
             "left": None, "center": None, "right": None,
         }
 
@@ -85,6 +96,8 @@ class DialogueScene(Scene):
         self._render_presentation(pres)
 
     def _advance(self) -> None:
+        # A manual advance cuts the current line's voice immediately.
+        self.ctx.assets.stop_voice()
         pres = self.ctx.dialogue.next_line()
         self._render_presentation(pres)
 
@@ -110,33 +123,97 @@ class DialogueScene(Scene):
             return self.ctx.assets.image(path, fallback_size=fallback)
         return None
 
-    def _start_portrait_fade(self, slot: str, new_surf: pygame.Surface | None) -> None:
-        """Begin a crossfade on a slot from current surface to new_surf."""
-        old = self._slot_surfaces.get(slot)
-        if old is new_surf:
+    @staticmethod
+    def _spec_has_staging(spec: PortraitSpec | None) -> bool:
+        """True when a spec uses any non-neutral staging field.
+
+        Legacy specs (all defaults) return False so they keep the original
+        crossfade path and render pixel-identically.
+        """
+        if spec is None:
+            return False
+        return bool(
+            spec.enter or spec.exit
+            or spec.offset != (0, 0)
+            or spec.scale != 1.0
+            or spec.flip
+        )
+
+    def _start_slot_transition(self, slot: str, new_surf: pygame.Surface | None,
+                                new_spec: PortraitSpec | None,
+                                sw: int, sh: int) -> None:
+        """Transition a slot to ``new_surf``/``new_spec``.
+
+        Uses a :class:`SlotAnimation` when either the incoming spec declares
+        staging (enter/offset/scale/flip) or the outgoing spec declared an
+        exit animation; otherwise falls back to the plain crossfade so packs
+        that don't opt in are unchanged.
+        """
+        old_surf = self._slot_surfaces.get(slot)
+        old_spec = self._slot_specs.get(slot)
+        if old_surf is new_surf and old_spec is new_spec:
             return
-        self._slot_fades[slot] = PortraitCrossfade(old, new_surf, duration=0.25)
+
+        animated = self._spec_has_staging(new_spec) or (
+            old_spec is not None and old_spec.exit
+            and old_spec.exit != "none"
+        )
+
+        if not animated:
+            # Neutral path: identical to the historical behaviour.
+            self._slot_anims[slot] = None
+            self._slot_fades[slot] = PortraitCrossfade(
+                old_surf, new_surf, duration=0.25)
+            self._slot_surfaces[slot] = new_surf
+            self._slot_specs[slot] = new_spec
+            return
+
+        target = self._slot_rect(slot, sw, sh, new_spec)
+        self._slot_fades[slot] = None
+        if new_surf is not None and new_spec is not None and new_spec.enter \
+                and new_spec.enter != "none":
+            self._slot_anims[slot] = SlotAnimation(
+                kind="enter", rect=target, duration=0.3,
+                new=new_surf, anim=new_spec.enter, flip=new_spec.flip,
+            )
+        elif new_surf is None and old_surf is not None and old_spec is not None \
+                and old_spec.exit and old_spec.exit != "none":
+            exit_rect = self._slot_rect(slot, sw, sh, old_spec)
+            self._slot_anims[slot] = SlotAnimation(
+                kind="exit", rect=exit_rect, duration=0.3,
+                old=old_surf, anim=old_spec.exit, flip=old_spec.flip,
+            )
+        else:
+            # Staging present (offset/scale/flip) but no named enter anim:
+            # crossfade at the staged rect so flip/offset/scale still apply.
+            self._slot_anims[slot] = SlotAnimation(
+                kind="crossfade", rect=target, duration=0.25,
+                old=old_surf, new=new_surf, flip=new_spec.flip if new_spec else False,
+            )
         self._slot_surfaces[slot] = new_surf
+        self._slot_specs[slot] = new_spec
 
     def _update_portraits(self, line) -> None:
-        """Compute which slots change this line and start fades."""
+        """Compute which slots change this line and start transitions."""
+        sw, sh = self.ctx.screen_size
         if line.portraits:
             # Multi-slot: clear all then populate from the spec list.
-            wanted: dict[str, pygame.Surface | None] = {
-                "left": None, "center": None, "right": None,
+            wanted: dict[str, tuple[pygame.Surface | None, PortraitSpec | None]] = {
+                "left": (None, None), "center": (None, None), "right": (None, None),
             }
             for spec in line.portraits:
                 surf = self.ctx.assets.resolve_portrait(spec)
-                wanted[spec.slot] = surf
-            for slot, surf in wanted.items():
-                self._start_portrait_fade(slot, surf)
+                wanted[spec.slot] = (surf, spec)
+            for slot, (surf, spec) in wanted.items():
+                self._start_slot_transition(slot, surf, spec, sw, sh)
         else:
             # Single-portrait / legacy path goes to center; clear other slots.
             center_surf = self._surface_for_portrait(
                 line.portrait, line.speaker, line.expression)
-            self._start_portrait_fade("center", center_surf)
-            self._start_portrait_fade("left", None)
-            self._start_portrait_fade("right", None)
+            center_spec = line.portrait if isinstance(line.portrait, PortraitSpec) else None
+            self._start_slot_transition("center", center_surf, center_spec, sw, sh)
+            self._start_slot_transition("left", None, None, sw, sh)
+            self._start_slot_transition("right", None, None, sw, sh)
 
     # ------------------------------------------------------------------
     # Background helper
@@ -169,6 +246,11 @@ class DialogueScene(Scene):
                 self.ctx.assets.play_music(line.bgm)
             if line.sfx:
                 self.ctx.assets.play_sound(line.sfx)
+            # Voice: cut any in-flight clip, then play this line's (if any).
+            self.ctx.assets.stop_voice()
+            if line.voice:
+                self.ctx.assets.play_voice(
+                    line.voice, volume=self.ctx.config.voice_volume)
             # CG
             self.cg_surface_path = line.cg
             # Portrait (multi-slot or single)
@@ -221,6 +303,8 @@ class DialogueScene(Scene):
         if self.box and not self.box.fully_revealed():
             self.box.force_reveal()
             return
+        # Skipping cuts the current line's voice immediately.
+        self.ctx.assets.stop_voice()
         pres = self.ctx.dialogue.skip_to_next_unread()
         if pres is not None:
             self._render_presentation(pres)
@@ -228,8 +312,13 @@ class DialogueScene(Scene):
     # ------------------------------------------------------------------
 
     def update(self, dt: float, inp) -> None:
-        # Tick portrait crossfades.
+        # Tick portrait transitions (animation takes precedence over fade).
         for slot in ("left", "center", "right"):
+            anim = self._slot_anims.get(slot)
+            if anim is not None:
+                anim.update(dt)
+                if anim.done:
+                    self._slot_anims[slot] = None
             fade = self._slot_fades.get(slot)
             if fade is not None:
                 fade.update(dt)
@@ -286,8 +375,14 @@ class DialogueScene(Scene):
                     self._auto_play_timer = 0.0
                     self._advance()
 
-    def _slot_rect(self, slot: str, sw: int, sh: int) -> pygame.Rect:
-        """Return the bounding rect for a portrait slot, anchored at bottom."""
+    def _slot_rect(self, slot: str, sw: int, sh: int,
+                   spec: PortraitSpec | None = None) -> pygame.Rect:
+        """Return the bounding rect for a portrait slot, anchored at bottom.
+
+        When ``spec`` carries staging fields the rect is scaled about its
+        center and nudged by ``offset``. With no spec (or a neutral one) the
+        rect is byte-for-byte the historical one.
+        """
         box_h = 230
         margin = 32
         portrait_h = sh - box_h - margin - 60
@@ -299,7 +394,16 @@ class DialogueScene(Scene):
         }[slot]
         x = anchor_x - portrait_w // 2
         y = 30
-        return pygame.Rect(x, y, portrait_w, portrait_h)
+        rect = pygame.Rect(x, y, portrait_w, portrait_h)
+        if spec is not None and (spec.scale != 1.0 or spec.offset != (0, 0)):
+            if spec.scale != 1.0:
+                cx, cy = rect.center
+                rect.width = max(1, int(portrait_w * spec.scale))
+                rect.height = max(1, int(portrait_h * spec.scale))
+                rect.center = (cx, cy)
+            rect.x += spec.offset[0]
+            rect.y += spec.offset[1]
+        return rect
 
     def draw(self, surface: pygame.Surface) -> None:
         sw, sh = surface.get_size()
@@ -326,19 +430,30 @@ class DialogueScene(Scene):
         # Slot-based portrait rendering (new system).
         if not self.cg_surface_path:
             any_slot_active = any(
-                self._slot_surfaces.get(s) is not None or self._slot_fades.get(s) is not None
+                self._slot_surfaces.get(s) is not None
+                or self._slot_fades.get(s) is not None
+                or self._slot_anims.get(s) is not None
                 for s in ("left", "center", "right")
             )
             if any_slot_active:
                 for slot in ("left", "center", "right"):
+                    anim = self._slot_anims.get(slot)
                     fade = self._slot_fades.get(slot)
-                    rect = self._slot_rect(slot, sw, sh)
-                    if fade is not None:
+                    spec = self._slot_specs.get(slot)
+                    rect = self._slot_rect(slot, sw, sh, spec)
+                    if anim is not None:
+                        anim.draw(surface)
+                    elif fade is not None:
                         fade.draw(surface, rect)
                     elif self._slot_surfaces.get(slot) is not None:
-                        surf = pygame.transform.smoothscale(
-                            self._slot_surfaces[slot], (rect.width, rect.height))
-                        surface.blit(surf, rect.topleft)
+                        src = self._slot_surfaces[slot]
+                        # Fit (don't stretch) the portrait into the slot so its
+                        # native aspect ratio is preserved; bottom-anchored.
+                        dest = fit_rect(src.get_size(), rect)
+                        surf = pygame.transform.smoothscale(src, dest.size)
+                        if spec is not None and spec.flip:
+                            surf = pygame.transform.flip(surf, True, False)
+                        surface.blit(surf, dest.topleft)
             elif self.portrait:
                 # Legacy fallback: no slot surfaces active, use PortraitView.
                 self.portrait.draw(surface)
@@ -356,7 +471,8 @@ class DialogueScene(Scene):
             "current_line": (
                 {
                     "speaker": self._current_line.speaker,
-                    "text": self._current_line.text,
+                    "text": (self._current_line.plain_text
+                             or self._current_line.text),
                     "line_index": self._current_line.line_index,
                     "total_lines": self._current_line.total_lines,
                 } if self._current_line else None

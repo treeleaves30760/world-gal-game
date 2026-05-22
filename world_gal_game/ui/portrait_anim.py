@@ -1,0 +1,180 @@
+"""Per-slot portrait staging animation.
+
+A :class:`SlotAnimation` drives one portrait slot's transition over a fixed
+duration, interpolating the portrait's destination rect and alpha with an
+easing curve. It generalises the older :class:`PortraitCrossfade` (which only
+mixed alpha at a fixed rect) to also cover entry/exit slides, scale pops and
+bounces, and moves between slot positions.
+
+Kinds:
+
+- ``"enter"``  — a new portrait animates *in* to ``rect`` (fade / slide_left /
+  slide_right / bounce / pop). ``old`` is ignored.
+- ``"exit"``   — a leaving portrait animates *out* from ``rect`` (the reverse
+  of the matching enter curve). ``new`` is ignored.
+- ``"move"``   — the same portrait travels from ``from_rect`` to ``rect``.
+- ``"crossfade"`` (default) — ``old`` fades out and ``new`` fades in, both at
+  ``rect``. This is the behaviour packs without enter/exit get.
+
+The class is intentionally pygame-aware (it blits surfaces) but holds no game
+state; the dialogue scene owns one per slot and ticks it each frame.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+
+import pygame
+
+from .easing import resolve, EasingFn
+from .layout import fit_rect
+
+
+def _lerp(a: float, b: float, t: float) -> float:
+    return a + (b - a) * t
+
+
+def _lerp_rect(a: pygame.Rect, b: pygame.Rect, t: float) -> pygame.Rect:
+    return pygame.Rect(
+        round(_lerp(a.x, b.x, t)),
+        round(_lerp(a.y, b.y, t)),
+        max(1, round(_lerp(a.width, b.width, t))),
+        max(1, round(_lerp(a.height, b.height, t))),
+    )
+
+
+# Animations that need a default easing other than the supplied one. ``bounce``
+# wants an out-bounce feel; ``pop`` overshoots with out-back. The caller can
+# still override via the ``easing`` argument.
+_ANIM_DEFAULT_EASE = {
+    "bounce": "out_bounce",
+    "pop": "out_back",
+    "fade": "out_quad",
+    "slide_left": "out_cubic",
+    "slide_right": "out_cubic",
+}
+
+
+@dataclass
+class SlotAnimation:
+    """One slot's in-flight transition.
+
+    ``rect`` is the resolved *target* rect (already offset/scaled by the
+    caller). ``from_rect`` is only used by ``kind="move"``.
+    """
+
+    kind: str
+    rect: pygame.Rect
+    duration: float = 0.25
+    old: pygame.Surface | None = None
+    new: pygame.Surface | None = None
+    anim: str | None = None            # the named curve (fade/slide_left/...)
+    from_rect: pygame.Rect | None = None
+    easing: str | EasingFn | None = None
+    flip: bool = False                 # mirror the moving/entering surface
+
+    t: float = field(default=0.0, init=False)
+    _ease: EasingFn = field(init=False)
+
+    def __post_init__(self) -> None:
+        self.duration = max(0.01, self.duration)
+        ease = self.easing
+        if ease is None and self.anim in _ANIM_DEFAULT_EASE:
+            ease = _ANIM_DEFAULT_EASE[self.anim]
+        self._ease = resolve(ease)
+
+    # ------------------------------------------------------------------
+
+    def update(self, dt: float) -> None:
+        # Clamp so a frame spike never pushes progress past 1.0.
+        self.t = min(self.t + dt, self.duration)
+
+    @property
+    def done(self) -> bool:
+        return self.t >= self.duration
+
+    @property
+    def progress(self) -> float:
+        return self._ease(self.t / self.duration)
+
+    # ------------------------------------------------------------------
+
+    def _scaled(self, surf: pygame.Surface, size: tuple[int, int]) -> pygame.Surface:
+        out = pygame.transform.smoothscale(surf, (max(1, size[0]), max(1, size[1])))
+        if self.flip:
+            out = pygame.transform.flip(out, True, False)
+        return out
+
+    def _blit(self, surface: pygame.Surface, src: pygame.Surface,
+              rect: pygame.Rect, alpha: int) -> None:
+        # ``rect`` is the animation envelope (target / popped / slid bounds).
+        # Fit the portrait inside it preserving aspect, bottom-anchored, so a
+        # tall portrait is never stretched into a wider slot box.
+        dest = fit_rect(src.get_size(), rect)
+        img = self._scaled(src, dest.size)
+        if alpha < 255:
+            img.set_alpha(max(0, min(255, alpha)))
+        surface.blit(img, dest.topleft)
+
+    def _entry_state(self, p: float) -> tuple[pygame.Rect, int]:
+        """Return (rect, alpha) for an entering portrait at progress ``p``."""
+        target = self.rect
+        if self.anim in (None, "none"):
+            return target, 255
+        if self.anim == "fade":
+            return target, int(p * 255)
+        if self.anim == "pop":
+            # Scale from a small box up to full, centered on the target.
+            scale = _lerp(0.6, 1.0, p)
+            w = max(1, int(target.width * scale))
+            h = max(1, int(target.height * scale))
+            r = pygame.Rect(0, 0, w, h)
+            r.center = target.center
+            return r, int(min(1.0, p * 1.5) * 255)
+        if self.anim == "bounce":
+            # Drop in from above with a bounce easing on the y offset.
+            start_y = target.y - target.height
+            y = round(_lerp(start_y, target.y, p))
+            return pygame.Rect(target.x, y, target.width, target.height), 255
+        if self.anim in ("slide_left", "slide_right"):
+            # slide_left = enters travelling toward the left (from the right).
+            sign = 1 if self.anim == "slide_left" else -1
+            start_x = target.x + sign * target.width
+            x = round(_lerp(start_x, target.x, p))
+            return pygame.Rect(x, target.y, target.width, target.height), int(min(1.0, p * 1.5) * 255)
+        return target, 255
+
+    def draw(self, surface: pygame.Surface) -> None:
+        p = self.progress
+
+        if self.kind == "crossfade":
+            if self.old is not None and p < 1.0:
+                self._blit(surface, self.old, self.rect, int((1.0 - p) * 255))
+            if self.new is not None:
+                self._blit(surface, self.new, self.rect, int(p * 255))
+            return
+
+        if self.kind == "move":
+            src = self.new or self.old
+            if src is None:
+                return
+            start = self.from_rect if self.from_rect is not None else self.rect
+            cur = _lerp_rect(start, self.rect, p)
+            self._blit(surface, src, cur, 255)
+            return
+
+        if self.kind == "exit":
+            if self.old is None:
+                return
+            # Reverse of entry: progress runs the entry curve backwards.
+            saved = self.new
+            self.new = None
+            rect, alpha = self._entry_state(1.0 - p)
+            self.new = saved
+            self._blit(surface, self.old, rect, alpha)
+            return
+
+        # Default: enter.
+        if self.new is None:
+            return
+        rect, alpha = self._entry_state(p)
+        self._blit(surface, self.new, rect, alpha)

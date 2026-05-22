@@ -35,6 +35,10 @@ class AssetManager:
         self._current_music: str | None = None
         self._placeholder_cache: dict[tuple[int, int, tuple], pygame.Surface] = {}
         self._pack_root: Path | None = Path(pack_root) if pack_root else None
+        # Reserved voice channel (mixer Channel 0). The app reserves one
+        # channel at init so auto-allocated SFX never steal it.
+        self._voice_channel: pygame.mixer.Channel | None = None
+        self._voice_volume: float = 1.0
 
     def set_pack_root(self, pack_root: Path | None) -> None:
         """Tell the asset manager where to resolve pack-relative paths.
@@ -227,3 +231,41 @@ class AssetManager:
             self._current_music = path
         except pygame.error:
             self._current_music = None
+
+    # ---------- voice --------------------------------------------------------
+
+    def play_voice(self, path: str | None, *, volume: float = 1.0) -> None:
+        """Play a per-line voice clip on the reserved mixer channel (0).
+
+        Reuses the cached :meth:`sound` loader. A missing file or any mixer
+        error is a silent no-op so packs without voiced lines just stay
+        quiet. The previous voice (if any) is stopped first so a new line
+        cuts the old clip.
+        """
+        s = self.sound(path)
+        if s is None:
+            return
+        try:
+            s.set_volume(volume)
+            self._voice_channel = pygame.mixer.Channel(0)
+            self._voice_channel.play(s)
+        except pygame.error:
+            self._voice_channel = None
+
+    def stop_voice(self) -> None:
+        """Stop the current voice clip, if one is playing."""
+        if self._voice_channel is None:
+            return
+        try:
+            self._voice_channel.stop()
+        except pygame.error:
+            pass
+
+    def voice_busy(self) -> bool:
+        """True while a voice clip is still playing on the reserved channel."""
+        if self._voice_channel is None:
+            return False
+        try:
+            return bool(self._voice_channel.get_busy())
+        except pygame.error:
+            return False
