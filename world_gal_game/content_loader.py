@@ -29,6 +29,7 @@ import yaml
 from .core.achievements import Achievement
 from .core.affection import AffectionThreshold
 from .core.clue import Clue
+from .core.endings import Ending
 from .core.game_state import GameState, PlayerInfo
 from .core.inventory import Item
 from .core.map_system import MapSystem, Location, NPCPresence, SceneHook, Exit, Region
@@ -166,6 +167,25 @@ def load_achievements(content_root: Path, state: GameState) -> None:
         state.achievements.register(ach)
 
 
+def load_endings(content_root: Path, state: GameState) -> None:
+    """Read ``content/endings.yaml`` (if present) and register every ending.
+
+    Mirrors :func:`load_achievements`: the file is optional, and each entry's
+    ``requires`` / ``forbids`` go through the standard condition loader so all
+    condition kinds (flag, scene_played, affection, ...) are usable to gate an
+    ending — typically an ``ending_*`` flag set at the close of a route.
+    """
+    data = _read_yaml(content_root / "endings.yaml") or []
+    if isinstance(data, dict) and "endings" in data:
+        data = data["endings"]
+    for raw in data:
+        raw = dict(raw)
+        raw["requires"] = _to_conditions(raw.get("requires"))
+        raw["forbids"] = _to_conditions(raw.get("forbids"))
+        ending = Ending(**raw)
+        state.endings.register(ending)
+
+
 def load_quests(content_root: Path, state: GameState) -> None:
     """Read ``content/quests.yaml`` (if present) and register every quest."""
     data = _read_yaml(content_root / "quests.yaml") or []
@@ -254,6 +274,7 @@ def load_pack(content_root: Path) -> tuple[GameState, NPCRegistry, dict]:
     load_items(content_root, state)
     load_scenes(content_root, state)
     load_achievements(content_root, state)
+    load_endings(content_root, state)
     load_quests(content_root, state)
     load_clues(content_root, state)
     meta = load_game_meta(content_root)

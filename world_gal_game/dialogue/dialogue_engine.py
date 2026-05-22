@@ -112,6 +112,13 @@ class DialogueEngine:
         )
         if scene.bgm:
             self.state.meta["current_bgm"] = scene.bgm
+            # Scene-level BGM is the common case (most packs set bgm per scene,
+            # not per line), so unlock it here too — otherwise the music room
+            # would miss almost every track. Line-level cg/bgm unlock in
+            # _present_line complements this.
+            self.state.music_room.unlock(scene.bgm)
+        if scene.cg:
+            self.state.cg_gallery.unlock(scene.cg)
         return self._present_current()
 
     def next_line(self) -> ScenePresentation:
@@ -155,6 +162,7 @@ class DialogueEngine:
         # that hands off to a sequel scene counts as completing this one).
         if choice.next_scene:
             self.state.story.mark_played(scene.id)
+            self.state.read_log.mark_scene_done(scene.id)
             return self.start_scene(choice.next_scene)
         # Otherwise end this scene.
         return self._end_current_scene()
@@ -212,6 +220,32 @@ class DialogueEngine:
             if pres.kind in ("choice", "transition"):
                 return pres
 
+    def skip_all(self) -> "ScenePresentation | None":
+        """Skip-all mode: race through *every* remaining line (read or not),
+        stopping only at a choice point or the end of the scene.
+
+        This is the unread-inclusive sibling of :meth:`skip_to_next_unread`.
+        Like that method it advances line-by-line through the engine (so each
+        line's effects fire and history/read-log update) but never pauses on
+        an unread line — only a choice or transition halts the skip. Returning
+        the *final* presentation lets the scene render once at the stopping
+        point rather than re-rendering every skipped line (matching the
+        existing skip helper's contract).
+
+        Returns the choice / transition presentation reached, or ``None`` when
+        the scene ends without one.
+        """
+        while True:
+            scene = self.current_scene()
+            if scene is None:
+                return None
+            pres = self.next_line()
+            if pres.kind == "end":
+                return None
+            if pres.kind in ("choice", "transition"):
+                return pres
+            # kind == "line": keep skipping.
+
     # ---------- internals -----------------------------------------------------
 
     def _choice_available(self, choice: Choice) -> bool:
@@ -254,6 +288,13 @@ class DialogueEngine:
         # Mark as read *before* pushing to history (order doesn't matter for
         # the ReadLog, but it's consistent with "user has now seen this").
         self.state.read_log.mark_line(scene.id, idx)
+        # Auto-unlock the CG / BGM this line shows so the gallery and music
+        # room can offer them later. This is the single engine edit that
+        # populates those trackers; the Phase-2 viewer scenes stay read-only.
+        if line.cg:
+            self.state.cg_gallery.unlock(line.cg)
+        if line.bgm:
+            self.state.music_room.unlock(line.bgm)
         # Interpolate speaker too so lines spoken by the player can use
         # `speaker: "{player_name}"` and render the chosen name.
         speaker_rendered = (interpolate(line.speaker, self.state)
@@ -344,6 +385,7 @@ class DialogueEngine:
         # apply on_end effects, mark played, surface next transition (if any).
         end_results = self.state.apply_all(scene.on_end)
         self.state.story.mark_played(scene.id)
+        self.state.read_log.mark_scene_done(scene.id)
         self.state.story.current_scene = None
         self.state.story.current_line_index = 0
         # Look for a play_scene effect to suggest a transition.

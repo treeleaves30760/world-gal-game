@@ -25,10 +25,13 @@ from pydantic import BaseModel, Field, field_serializer
 
 from .achievements import AchievementTracker
 from .affection import AffectionTracker
+from .cg_gallery import CGGallery
 from .clue import ClueTracker
+from .endings import EndingTracker
 from .event_log import EventLog, DialogueHistory
 from .inventory import Inventory, ItemRegistry
 from .map_system import MapSystem
+from .music_room import MusicRoom
 from .quest import QuestTracker
 from .read_log import ReadLog
 from .resources import ResourceTracker
@@ -63,6 +66,9 @@ class GameState(BaseModel):
     read_log: ReadLog = Field(default_factory=ReadLog)
     quests: QuestTracker = Field(default_factory=QuestTracker)
     clues: ClueTracker = Field(default_factory=ClueTracker)
+    cg_gallery: CGGallery = Field(default_factory=CGGallery)
+    music_room: MusicRoom = Field(default_factory=MusicRoom)
+    endings: EndingTracker = Field(default_factory=EndingTracker)
     route: str | None = None    # which heroine route is currently dominant
     meta: dict[str, Any] = Field(default_factory=dict)
 
@@ -185,6 +191,17 @@ class GameState(BaseModel):
                 data={"achievement": ach.id},
             )
             out.append({"kind": "achievement", "id": ach.id, "title": ach.title})
+        # Re-evaluate endings the same way: a route that just set its
+        # ending_* flag unlocks here and is recorded in the event log so it
+        # shows up in the journal and the endings / completion screen.
+        for ending in self.endings.check(self):
+            self.events.record(
+                kind="unlock",
+                title=f"結局解鎖：{ending.title}",
+                summary=ending.description,
+                data={"ending": ending.id},
+            )
+            out.append({"kind": "ending", "id": ending.id, "title": ending.title})
         # Re-evaluate clues: any newly satisfied requires-gates get added
         # to the journal and surfaced as toasts so the player notices the
         # journal button. Resolved clues stay (greyed out) inside the
