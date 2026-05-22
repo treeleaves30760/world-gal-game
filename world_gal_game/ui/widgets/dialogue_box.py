@@ -28,14 +28,15 @@ class DialogueBox(Widget):
                            border=theme.border_strong,
                            radius=theme.radius_l,
                            border_width=2)
-        speaker_h = theme.pad_l + 14
         pad = theme.pad_l
-        body_rect = pygame.Rect(rect.x + pad, rect.y + pad + speaker_h,
-                                rect.width - pad * 2,
-                                rect.height - pad * 2 - speaker_h - 30)
+        # The speaker sits in a name-plate straddling the box's top edge
+        # (drawn in draw()), so the body uses the full inner height.
+        body_rect = pygame.Rect(rect.x + pad + 6, rect.y + pad,
+                                rect.width - pad * 2 - 12,
+                                rect.height - pad * 2 - 16)
         self.body = RichText(body_rect, "",
-                             fonts=fonts, size=24,
-                             color=theme.text, line_spacing=8,
+                             fonts=fonts, size=26,
+                             color=theme.text, line_spacing=10,
                              text_speed=text_speed)
         self.speaker: str | None = None
         self._hint_t = 0.0
@@ -68,18 +69,23 @@ class DialogueBox(Widget):
         self.panel.draw(surface)
         pad = self.theme.pad_l
         if self.speaker:
-            sp = self.fonts.render(self.speaker,
-                                   self.theme.pad_l + 10,
-                                   self.theme.accent,
-                                   bold=True)
-            surface.blit(sp, (self.rect.x + pad, self.rect.y + pad))
-            # underline
-            uy = self.rect.y + pad + sp.get_height() + 2
-            pygame.draw.line(surface,
-                             (*self.theme.accent[:3], 200),
-                             (self.rect.x + pad, uy),
-                             (self.rect.x + pad + sp.get_width(), uy),
-                             1)
+            # Name-plate: a filled accent tab straddling the box's top edge —
+            # the classic VN speaker label. Name in light text for contrast.
+            name = self.fonts.render(self.speaker, 22, self.theme.text, bold=True)
+            plate_w = name.get_width() + 40
+            plate_h = 42
+            px = self.rect.x + 30
+            py = self.rect.y - plate_h // 2
+            plate = pygame.Surface((plate_w, plate_h), pygame.SRCALPHA)
+            pygame.draw.rect(plate, (*self.theme.accent[:3], 240),
+                             plate.get_rect(),
+                             border_radius=self.theme.radius_m)
+            pygame.draw.rect(plate, (*self.theme.text[:3], 50),
+                             plate.get_rect(), 1,
+                             border_radius=self.theme.radius_m)
+            surface.blit(plate, (px, py))
+            surface.blit(name, (px + 20,
+                                py + (plate_h - name.get_height()) // 2))
         self.body.draw(surface)
         # advance hint
         if self.body.fully_revealed():

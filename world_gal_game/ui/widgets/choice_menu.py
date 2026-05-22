@@ -21,28 +21,31 @@ class ChoiceMenu(Widget):
         self.on_choose = on_choose
         self.buttons: list[Button] = []
         self.panel: Panel | None = None
+        self._prompt_pos = (0, 0)
 
     def set_choices(self, choices: list[tuple[str, str, bool]]) -> None:
         """choices: list of (choice_id, label, enabled)."""
         self.buttons = []
         n = max(1, len(choices))
-        btn_w = min(720, self.rect.width - 80)
-        btn_h = 56
-        gap = 12
-        title_h = 0
-        total_h = title_h + n * btn_h + (n - 1) * gap + 40
-        panel_rect = pygame.Rect(0, 0, btn_w + 80, total_h)
+        btn_w = min(760, self.rect.width - 120)
+        btn_h = 60
+        gap = 14
+        title_h = 50
+        total_h = title_h + n * btn_h + (n - 1) * gap + 36
+        panel_rect = pygame.Rect(0, 0, btn_w + 100, total_h)
         panel_rect.center = self.rect.center
         self.panel = Panel(panel_rect, self.theme,
-                           fill=(*self.theme.bg_overlay[:3], 220),
+                           fill=(*self.theme.bg_overlay[:3], 240),
                            border=self.theme.border_strong,
                            radius=self.theme.radius_l, border_width=2)
-        start_y = panel_rect.y + 20
+        self._prompt_pos = (panel_rect.centerx, panel_rect.y + 26)
+        start_y = panel_rect.y + title_h
         for i, (cid, label, enabled) in enumerate(choices):
-            r = pygame.Rect(panel_rect.x + 40,
+            r = pygame.Rect(panel_rect.centerx - btn_w // 2,
                             start_y + i * (btn_h + gap),
                             btn_w, btn_h)
             b = Button(r, label, fonts=self.fonts, theme=self.theme,
+                       font_size=18,
                        on_click=(lambda cid=cid: self.on_choose(cid))
                                 if enabled else None,
                        enabled=enabled,
@@ -56,11 +59,15 @@ class ChoiceMenu(Widget):
     def draw(self, surface: pygame.Surface) -> None:
         if not self.visible:
             return
-        # darken background
+        # darken background to focus the decision
         veil = pygame.Surface(surface.get_size(), pygame.SRCALPHA)
-        veil.fill((0, 0, 0, 150))
+        veil.fill((0, 0, 0, 185))
         surface.blit(veil, (0, 0))
         if self.panel:
             self.panel.draw(surface)
+            prompt = self.fonts.render("請選擇", 18,
+                                       self.theme.accent_warm, bold=True)
+            cx, py = self._prompt_pos
+            surface.blit(prompt, (cx - prompt.get_width() // 2, py))
         for b in self.buttons:
             b.draw(surface)

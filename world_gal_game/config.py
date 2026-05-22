@@ -119,10 +119,11 @@ class EngineConfig:
     # location that Steam Auto-Cloud can be pointed at.
     app_data_name: str = "WorldGalGame"
     # Logical canvas the whole UI is drawn at, then letterbox-scaled to the
-    # window. 1600x900 (16:9) renders crisper than 720p when the window is
-    # larger / on HiDPI displays; layouts are screen-size-relative so they
-    # adapt. Override per-run with --width/--height or per-pack in meta.yaml.
-    screen_size: tuple[int, int] = (1600, 900)
+    # window. 1920x1080 (16:9) renders crisp on HiDPI / large displays;
+    # layouts are screen-size-relative so they adapt. On a laptop smaller
+    # than this the window opens letterboxed/shrunk by the OS. Override
+    # per-run with --width/--height or per-pack in meta.yaml.
+    screen_size: tuple[int, int] = (1920, 1080)
     fps: int = 60
     vsync: bool = True
     fullscreen: bool = False
