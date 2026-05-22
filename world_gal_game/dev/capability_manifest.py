@@ -53,6 +53,8 @@ from __future__ import annotations
 
 import datetime as _dt
 import json
+import types
+import typing
 from typing import Any, TYPE_CHECKING
 
 from .. import __version__ as engine_version
@@ -154,6 +156,110 @@ def _serialize_dialogue_ops() -> list[dict[str, Any]]:
     return out
 
 
+def _type_str(ann: Any) -> str:
+    """Render a (possibly generic) annotation as a readable type string."""
+    if ann is None or ann is type(None):
+        return "None"
+    origin = typing.get_origin(ann)
+    if origin is None:
+        return getattr(ann, "__name__", str(ann))
+    args = typing.get_args(ann)
+    if origin is typing.Union or origin is types.UnionType:
+        return " | ".join(_type_str(a) for a in args)
+    if origin is typing.Literal:
+        return "Literal[" + ", ".join(repr(a) for a in args) + "]"
+    origin_name = getattr(origin, "__name__", str(origin))
+    if args:
+        return f"{origin_name}[{', '.join(_type_str(a) for a in args)}]"
+    return origin_name
+
+
+def _enum_values(ann: Any) -> list[Any] | None:
+    """Extract Literal members from an annotation (incl. ``Literal | None``)."""
+    origin = typing.get_origin(ann)
+    if origin is typing.Literal:
+        return list(typing.get_args(ann))
+    if origin is typing.Union or origin is types.UnionType:
+        vals: list[Any] = []
+        for a in typing.get_args(ann):
+            sub = _enum_values(a)
+            if sub:
+                vals.extend(sub)
+        return vals or None
+    return None
+
+
+def _json_safe(v: Any) -> Any:
+    if v is None or isinstance(v, (str, int, float, bool)):
+        return v
+    if isinstance(v, (list, tuple, set, frozenset)):
+        return [_json_safe(x) for x in v]
+    if isinstance(v, dict):
+        return {str(k): _json_safe(x) for k, x in v.items()}
+    return str(v)
+
+
+def _serialize_model_schema(model: Any) -> dict[str, Any]:
+    """Reflect a pydantic model's fields into a JSON-friendly schema dict."""
+    out: dict[str, Any] = {}
+    for name, f in model.model_fields.items():
+        required = f.is_required()
+        try:
+            default = None if required else _json_safe(
+                f.get_default(call_default_factory=True))
+        except Exception:
+            default = None
+        out[name] = {
+            "type": _type_str(f.annotation),
+            "required": required,
+            "default": default,
+            "description": f.description or "",
+            "allowed_values": _enum_values(f.annotation),
+        }
+    return out
+
+
+def _serialize_content_schema() -> dict[str, Any]:
+    """The pack-authoring data models AI fills in (Line/Scene/Choice/...)."""
+    from ..core.story_graph import Scene, Line, Choice, Effect, Condition
+    from ..core.portrait_spec import PortraitSpec
+    models = {
+        "Line": Line, "Scene": Scene, "Choice": Choice,
+        "PortraitSpec": PortraitSpec, "Effect": Effect, "Condition": Condition,
+    }
+    return {name: _serialize_model_schema(m) for name, m in models.items()}
+
+
+def _serialize_markup() -> dict[str, Any]:
+    """The inline vocabularies a line's text/portraits can use.
+
+    ``richtext_tags`` and ``portrait_animations`` are imported defensively so
+    this works before the VN-presentation modules land, and auto-populates
+    once they do.
+    """
+    try:
+        from ..dialogue.richtext import RICHTEXT_TAGS
+        tags = sorted(RICHTEXT_TAGS)
+    except Exception:
+        tags = []
+    try:
+        from ..core.portrait_spec import PORTRAIT_ANIMATIONS
+        anims = sorted(PORTRAIT_ANIMATIONS)
+    except Exception:
+        anims = []
+    from ..ui.easing import EASING_NAMES
+    return {
+        "richtext_tags": tags,
+        "dialogue_ops": all_dialogue_op_names(),
+        "interpolation_tokens": [
+            "player_name", "state.flag.<name>", "resource.<id>",
+            "affection.<npc>", "affection.<npc>.label",
+        ],
+        "easing": list(EASING_NAMES),
+        "portrait_animations": anims,
+    }
+
+
 def build_manifest(*, manager: "PluginManager | None" = None) -> dict[str, Any]:
     """Snapshot every extension currently active.
 
@@ -174,6 +280,8 @@ def build_manifest(*, manager: "PluginManager | None" = None) -> dict[str, Any]:
                                                    extra_keys=("overlay",)),
         "brains": _serialize_named_class_registry(BRAIN_REGISTRY),
         "dialogue_ops": _serialize_dialogue_ops(),
+        "content_schema": _serialize_content_schema(),
+        "markup": _serialize_markup(),
         "plugins": _serialize_plugins(manager),
     }
 
@@ -224,6 +332,33 @@ def all_brain_names() -> list[str]:
 
 def all_dialogue_op_names() -> list[str]:
     return DIALOGUE_OP_REGISTRY.list_names()
+
+
+def all_line_fields() -> list[str]:
+    """Every field name a dialogue Line accepts (incl. plugin-era additions)."""
+    from ..core.story_graph import Line
+    return list(Line.model_fields)
+
+
+def line_field_schema() -> dict[str, Any]:
+    """Full reflected schema for the Line model (type/required/default/...)."""
+    from ..core.story_graph import Line
+    return _serialize_model_schema(Line)
+
+
+def all_easing_names() -> list[str]:
+    """Every easing curve name usable in transitions / portrait animations."""
+    from ..ui.easing import EASING_NAMES
+    return list(EASING_NAMES)
+
+
+def all_richtext_tags() -> list[str]:
+    """Known rich-text markup tags, or empty if the parser hasn't landed yet."""
+    try:
+        from ..dialogue.richtext import RICHTEXT_TAGS
+        return sorted(RICHTEXT_TAGS)
+    except Exception:
+        return []
 
 
 def find_effect(kind: str) -> dict[str, Any] | None:

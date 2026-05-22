@@ -7,7 +7,8 @@ import pytest
 
 from world_gal_game.dev.capability_manifest import (
     all_condition_kinds, all_effect_kinds, all_hook_events,
-    build_manifest, find_condition, find_effect,
+    all_easing_names, all_line_fields, all_richtext_tags,
+    build_manifest, find_condition, find_effect, line_field_schema,
     manifest_json, summary_table,
 )
 from world_gal_game.plugins import effect, condition, snapshot, restore
@@ -99,6 +100,51 @@ def test_all_kinds_helpers_match_manifest():
 def test_find_unknown_returns_none():
     assert find_effect("___nonexistent_kind___") is None
     assert find_condition("___nonexistent_kind___") is None
+
+
+def test_manifest_includes_content_schema():
+    m = build_manifest()
+    cs = m["content_schema"]
+    assert "Line" in cs and "Scene" in cs and "PortraitSpec" in cs
+    text = cs["Line"]["text"]
+    assert text["required"] is True
+    assert text["type"] == "str"
+    # Optional field with a default carries required=False + the default value.
+    portraits = cs["Line"]["portraits"]
+    assert portraits["required"] is False
+    assert portraits["default"] == []
+
+
+def test_portraitspec_slot_allowed_values():
+    m = build_manifest()
+    slot = m["content_schema"]["PortraitSpec"]["slot"]
+    assert slot["allowed_values"] == ["left", "center", "right"]
+    assert slot["default"] == "center"
+
+
+def test_all_line_fields_matches_model():
+    fields = all_line_fields()
+    assert "text" in fields and "speaker" in fields and "portraits" in fields
+    assert set(fields) == set(line_field_schema().keys())
+
+
+def test_markup_section_present():
+    m = build_manifest()
+    markup = m["markup"]
+    for key in ("richtext_tags", "dialogue_ops", "interpolation_tokens",
+                "easing", "portrait_animations"):
+        assert key in markup
+    assert "linear" in markup["easing"]
+    assert all_easing_names() == markup["easing"]
+    # richtext_tags / portrait_animations may be empty until VN modules land.
+    assert isinstance(markup["richtext_tags"], list)
+    assert all_richtext_tags() == markup["richtext_tags"]
+
+
+def test_manifest_content_schema_is_json_serializable():
+    parsed = json.loads(manifest_json())
+    assert "content_schema" in parsed
+    assert "markup" in parsed
 
 
 def test_manifest_with_pack_manager_includes_plugins():
