@@ -33,6 +33,10 @@ class MenuScene(Scene):
         self.on_log: Callable[[], None] | None = None
         self.on_achievements: Callable[[], None] | None = None
         self.on_inventory: Callable[[], None] | None = None
+        self.on_cg_gallery: Callable[[], None] | None = None
+        self.on_music_room: Callable[[], None] | None = None
+        self.on_endings: Callable[[], None] | None = None
+        self.on_scene_replay: Callable[[], None] | None = None
         self.on_quest_log: Callable[[], None] | None = None
         self.on_clues: Callable[[], None] | None = None
         self.on_save: Callable[[], None] | None = None
@@ -43,6 +47,8 @@ class MenuScene(Scene):
 
     def enter(self, *, on_close=None, on_map=None, on_affection=None,
               on_log=None, on_achievements=None, on_inventory=None,
+              on_cg_gallery=None, on_music_room=None, on_endings=None,
+              on_scene_replay=None,
               on_quest_log=None, on_clues=None,
               on_save=None, on_load=None,
               on_quit_to_title=None, on_quit_app=None, **_) -> None:
@@ -52,6 +58,10 @@ class MenuScene(Scene):
         self.on_log = on_log
         self.on_achievements = on_achievements
         self.on_inventory = on_inventory
+        self.on_cg_gallery = on_cg_gallery
+        self.on_music_room = on_music_room
+        self.on_endings = on_endings
+        self.on_scene_replay = on_scene_replay
         self.on_quest_log = on_quest_log
         self.on_clues = on_clues
         self.on_save = on_save
@@ -98,6 +108,10 @@ class MenuScene(Scene):
             ("成就 (T)",       self.on_achievements, "view"),
             ("物品 (I)",       self.on_inventory,    "view"),
             ("任務記錄",       self.on_quest_log,    "view"),
+            (self.ctx.t("cg_gallery", "CG鑑賞"),     self.on_cg_gallery,   "view"),
+            (self.ctx.t("music_room", "音樂室"),     self.on_music_room,   "view"),
+            (self.ctx.t("endings", "結局"),          self.on_endings,      "view"),
+            (self.ctx.t("scene_replay", "場景重溫"), self.on_scene_replay, "view"),
             ("存檔",           self.on_save,         "save"),
             ("載入存檔",       self.on_load,         "save"),
             ("回標題畫面",     self.on_quit_to_title,"exit"),

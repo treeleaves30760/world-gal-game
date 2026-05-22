@@ -1,0 +1,29 @@
+id: autosave
+name: Autosave
+version: 0.1.0
+description: |
+  Silently writes a rotating autosave whenever the player makes a dialogue
+  choice (and optionally when time advances). Rotates across
+  autosave_1..N where N is config.autosave_slot_count. Honours
+  config.autosave_enabled and never crashes the engine on failure.
+author: World Gal-Game
+engine_version: ">=0.1.0"
+depends: []
+entry_module: plugin
+
+extends:
+  hooks:
+    - kind: dialogue.choice_made
+      description: Write a rotating autosave after each dialogue choice.
+    - kind: time.advance
+      description: Write a rotating autosave after time advances.
+
+side_effects:
+  reads_filesystem: true
+  writes_filesystem: true
+  network: false
+  subprocess: false
+
+tags:
+  - bundled
+  - save

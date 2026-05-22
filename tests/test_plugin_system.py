@@ -371,8 +371,10 @@ def test_manager_discovers_pack_local_plugin(tmp_path: Path, clean_registry):
     records = mgr.discover()
     assert any(r.id == "alpha" for r in records)
     loaded = mgr.activate(PluginContext(pack_root=pack_root))
-    assert len(loaded) == 1
-    assert loaded[0].id == "alpha"
+    # The engine also ships bundled plugins under plugins_user/ (e.g.
+    # autosave), so assert the pack-local plugin is among the loaded set
+    # rather than that it is the only one.
+    assert "alpha" in {r.id for r in loaded}
     assert "alpha_kind" in EFFECT_REGISTRY
 
 

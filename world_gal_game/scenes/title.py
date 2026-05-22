@@ -20,7 +20,8 @@ class TitleScene(Scene):
 
     def enter(self, *, bg: str | None = None, title: str | None = None,
               subtitle: str | None = None, on_new_game=None, on_load=None,
-              on_quit=None, **_) -> None:
+              on_quit=None, on_cg_gallery=None, on_music_room=None,
+              on_endings=None, **_) -> None:
         self.bg_path = bg
         self.title_text = title or self.title_text
         self.subtitle_text = subtitle or self.subtitle_text
@@ -39,13 +40,23 @@ class TitleScene(Scene):
         self.on_new_game = on_new_game
         self.on_load = on_load
         self.on_quit = on_quit
+        self.on_cg_gallery = on_cg_gallery
+        self.on_music_room = on_music_room
+        self.on_endings = on_endings
+        items = [
+            MenuItem("開始新遊戲", self._start_new),
+            MenuItem("載入存檔", lambda: on_load and on_load()),
+        ]
+        # "Extras" (鑑賞模式): only shown when the app wired the gallery
+        # callbacks. Opens whichever gallery scenes are available straight
+        # from the title — galleries read from the loaded pack's trackers.
+        if any((on_cg_gallery, on_music_room, on_endings)):
+            items.append(MenuItem(self.ctx.t("extras", "鑑賞模式"),
+                                  self._open_extras))
+        items.append(MenuItem("離開遊戲", lambda: on_quit and on_quit()))
         self.menu = MenuList(
             pygame.Rect(cx - panel_w // 2, sh // 2 + 90, panel_w, panel_h),
-            [
-                MenuItem("開始新遊戲", self._start_new),
-                MenuItem("載入存檔", lambda: on_load and on_load()),
-                MenuItem("離開遊戲", lambda: on_quit and on_quit()),
-            ],
+            items,
             fonts=self.ctx.fonts, theme=self.ctx.theme, row_h=52,
         )
 
@@ -54,6 +65,18 @@ class TitleScene(Scene):
         self.ctx.state.player.name = name or "玩家"
         if self.on_new_game:
             self.on_new_game()
+
+    def _open_extras(self) -> None:
+        """Enter the extras (鑑賞模式) galleries from the title.
+
+        F3 keeps this minimal: it opens the first available gallery (CG →
+        music → endings). A later WP can swap this for a dedicated chooser
+        listing all of them; the per-scene callbacks already flow through.
+        """
+        for cb in (self.on_cg_gallery, self.on_music_room, self.on_endings):
+            if cb is not None:
+                cb()
+                return
 
     def update(self, dt: float, inp) -> None:
         if self.name_input:

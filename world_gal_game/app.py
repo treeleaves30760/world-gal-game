@@ -18,6 +18,7 @@ import pygame
 from .config import EngineConfig, resolve_asset, writable_root
 from .content_loader import load_pack
 from .core.game_state import GameState
+from .core.save_manager import SaveManager
 from .core.localization import Localization
 from .core.story_graph import Effect
 from .core.time_system import bind_localization as bind_time_localization
@@ -41,6 +42,10 @@ from .scenes.menu_scene import MenuScene
 from .scenes.quest_log_scene import QuestLogScene
 from .scenes.clues_scene import CluesScene
 from .scenes.shop_scene import ShopScene
+from .scenes.cg_gallery_scene import CGGalleryScene
+from .scenes.music_room_scene import MusicRoomScene
+from .scenes.endings_scene import EndingsScene
+from .scenes.scene_replay_scene import SceneReplayScene
 from .ui.assets import AssetManager
 from .ui.fonts import FontRegistry
 from .ui.theme import default_theme
@@ -72,6 +77,10 @@ class GalGameApp:
     def __init__(self, *, config: EngineConfig, pack: str | None = None,
                  brain: LLMBrain | None = None, headless: bool = False):
         self.config = config
+        # Pull persisted user preferences off disk before anything reads
+        # them (audio volumes, text speed, autosave settings, ...). Robust
+        # by contract: missing/corrupt settings.json keeps defaults (F1).
+        self.config.load_from_disk()
         self.pack = pack or config.default_pack
         self.headless = headless
         # Brain selection: explicit kwarg > meta.yaml after load (set later) >
@@ -186,6 +195,18 @@ class GalGameApp:
         # `llm_speaker: true` will fall back to their `text:` field.
         self.dialogue = DialogueEngine(self.state, llm_provider=None)
 
+        # ----- autosave bridge -----
+        # The bundled `autosave` plugin runs inside a PluginContext that
+        # carries no EngineConfig and no save dir (content_loader builds it
+        # before the app exists). Park a small bridge on state.meta under a
+        # private `__` key (stripped from saves) so the plugin can reach the
+        # live config + resolved save dir + a screen-grab for thumbnails.
+        self.state.meta["__autosave_config__"] = {
+            "config": self.config,
+            "save_dir": self.config.save_dir(),
+            "get_screen": (None if headless else (lambda: self.screen)),
+        }
+
         # ----- scene context -----
         self.ctx = SceneContext(
             config=self.config, state=self.state, npcs=self.npcs,
@@ -201,7 +222,10 @@ class GalGameApp:
                              bg=self.meta.get("title_bg"),
                              on_new_game=self._start_new_game,
                              on_load=self._open_load_menu,
-                             on_quit=self._quit_app)
+                             on_quit=self._quit_app,
+                             on_cg_gallery=self._open_cg_gallery,
+                             on_music_room=self._open_music_room,
+                             on_endings=self._open_endings)
         self._running = True
         self._screenshot_pending: str | None = None
         self._inspect_pending = False
@@ -338,6 +362,10 @@ class GalGameApp:
             on_menu=self._open_menu,
             on_achievements=self._open_achievements,
             on_inventory=self._open_inventory,
+            on_cg_gallery=self._open_cg_gallery,
+            on_music_room=self._open_music_room,
+            on_endings=self._open_endings,
+            on_scene_replay=self._open_scene_replay,
             on_clues=self._open_clues,
             on_quit_to_title=self._quit_to_title,
             on_open_npc=self._open_npc_actions,
@@ -365,6 +393,10 @@ class GalGameApp:
             on_log=from_menu(self._open_event_log),
             on_achievements=from_menu(self._open_achievements),
             on_inventory=from_menu(self._open_inventory),
+            on_cg_gallery=from_menu(self._open_cg_gallery),
+            on_music_room=from_menu(self._open_music_room),
+            on_endings=from_menu(self._open_endings),
+            on_scene_replay=from_menu(self._open_scene_replay),
             on_quest_log=from_menu(self._open_quest_log),
             on_clues=from_menu(self._open_clues),
             on_save=from_menu(self._open_save_menu),
@@ -393,6 +425,22 @@ class GalGameApp:
         self.manager.push(InventoryScene(self.ctx),
                           on_close=self.manager.pop)
 
+    def _open_cg_gallery(self) -> None:
+        self.manager.push(CGGalleryScene(self.ctx),
+                          on_close=self.manager.pop)
+
+    def _open_music_room(self) -> None:
+        self.manager.push(MusicRoomScene(self.ctx),
+                          on_close=self.manager.pop)
+
+    def _open_endings(self) -> None:
+        self.manager.push(EndingsScene(self.ctx),
+                          on_close=self.manager.pop)
+
+    def _open_scene_replay(self) -> None:
+        self.manager.push(SceneReplayScene(self.ctx),
+                          on_close=self.manager.pop)
+
     def _open_shop(self, npc_id: str) -> None:
         self.manager.push(ShopScene(self.ctx),
                           npc_id=npc_id, on_close=self.manager.pop)
@@ -418,7 +466,10 @@ class GalGameApp:
                               bg=self.meta.get("title_bg"),
                               on_new_game=self._start_new_game,
                               on_load=self._open_load_menu,
-                              on_quit=self._quit_app)
+                              on_quit=self._quit_app,
+                              on_cg_gallery=self._open_cg_gallery,
+                              on_music_room=self._open_music_room,
+                              on_endings=self._open_endings)
 
     def _open_map(self) -> None:
         self.manager.push(MapScene(self.ctx),
@@ -434,8 +485,11 @@ class GalGameApp:
                           on_close=self.manager.pop)
 
     def _open_save_menu(self) -> None:
+        # Pass a screen-grabber so SaveScene can capture a thumbnail for
+        # each save (320x180, stored as a sibling PNG by SaveManager).
         self.manager.push(SaveScene(self.ctx),
-                          mode="save", on_close=self.manager.pop)
+                          mode="save", on_close=self.manager.pop,
+                          get_screen_surface=lambda: self.screen)
 
     def _open_load_menu(self) -> None:
         # From title or in-game both go to load mode.
@@ -452,6 +506,105 @@ class GalGameApp:
         if self.state.map.current_location_id:
             self.manager.replace(ExplorationScene(self.ctx),
                                  **self._exploration_callbacks())
+
+    # ----------- quicksave / quickload ----------------------------------
+    #
+    # Key choice: F5 is the dev hot-reload (see _step ~640) and F11/F12 are
+    # the state-dump / screenshot keys. To avoid colliding with any of
+    # those, quicksave is bound to F6 and quickload to F9. They are wired
+    # in the main loop unconditionally (they don't depend on dev mode), and
+    # the dev F5 handler is left untouched, so there is no key collision.
+
+    def _quicksave(self) -> None:
+        """Write the live state to ``config.quicksave_slot``.
+
+        Mirrors the manual save path in ``save_scene._on_action``: dump the
+        state as JSON, attach a label/summary + screen thumbnail, fire the
+        SAVE_BEFORE_SERIALIZE hook so plugins can patch the payload, then
+        write through SaveManager. Failures are swallowed so a bad save can
+        never crash the game.
+        """
+        try:
+            slot = self.config.quicksave_slot
+            sm = SaveManager(self.config.save_dir())
+            loc = self.state.map.current
+            summary = (
+                f"{self.state.time.label()} · "
+                f"{(loc.name if loc else '無位置')}"
+            )
+            label = f"{self.localization.t('quicksave', '快速存檔')} {summary}"
+            payload = self.state.model_dump(mode="json")
+            from .plugins import fire_event
+            from .plugins.context import HookEvent
+            fire_event(self.state, HookEvent.SAVE_BEFORE_SERIALIZE,
+                       slot=slot, payload=payload)
+            thumbnail = None if self.headless else self.screen
+            sm.save(
+                slot,
+                payload,
+                label=label,
+                summary=summary,
+                thumbnail=thumbnail,
+                pack_meta=self.state.meta.get("__pack_meta__", {}),
+            )
+        except Exception as exc:
+            print(f"[quicksave] skipped: {exc}", file=sys.stderr)
+
+    def _quickload(self) -> None:
+        """Load ``config.quicksave_slot`` and restore like a normal load.
+
+        Mirrors ``save_scene._on_action`` (load branch) for the state swap
+        + ``_after_load_pop`` for the scene restore. A missing/invalid
+        quicksave is a no-op (the game keeps running unchanged).
+        """
+        try:
+            slot = self.config.quicksave_slot
+            sm = SaveManager(self.config.save_dir())
+            from .core.save_manager import SaveError
+            try:
+                data = sm.load(slot)
+            except SaveError:
+                return  # nothing to load yet
+            from .core.pack_migration import (
+                check_and_migrate_pack, PACK_MIGRATIONS,
+                SavePackMismatchError, SavePackSchemaError,
+            )
+            pack_meta = self.state.meta.get("__pack_meta__", {})
+            try:
+                data = check_and_migrate_pack(
+                    data,
+                    current_pack_id=str(pack_meta.get("pack_id", "")),
+                    current_pack_version=str(
+                        pack_meta.get("pack_format_version", "0")),
+                    registry=PACK_MIGRATIONS,
+                )
+            except (SavePackMismatchError, SavePackSchemaError) as exc:
+                print(f"[quickload] incompatible save: {exc}", file=sys.stderr)
+                return
+            for key in ("_saved_at", "_label", "_summary",
+                        "_schema_version", "_thumbnail_path",
+                        "_pack_id", "_pack_format_version", "_engine_version"):
+                data.pop(key, None)
+            new_state = GameState(**data)
+            # Preserve transient `__`-bridges (plugin manager, npc registry,
+            # autosave config, pack meta) that were filtered out at save.
+            preserved = {
+                k: v for k, v in self.state.meta.items()
+                if k.startswith("__")
+            }
+            self.state.__dict__.update(new_state.__dict__)
+            self.state.meta.update(preserved)
+            from .plugins import fire_event
+            from .plugins.context import HookEvent
+            fire_event(self.state, HookEvent.SAVE_AFTER_LOAD,
+                       slot=slot, payload=data)
+            # Restore into exploration if the loaded state has a location
+            # (mirrors _after_load_pop). clear_to drops any open overlays.
+            if self.state.map.current_location_id:
+                self.manager.clear_to(ExplorationScene(self.ctx),
+                                      **self._exploration_callbacks())
+        except Exception as exc:
+            print(f"[quickload] skipped: {exc}", file=sys.stderr)
 
     def _open_npc_actions(self, npc_id: str) -> None:
         """Show the lightweight NPC overlay (gift + shop).
@@ -581,12 +734,18 @@ class GalGameApp:
                 self._on_resize(e.w, e.h)
         # Touch swipe (spans frames) -> populate inp.swipe.
         self._update_touch_gesture(events, inp)
-        # F12 screenshot / F11 state dump
+        # F12 screenshot / F11 state dump / F6 quicksave / F9 quickload.
+        # F6 + F9 are chosen so they never collide with the dev F5
+        # hot-reload (handled below) or F11/F12 above.
         for e in events:
             if e.type == pygame.KEYDOWN and e.key == pygame.K_F12:
                 self.take_screenshot()
             elif e.type == pygame.KEYDOWN and e.key == pygame.K_F11:
                 self.dump_state(verbose=True)
+            elif e.type == pygame.KEYDOWN and e.key == pygame.K_F6:
+                self._quicksave()
+            elif e.type == pygame.KEYDOWN and e.key == pygame.K_F9:
+                self._quickload()
         # Dev-mode key handling (F1 overlay toggle, F5 hot reload)
         if self._dev_mode:
             for e in inp.events:

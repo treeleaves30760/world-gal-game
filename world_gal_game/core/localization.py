@@ -93,6 +93,18 @@ DEFAULT_UI: dict[str, str] = {
     "no_chars":       "（還沒有任何角色被記錄。先在校園裡逛逛吧。）",
     "day_format":     "第 {day} 天 · {weekday} · {time_of_day}",
     "leave_confirm":  "離開遊戲回到標題畫面？尚未存檔的進度將會丟失。",
+    # Presentation / extras (WP-F3 onward): gallery, music room, scene
+    # replay, endings, plus playback + quick/autosave labels.
+    "extras":         "鑑賞模式",
+    "cg_gallery":     "CG鑑賞",
+    "music_room":     "音樂室",
+    "scene_replay":   "場景重溫",
+    "endings":        "結局",
+    "auto":           "自動",
+    "skip":           "快進",
+    "quicksave":      "快速存檔",
+    "quickload":      "快速載入",
+    "autosave":       "自動存檔",
 }
 
 
