@@ -83,9 +83,27 @@ PyInstaller **cannot cross-compile**.  You must build on the target OS:
 | `.app`          | macOS         |
 | Linux binary    | Linux         |
 
-Passing `--target windows` (or `macos`, `linux`) when you are on a
-different OS prints a warning and falls back to a native build.  Use
-GitHub Actions (see CI example below) to build all three from one repo.
+There is therefore **no per-OS `--target` value to pass**: always use
+`--target current` (the default) and run the build on a native runner for
+each OS. Passing `--target windows` (or `macos`, `linux`) when you are on a
+different OS only prints a warning and falls back to a native build anyway —
+it does not produce a foreign binary. Use a CI matrix (see below) to build
+all three OSes from one repo.
+
+## Target overview
+
+| `--target` | Builder | Output |
+|------------|---------|--------|
+| `current` (default) | PyInstaller | native desktop binary for the host OS |
+| `web` | pygbag (WASM) | browser bundle — see [distribution-web.md](distribution-web.md) |
+| `android-apk` | pygbag (APK) | Android WebView APK wrapping the web bundle — see [distribution-mobile.md](distribution-mobile.md) |
+
+Steam is a desktop *integration* layered on top of a `current` build, not a
+separate target — see [distribution-steam.md](distribution-steam.md).
+
+Mobile (Android APK + PWA, iOS PWA) all builds on the web target — see
+[distribution-mobile.md](distribution-mobile.md). Note that iOS is PWA-only
+(no App Store) and native buildozer SDL2 is out of scope.
 
 ---
 
@@ -205,7 +223,12 @@ Ensure you activated the correct virtual environment and ran
 
 ## GitHub Actions CI example
 
-The matrix below builds a binary for each platform on every tagged push:
+The matrix below builds a binary for each platform on every tagged push.
+Note that each runner builds with the **default** target (`current`) — there
+is no per-OS `target` matrix value, because PyInstaller builds for whatever
+OS it runs on. (The repo ships a complete, ready-to-use version of this at
+`.github/workflows/release.yml`, including a web job and a release-attach
+job.)
 
 ```yaml
 name: Release
@@ -217,14 +240,9 @@ on:
 jobs:
   build:
     strategy:
+      fail-fast: false
       matrix:
-        include:
-          - os: ubuntu-latest
-            target: linux
-          - os: windows-latest
-            target: windows
-          - os: macos-latest
-            target: macos
+        os: [ubuntu-latest, windows-latest, macos-latest]
 
     runs-on: ${{ matrix.os }}
 
@@ -234,19 +252,22 @@ jobs:
       - uses: astral-sh/setup-uv@v5
 
       - name: Install dependencies
-        run: uv pip install -e ".[build]" --system
+        run: uv sync --extra build
 
-      - name: Build pack
-        run: |
-          wgg build games/my-pack --name MyGame --output dist
+      - name: Build pack (native target only — no cross-compile)
+        run: uv run python build.py games/my-pack --name MyGame --target current --output dist
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: MyGame-${{ matrix.target }}
+          name: MyGame-${{ runner.os }}
           path: dist/MyGame/
 ```
 
 Adjust `games/my-pack` and `MyGame` to match your pack directory and
 desired app name.  The three artifacts can then be downloaded from the
 Actions run and attached to a GitHub Release.
+
+For the **web** build add a separate job that runs
+`uv sync --extra web` then `python build.py games/my-pack --target web`;
+see [distribution-web.md](distribution-web.md).
