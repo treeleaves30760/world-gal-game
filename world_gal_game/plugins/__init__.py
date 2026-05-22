@@ -39,7 +39,7 @@ from __future__ import annotations
 # modules below depend on them.
 from .registry import (
     effect, condition, hook, inspect_field,
-    widget, scene, brain, dialogue_op,
+    widget, scene, brain, dialogue_op, save_migration,
     EFFECT_REGISTRY, CONDITION_REGISTRY, HOOK_REGISTRY, INSPECT_FIELD_REGISTRY,
     WIDGET_REGISTRY, SCENE_REGISTRY, BRAIN_REGISTRY, DIALOGUE_OP_REGISTRY,
     EffectEntry, ConditionEntry, HookEntry, InspectFieldEntry,
@@ -109,7 +109,7 @@ def fire_event(state, event: str, /, **kwargs):
 __all__ = [
     # decorators
     "effect", "condition", "hook", "inspect_field",
-    "widget", "scene", "brain", "dialogue_op",
+    "widget", "scene", "brain", "dialogue_op", "save_migration",
     # registries (singletons)
     "EFFECT_REGISTRY", "CONDITION_REGISTRY", "HOOK_REGISTRY",
     "INSPECT_FIELD_REGISTRY",

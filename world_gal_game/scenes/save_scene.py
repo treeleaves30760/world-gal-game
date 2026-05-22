@@ -169,6 +169,7 @@ class SaveScene(Scene):
                 label=label,
                 summary=summary,
                 thumbnail=thumbnail,
+                pack_meta=self.ctx.state.meta.get("__pack_meta__", {}),
             )
         elif self.mode == "load":
             slot = item.get("slot")
@@ -179,9 +180,30 @@ class SaveScene(Scene):
             except SaveError as exc:
                 self._error_msg = f"載入失敗：{exc}"
                 return
+            # Pack-level compatibility gate: reject saves from a different
+            # pack and migrate older pack content versions to the current
+            # one, before reconstructing state. Pack identity comes from the
+            # transient bridge the loader parked on state.meta.
+            from ..core.pack_migration import (
+                check_and_migrate_pack, PACK_MIGRATIONS,
+                SavePackMismatchError, SavePackSchemaError,
+            )
+            pack_meta = self.ctx.state.meta.get("__pack_meta__", {})
+            try:
+                data = check_and_migrate_pack(
+                    data,
+                    current_pack_id=str(pack_meta.get("pack_id", "")),
+                    current_pack_version=str(
+                        pack_meta.get("pack_format_version", "0")),
+                    registry=PACK_MIGRATIONS,
+                )
+            except (SavePackMismatchError, SavePackSchemaError) as exc:
+                self._error_msg = f"載入失敗：{exc}"
+                return
             # Strip save-manager internal keys before reconstructing state.
             for key in ("_saved_at", "_label", "_summary",
-                        "_schema_version", "_thumbnail_path"):
+                        "_schema_version", "_thumbnail_path",
+                        "_pack_id", "_pack_format_version", "_engine_version"):
                 data.pop(key, None)
             try:
                 new_state = GameState(**data)

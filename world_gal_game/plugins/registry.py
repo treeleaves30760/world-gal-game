@@ -760,6 +760,61 @@ def dialogue_op(name: str,
     return deco
 
 
+def save_migration(from_version: str, to_version: str,
+                   *, pack_id: str = "",
+                   plugin_id: str | None = None,
+                   description: str = "") -> Callable:
+    """Function decorator: register a pack-level save migration.
+
+    The migration bridges one pack content version to the next. The handler
+    signature is ``(data: dict) -> dict``: it receives the loaded save dict
+    (with ``_pack_id`` / ``_pack_format_version`` / etc. still present) and
+    returns the transformed dict (mutating in place + returning it is fine).
+    The pack-load gate (:func:`world_gal_game.core.pack_migration.check_and_migrate_pack`)
+    chains these in order from the save's version up to the pack's current
+    version, so each step only needs to handle one hop.
+
+    **Pure-additive schema changes need NO migration.** When a new field on
+    Line / Scene / PortraitSpec etc. is *optional*, pydantic fills its
+    default while reconstructing ``GameState(**data)``, so an old save still
+    loads untouched. Write a migration only for *breaking* changes — renames,
+    restructures, removals.
+
+    Usage in a pack's ``plugins/<id>_migrations/migration_0_1_0_2.py``::
+
+        from world_gal_game.plugins import save_migration
+
+        @save_migration("0.1", "0.2", description="rename hp -> health")
+        def migrate(data: dict) -> dict:
+            if "hp" in data:
+                data["health"] = data.pop("hp")
+            data["_pack_format_version"] = "0.2"
+            return data
+
+    ``pack_id`` scopes the migration to one pack (empty applies to any pack).
+    Registered into the module singleton
+    :data:`world_gal_game.core.pack_migration.PACK_MIGRATIONS`.
+    """
+    # Local import keeps this module import-light (registry.py has no hard
+    # dependency on core at import time; the migration registry lives in core).
+    from ..core.pack_migration import PACK_MIGRATIONS, PackMigrationEntry
+
+    def deco(fn: Callable) -> Callable:
+        pid = plugin_id or current_plugin_id()
+        # current_plugin_id() defaults to "builtin" outside a plugin load; for
+        # save migrations a friendlier owner default is "pack".
+        if pid == "builtin":
+            pid = "pack"
+        PACK_MIGRATIONS.register(PackMigrationEntry(
+            from_version=from_version, to_version=to_version, fn=fn,
+            pack_id=pack_id, plugin_id=pid, description=description,
+        ))
+        fn.__wgg_save_migration__ = (from_version, to_version)  # type: ignore[attr-defined]
+        fn.__wgg_plugin_id__ = pid                              # type: ignore[attr-defined]
+        return fn
+    return deco
+
+
 # ----------------------------------------------------------------------
 # Snapshot / restore — primarily for test isolation
 
