@@ -159,12 +159,15 @@ def build_pack(
     pack_path: Path,
     *,
     output_dir: Path = Path("dist"),
-    target: Literal["current", "windows", "macos", "linux"] = "current",
+    target: Literal[
+        "current", "windows", "macos", "linux", "web", "android-apk"
+    ] = "current",
     app_name: str | None = None,
     icon: Path | None = None,
     onefile: bool = False,
     sign_identity: str | None = None,
     clean: bool = True,
+    serve: bool = False,
 ) -> Path:
     """Bundle a game pack + engine into a standalone distributable.
 
@@ -177,9 +180,14 @@ def build_pack(
         Directory where the finished build lands.  Defaults to ``dist/``
         relative to the *current working directory* at call time.
     target:
-        ``"current"`` performs a native build on the host platform.
-        Any other value prints a cross-build warning and falls back to
-        ``"current"`` — PyInstaller cannot cross-compile natively.
+        ``"current"`` performs a native PyInstaller build on the host
+        platform. ``"web"`` delegates to
+        :func:`world_gal_game.build_web.build_web` (pygbag/WASM).
+        ``"android-apk"`` delegates to
+        :func:`world_gal_game.build_web.build_android_apk` (pygbag's APK
+        output wrapping the same web build — Android's primary path).
+        ``"windows"`` / ``"macos"`` / ``"linux"`` print a cross-build warning
+        and fall back to ``"current"`` — PyInstaller cannot cross-compile.
     app_name:
         Name for the produced executable / app bundle.  Derived from
         ``content/meta.yaml``'s ``title`` field when omitted.
@@ -194,11 +202,15 @@ def build_pack(
     clean:
         Remove ``build/`` and ``dist/`` artefacts from any previous run
         before invoking PyInstaller.
+    serve:
+        Only meaningful with ``target="web"``: run pygbag in serve mode
+        (local test server) rather than producing a one-shot archive.
 
     Returns
     -------
     Path
-        Path to the finished output directory (``dist/<app_name>``).
+        Path to the finished output directory (``dist/<app_name>`` for
+        desktop targets, the web staging dir for ``target="web"``).
 
     Raises
     ------
@@ -217,6 +229,23 @@ def build_pack(
         raise FileNotFoundError(
             f"pack_path is missing content/meta.yaml: {pack_path}"
         )
+
+    # Web target: delegate to the pygbag builder. Done before app_name
+    # resolution / spec generation since none of the PyInstaller machinery
+    # applies. build_web derives its own app_name from the pack title.
+    if target == "web":
+        from .build_web import build_web
+        web_out = output_dir if output_dir != Path("dist") else Path("build/web")
+        return build_web(pack_path, web_out, app_name=app_name, serve=serve)
+
+    # Android APK: same staged web build, wrapped by pygbag's APK output.
+    # Also delegated before PyInstaller machinery for the same reason.
+    if target == "android-apk":
+        from .build_web import build_android_apk
+        apk_out = (
+            output_dir if output_dir != Path("dist") else Path("build/android")
+        )
+        return build_android_apk(pack_path, apk_out, app_name=app_name)
 
     # Warn about unsupported cross-build targets.
     if target != "current":
@@ -322,9 +351,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     p.add_argument(
         "--target",
-        choices=["current", "windows", "macos", "linux"],
+        choices=["current", "windows", "macos", "linux", "web", "android-apk"],
         default="current",
-        help="Build target platform (default: current).",
+        help="Build target platform (default: current). 'web' builds a "
+             "pygbag/WASM bundle; 'android-apk' wraps that web build in a "
+             "pygbag WebView APK (Android primary path). Both differ from a "
+             "PyInstaller binary.",
     )
     p.add_argument(
         "--name",
@@ -354,6 +386,12 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Do not remove previous build artefacts.",
     )
+    p.add_argument(
+        "--serve",
+        action="store_true",
+        help="(--target web) run pygbag in local-server mode for testing "
+             "instead of producing a one-shot build.",
+    )
 
     args = p.parse_args(argv)
 
@@ -367,6 +405,7 @@ def main(argv: list[str] | None = None) -> int:
             onefile=args.onefile,
             sign_identity=args.sign_identity,
             clean=not args.no_clean,
+            serve=args.serve,
         )
         print(f"Build complete: {out}")
         return 0

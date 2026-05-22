@@ -36,6 +36,15 @@ dependencies = [
 # `world_gal_game/npc/llm_brain.py` but no provider ships in v0.1.
 dev = ["pytest>=8.0"]
 build = ["pyinstaller>=6.5"]
+# Web (pygbag/WASM) packaging. OPTIONAL: nothing in the always-imported
+# engine path imports pygbag — it is shelled out to only by
+# `world_gal_game/build_web.py`. Pinned lower bound for FS-sync stability.
+web = ["pygbag>=0.9.2"]
+# Steam (desktop) integration. NO PyPI dependency: the bridge is a ctypes
+# wrapper (`world_gal_game/integrations/steam_bridge.py`) over the official
+# `steam_api` redistributable, which the developer supplies from their Steam
+# depot and is never vendored here. The group exists as a documented marker.
+steam = []
 
 [project.scripts]
 # The console entry point installed when this package is pip / uv installed.

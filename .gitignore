@@ -2,9 +2,15 @@
 __pycache__/
 *.py[oc]
 build/
+build/web/
 dist/
 wheels/
 *.egg-info
+
+# Steam: the dev-supplied appid marker for local testing (never committed).
+# The steam_api redistributable itself is covered by the *.dll/*.so/*.dylib
+# rules below.
+steam_appid.txt
 
 # Virtual environments
 .venv
