@@ -266,11 +266,17 @@ class HeadlessSession:
         d = {"kind": pres.kind, "scene_id": pres.scene_id,
              "title": pres.title, "next_scene": pres.next_scene}
         if pres.line is not None:
+            # ``text`` is the clean, markup-stripped string so headless / script
+            # consumers never see rich-text tags. ``raw_text`` keeps the markup
+            # for tools that want it.
+            clean = pres.line.plain_text or pres.line.text
             d["line"] = {
                 "speaker": pres.line.speaker,
-                "text": pres.line.text,
+                "text": clean,
+                "raw_text": pres.line.text,
                 "line_index": pres.line.line_index,
                 "total_lines": pres.line.total_lines,
+                "voice": pres.line.voice,
                 "effects": pres.line.effects_applied,
                 "is_llm_generated": pres.line.is_llm_generated,
             }

@@ -68,3 +68,35 @@ def test_choice_requires_condition_disables():
     assert p.kind == "choice"
     # the only choice is locked
     assert p.choices[0].enabled is False
+
+
+# ---------------------------------------------------------------------------
+# Rich-text plain_text invariant: markup never leaks into clean-text channels
+# ---------------------------------------------------------------------------
+
+
+def test_plain_text_strips_markup():
+    sc = Scene(id="s", lines=[Line(text="say [b]bold[/b] now")])
+    eng, state = _build_engine([sc])
+    p = eng.start_scene("s")
+    # text keeps the raw markup for the UI to parse...
+    assert p.line.text == "say [b]bold[/b] now"
+    # ...but plain_text is clean, with no brackets.
+    assert p.line.plain_text == "say bold now"
+    assert "[" not in p.line.plain_text
+
+
+def test_dialogue_history_stores_clean_text():
+    sc = Scene(id="s", lines=[Line(text="[color=#ff0000]red[/color] line")])
+    eng, state = _build_engine([sc])
+    eng.start_scene("s")
+    lines = state.dialogue_history.lines
+    assert lines, "expected a history entry"
+    assert lines[-1]["text"] == "red line"
+
+
+def test_plain_text_tagless_equals_text():
+    sc = Scene(id="s", lines=[Line(text="plain line")])
+    eng, state = _build_engine([sc])
+    p = eng.start_scene("s")
+    assert p.line.plain_text == p.line.text == "plain line"

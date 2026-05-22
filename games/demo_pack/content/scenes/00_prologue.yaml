@@ -5,14 +5,22 @@ scenes:
     location: starting_room
     background: assets/backgrounds/starting_room.png
     lines:
+      # Rich-text markup demo: [color]/[b]/[size] render styled in the box, and
+      # [w] (wait), [s=N] (per-span speed), [ruby=..] (furigana) and [fx=..]
+      # (per-glyph animation) drive presentation only — all are stripped from
+      # plain_text, so headless / history / smoke see clean text and the line
+      # count is unchanged (no new lines added here).
       - text: |
-          搬家當天。
-          你終於把最後一個紙箱塞進新租的小房間。
+          [color=#ffcc66][b]搬家當天。[/b][/color][w=0.6]
+          你終於把最後一個紙箱塞進新租的[ruby=しんきょ]新居[/ruby]。
       - text: |
           這個小鎮你只來過一次 — 是當初看房子那天。
-          除此之外，這裡的一切都還是陌生的。
+          除此之外，這裡的一切都還是 [s=8][fx=wave][size=+4]陌生[/size][/fx][/s] 的。
+      # Per-line voice demo: the clip is optional — a missing file is a silent
+      # no-op, so this stays smoke-safe even without the asset shipped.
       - speaker: "玩家"
         text: "「總之，先出去走走吧。」"
+        voice: assets/voice/prologue_player_01.ogg
       - text: |
           （提示：之後可以按 M 開啟地圖、I 看物品、Q 看任務。
             現在先離開房間，走到鎮中廣場看看。）

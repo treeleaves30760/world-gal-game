@@ -10,7 +10,7 @@ from __future__ import annotations
 import pygame
 
 from .base import Widget
-from .label import WrappedText
+from .rich_text_view import RichText
 from .panel import Panel
 from ..fonts import FontRegistry
 from ..theme import Theme
@@ -33,40 +33,34 @@ class DialogueBox(Widget):
         body_rect = pygame.Rect(rect.x + pad, rect.y + pad + speaker_h,
                                 rect.width - pad * 2,
                                 rect.height - pad * 2 - speaker_h - 30)
-        self.body = WrappedText(body_rect, "",
-                                fonts=fonts, size=24,
-                                color=theme.text, line_spacing=8)
+        self.body = RichText(body_rect, "",
+                             fonts=fonts, size=24,
+                             color=theme.text, line_spacing=8,
+                             text_speed=text_speed)
         self.speaker: str | None = None
-        self._reveal_t = 0.0
-        self._chars_visible = 0
         self._hint_t = 0.0
 
     def set_line(self, speaker: str | None, text: str) -> None:
         self.speaker = speaker
+        # Reveal timing now flows through RichText.update(dt): the body drives
+        # its own cursor honouring per-span speed and inline waits.
+        self.body.text_speed = self.text_speed
         self.body.set_text(text, reveal_chars=0)
-        self._reveal_t = 0.0
-        self._chars_visible = 0
 
     def fully_revealed(self) -> bool:
         return self.body.fully_revealed()
 
     def force_reveal(self) -> None:
-        self._chars_visible = self.body.total_chars() + 1
-        self.body.set_reveal(self._chars_visible)
+        # A click / advance during a wait completes the line instantly and
+        # clears any pending waits (handled inside RichText.force_reveal).
+        self.body.force_reveal()
 
     def update(self, dt: float, inp) -> None:
         self._hint_t += dt
         if self.text_speed <= 0:
             self.force_reveal()
             return
-        self._reveal_t += dt
-        target = int(self._reveal_t * self.text_speed)
-        # Monotonic: never roll back. force_reveal() bumps _chars_visible to
-        # total+1; without this guard the next frame would compute a small
-        # target and overwrite the full reveal.
-        if target > self._chars_visible:
-            self._chars_visible = target
-            self.body.set_reveal(self._chars_visible)
+        self.body.update(dt, inp)
 
     def draw(self, surface: pygame.Surface) -> None:
         if not self.visible:

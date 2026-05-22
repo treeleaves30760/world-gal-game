@@ -16,6 +16,7 @@ from ..core.game_state import GameState
 from ..core.story_graph import Scene, Line, Choice
 from ..core.portrait_spec import PortraitSpec
 from ..core.text_interpolation import interpolate
+from .richtext import strip_markup
 
 
 _DIALOGUE_OP_RE = re.compile(r"\[\[([a-zA-Z_][a-zA-Z0-9_]*)(?::([^\]]*))?\]\]")
@@ -53,7 +54,8 @@ class LinePresentation:
     """What the UI needs to render a single line."""
 
     speaker: str | None
-    text: str
+    text: str                       # raw markup (parsed by the UI layer)
+    plain_text: str = ""            # markup stripped, for headless / history
     portrait: "str | PortraitSpec | None" = None
     portraits: list = field(default_factory=list)   # list[PortraitSpec], multi-character staging
     expression: str | None = None
@@ -61,6 +63,7 @@ class LinePresentation:
     background: str | None = None
     bgm: str | None = None
     sfx: str | None = None
+    voice: str | None = None
     scene_id: str | None = None
     line_index: int = 0
     total_lines: int = 0
@@ -238,8 +241,11 @@ class DialogueEngine:
         # Apply {token} interpolation after LLM resolution so LLM-generated
         # text can also embed state variables.
         text = interpolate(text, self.state)
-        # Parse + fire any [[op:arg]] dialogue directives.
+        # Parse + fire any [[op:arg]] dialogue directives. ``text`` is now the
+        # raw markup string the UI renders; ``plain`` strips rich-text tags for
+        # headless / history so no [tag] leaks into clean-text consumers.
         text = _apply_dialogue_ops(text, self.state)
+        plain = strip_markup(text)
         effects_out: list[dict[str, Any]] = []
         if line.effects:
             effects_out = self.state.apply_all(line.effects)
@@ -253,14 +259,16 @@ class DialogueEngine:
         speaker_rendered = (interpolate(line.speaker, self.state)
                             if line.speaker else None)
         # Push to dialogue history so the scrollback overlay can show it
-        # later. We capture the rendered text (post-LLM resolution).
+        # later. History stores clean text (no rich-text markup) — the
+        # scrollback isn't a styled renderer.
         self.state.dialogue_history.push(
-            speaker=speaker_rendered, text=text,
+            speaker=speaker_rendered, text=plain,
             scene_id=scene.id, portrait=line.portrait,
         )
         return LinePresentation(
             speaker=speaker_rendered,
             text=text,
+            plain_text=plain,
             portrait=line.portrait,
             portraits=list(line.portraits),
             expression=line.expression,
@@ -268,6 +276,7 @@ class DialogueEngine:
             background=scene.background,
             bgm=line.bgm or self.state.meta.get("current_bgm"),
             sfx=line.sfx,
+            voice=line.voice,
             scene_id=scene.id,
             line_index=idx,
             total_lines=len(scene.lines),
