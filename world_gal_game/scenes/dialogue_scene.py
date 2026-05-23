@@ -45,6 +45,9 @@ class DialogueScene(Scene):
         # than a single keypress. Mode (skip-read vs skip-all) is read from
         # config.skip_unread_only at the moment of each advance.
         self._skip_active: bool = False
+        # Hide-UI (非表示): when True the text box + quick bar are hidden so the
+        # full background / CG shows; any click/key restores them.
+        self._ui_hidden: bool = False
 
         # Portrait state: per-slot surface + active crossfade + spec.
         # Slots: "left", "center", "right"
@@ -146,6 +149,7 @@ class DialogueScene(Scene):
                 ("讀取", on_load, None),
                 (self.ctx.t("settings", "設定"), on_config, None),
                 ("選單", on_menu, None),
+                ("隱藏", self._hide_ui, None),
             ],
         )
         if scene_id is not None:
@@ -343,6 +347,7 @@ class DialogueScene(Scene):
                     self.portrait.show(None)
             self.choices.visible = False
         elif pres.kind == "choice":
+            self._ui_hidden = False   # a decision always shows the UI
             self.choices.set_choices(
                 [(c.id, c.text, c.enabled) for c in pres.choices])
             self.choices.visible = True
@@ -369,6 +374,19 @@ class DialogueScene(Scene):
     def _toggle_auto_play(self) -> None:
         self.auto_play_enabled = not self.auto_play_enabled
         self._auto_play_timer = 0.0
+
+    def _hide_ui(self) -> None:
+        """Hide the text box + quick bar so the full image / CG shows (the VN
+        非表示 convention). Any click or key restores the UI."""
+        self._ui_hidden = True
+
+    def _draw_hidden_hint(self, surface: pygame.Surface) -> None:
+        sw, sh = surface.get_size()
+        hint = self.ctx.fonts.render(
+            "點擊 / 按 H 顯示介面", 14,
+            (*self.ctx.theme.text_mute[:3], 150))
+        surface.blit(hint, (sw - hint.get_width() - 20,
+                            sh - hint.get_height() - 16))
 
     def _update_quick_bar(self, dt: float, inp) -> bool:
         """Update the quick-menu bar; return True when the pointer is over it
@@ -511,6 +529,17 @@ class DialogueScene(Scene):
             self._bg_fade.update(dt)
             if self._bg_fade.done:
                 self._bg_fade = None
+
+        # Hide-UI (非表示): H toggles. While hidden, any advance/cancel input
+        # restores the UI (without advancing) so the full image stays viewable.
+        for e in inp.events:
+            if e.type == pygame.KEYDOWN and e.key == pygame.K_h:
+                self._ui_hidden = not self._ui_hidden
+                return
+        if self._ui_hidden:
+            if inp.advance_dialogue or inp.cancel:
+                self._ui_hidden = False
+            return
 
         # Quick-menu bar: update before the advance logic so a click that
         # lands on it is handled by the bar and does NOT also advance the line.
@@ -666,6 +695,10 @@ class DialogueScene(Scene):
             surface.fill(self.ctx.theme.bg_deep)
             self._draw_with_camera(surface, self._render_bg_fade(sw, sh))
         elif self._bg_surface is not None:
+            # Opaque base first so a semi-transparent (placeholder) background
+            # never lets the scene beneath — e.g. an exploration top bar —
+            # bleed through. With real opaque art this fill is invisible.
+            surface.fill(self.ctx.theme.bg_deep)
             self._draw_with_camera(surface, self._bg_surface)
         else:
             surface.fill(self.ctx.theme.bg_deep)
@@ -711,7 +744,7 @@ class DialogueScene(Scene):
                 # Legacy fallback: no slot surfaces active, use PortraitView.
                 self.portrait.draw(surface)
 
-        if self.box:
+        if self.box and not self._ui_hidden:
             self.box.draw(surface)
         if self.choices and self.choices.visible:
             self.choices.draw(surface)
@@ -731,15 +764,17 @@ class DialogueScene(Scene):
         for flash in self._flashes:
             flash.draw(surface)
 
-        # Quick-menu bar — drawn on the real surface (stable, unshaken) and
-        # hidden while choices are showing.
-        if self._quick_bar is not None and not (
+        # Quick-menu bar — drawn on the real surface (stable, unshaken),
+        # hidden while choices show or the UI is hidden.
+        if self._quick_bar is not None and not self._ui_hidden and not (
                 self.choices and self.choices.visible):
             self._quick_bar.draw(surface)
 
-        # Playback-mode badges (top-right): functional AUTO / SKIP labels.
-        # Drawn last on the real surface so they stay crisp and unshaken.
-        self._draw_mode_indicators(surface)
+        # Playback-mode badges (AUTO / SKIP), or the restore hint when hidden.
+        if not self._ui_hidden:
+            self._draw_mode_indicators(surface)
+        else:
+            self._draw_hidden_hint(surface)
 
     def _draw_mode_indicators(self, surface: pygame.Surface) -> None:
         """Draw small AUTO / SKIP status badges in the top-right corner.

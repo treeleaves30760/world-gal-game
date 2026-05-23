@@ -23,6 +23,7 @@ class ExplorationScene(Scene):
     def __init__(self, ctx: SceneContext):
         super().__init__(ctx)
         self.is_overlay = False
+        self._ui_hidden = False
         self._buttons: list[Button] = []
         self._top_buttons: list[Button] = []
         self._npc_cards: list[tuple[pygame.Rect, str]] = []   # (rect, npc_id)
@@ -325,6 +326,16 @@ class ExplorationScene(Scene):
         # silently swallow clicks.
         if self._build_signature != self._current_signature():
             self._rebuild_widgets()
+        # Hide-UI (非表示): H toggles; while hidden a click/cancel restores it,
+        # so the player can see the full location image unobstructed.
+        for e in inp.events:
+            if e.type == pygame.KEYDOWN and e.key == pygame.K_h:
+                self._ui_hidden = not self._ui_hidden
+                return
+        if self._ui_hidden:
+            if inp.mouse_clicked or inp.cancel:
+                self._ui_hidden = False
+            return
         for b in self._top_buttons:
             b.update(dt, inp)
         for b in self._buttons:
@@ -371,6 +382,11 @@ class ExplorationScene(Scene):
         else:
             surface.fill(self.ctx.theme.bg_deep)
 
+        # Hide-UI: show only the full location image (no bars / panel / veil).
+        if self._ui_hidden:
+            self._draw_hidden_hint(surface)
+            return
+
         # darken bottom for panel readability
         veil = pygame.Surface((sw, sh // 2), pygame.SRCALPHA)
         for y in range(veil.get_height()):
@@ -381,7 +397,7 @@ class ExplorationScene(Scene):
 
         # top bar (time + resources + menu button)
         top_bar = pygame.Surface((sw, 62), pygame.SRCALPHA)
-        top_bar.fill((10, 6, 20, 200))
+        top_bar.fill((10, 6, 20, 165))
         surface.blit(top_bar, (0, 0))
         time_label = self.ctx.fonts.render(
             self.ctx.state.time.label(),
@@ -508,6 +524,14 @@ class ExplorationScene(Scene):
                 role = self.ctx.fonts.render(npc.role or "", 14,
                                              self.ctx.theme.text_mute)
                 surface.blit(role, (nx, rect.y + 26))
+
+    def _draw_hidden_hint(self, surface: pygame.Surface) -> None:
+        sw, sh = surface.get_size()
+        hint = self.ctx.fonts.render(
+            "點擊 / 按 H 顯示介面", 14,
+            (*self.ctx.theme.text_mute[:3], 150))
+        surface.blit(hint, (sw - hint.get_width() - 20,
+                            sh - hint.get_height() - 16))
 
     def describe(self) -> dict:
         loc = self.ctx.state.map.current
