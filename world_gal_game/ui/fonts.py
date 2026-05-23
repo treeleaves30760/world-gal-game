@@ -14,9 +14,16 @@ import pygame
 class FontRegistry:
     """Loads & caches fonts. Always pass through .get(size) at draw time."""
 
-    def __init__(self, candidates: tuple[str, ...], bundled: Path | None = None):
+    def __init__(self, candidates: tuple[str, ...], bundled: Path | None = None,
+                 *, scale: float = 1.0):
         self.candidates = candidates
         self.bundled = bundled
+        # Global UI scale: every requested point size is multiplied by this
+        # before a font is opened, so the whole UI's typography tracks the
+        # canvas resolution (the app sets it to screen_height / 720). Layout
+        # rects are screen-size-relative, so text + containers grow together.
+        # Defaults to 1.0 → byte-identical to the unscaled engine.
+        self.scale = max(0.1, float(scale))
         self._resolved_path: Path | str | None = None
         self._cache: dict[tuple[str | None, int, bool], pygame.font.Font] = {}
         self._resolve()
@@ -37,14 +44,15 @@ class FontRegistry:
         self._resolved_path = None
 
     def get(self, size: int, *, bold: bool = False) -> pygame.font.Font:
+        px = max(1, int(round(size * self.scale)))
         key = (str(self._resolved_path) if self._resolved_path else None,
-               size, bold)
+               px, bold)
         if key not in self._cache:
             if self._resolved_path:
-                f = pygame.font.Font(str(self._resolved_path), size)
+                f = pygame.font.Font(str(self._resolved_path), px)
                 f.set_bold(bold)
             else:
-                f = pygame.font.SysFont(None, size, bold=bold)
+                f = pygame.font.SysFont(None, px, bold=bold)
             self._cache[key] = f
         return self._cache[key]
 

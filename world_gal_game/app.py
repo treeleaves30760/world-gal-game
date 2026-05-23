@@ -175,8 +175,11 @@ class GalGameApp:
                 bundled_font_path = cand
             else:
                 bundled_font_path = resolve_asset(bundled_font)
+        # UI scale tracks the canvas height (design baseline 720) so typography
+        # stays proportionate at 1080p/4k instead of shrinking. Never below 1.0.
+        ui_scale = max(1.0, self.config.screen_size[1] / 720.0)
         self.fonts = FontRegistry(self.config.font_candidates,
-                                  bundled=bundled_font_path)
+                                  bundled=bundled_font_path, scale=ui_scale)
         self.assets = AssetManager(pack_root=pack_root)
         # Push configured audio volumes into the asset manager so voice lines
         # play at the user's chosen level.
