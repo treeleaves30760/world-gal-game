@@ -207,6 +207,13 @@ class EngineConfig:
     debug_overlay_enabled: bool = False
     hot_reload_enabled: bool = False
 
+    # Determinism seed. When set, the engine seeds the per-state RNG
+    # (``GameState.rng()``) so plugins/brains that opt into it replay
+    # identically: same seed + same script -> same state. Runtime metadata,
+    # NOT a user preference, so it is deliberately absent from
+    # ``_PERSISTED_SETTING_FIELDS``. ``None`` means "fresh entropy".
+    seed: int | None = None
+
     @classmethod
     def from_env(cls, **overrides) -> "EngineConfig":
         """Construct an EngineConfig, auto-enabling dev tools when WGG_DEV=1."""

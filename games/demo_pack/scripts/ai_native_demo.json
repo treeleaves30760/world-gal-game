@@ -1,0 +1,9 @@
+[
+  {"op": "snapshot", "name": "start"},
+  {"op": "apply", "effect": {"kind": "affection", "target": "heroine_1", "value": 8}},
+  {"op": "assert", "affection": "heroine_1", "gte": 8},
+  {"op": "check", "condition": {"kind": "affection_gte", "target": "heroine_1", "value": 5}},
+  {"op": "affordances"},
+  {"op": "restore", "name": "start"},
+  {"op": "assert", "affection": "heroine_1", "lt": 1}
+]

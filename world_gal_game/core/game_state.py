@@ -84,6 +84,24 @@ class GameState(BaseModel):
         """
         return {k: v for k, v in meta.items() if not k.startswith("__")}
 
+    def rng(self) -> "random.Random":
+        """Return the per-state pseudo-random generator.
+
+        Deterministic when a seed was threaded onto ``meta['__seed__']`` (the
+        headless session / app does this from ``EngineConfig.seed``); otherwise
+        entropy-seeded. Plugins, brains, and effects that need randomness must
+        use this instead of the global ``random`` module, so that a seeded run
+        is byte-for-byte reproducible — the determinism contract that lets an
+        agent trust "same seed + same script -> same state". The generator
+        lives under the transient ``__rng__`` meta key and is never serialized.
+        """
+        import random
+        rng = self.meta.get("__rng__")
+        if not isinstance(rng, random.Random):
+            rng = random.Random(self.meta.get("__seed__"))
+            self.meta["__rng__"] = rng
+        return rng
+
     def evaluate(self, cond: Condition) -> bool:
         """Return True if condition is satisfied by current state.
 

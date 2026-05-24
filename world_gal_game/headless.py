@@ -47,6 +47,10 @@ class HeadlessSession:
     last_presentation: dict | None = None
     transcript: list[dict] = field(default_factory=list)
     pack: str = ""
+    # Named state snapshots for branch exploration (op: snapshot/restore).
+    _snapshots: dict[str, dict] = field(default_factory=dict)
+    # Execution-trace recorder; created lazily and active only during run_script.
+    _trace: Any = None
 
     @classmethod
     def open(cls, config: EngineConfig, *, pack: str | None = None,
@@ -72,6 +76,10 @@ class HeadlessSession:
         # `line.text`.
         brain = brain or EchoBrain()
         dialogue = DialogueEngine(state, llm_provider=None)
+        if config.seed is not None:
+            # Thread the determinism seed onto the state so GameState.rng() is
+            # reproducible for any plugin/brain that uses it.
+            state.meta["__seed__"] = config.seed
         return cls(config=config, state=state, npcs=npcs, brain=brain,
                    dialogue=dialogue, meta=meta, pack=pack)
 
@@ -287,38 +295,217 @@ class HeadlessSession:
                             for c in pres.choices]
         return d
 
+    # ----- control: drive the full effect/condition vocabulary ----------
+
+    def apply_effect(self, effect: dict) -> dict:
+        """Apply a raw effect dict (any registered kind) via GameState.apply."""
+        from .core.story_graph import Effect
+        result = self.state.apply(Effect(**effect))
+        return {"ok": "error" not in result, "result": result}
+
+    def check_condition(self, condition: dict) -> dict:
+        """Evaluate a raw condition dict via GameState.evaluate."""
+        from .core.story_graph import Condition
+        return {"ok": True, "result": bool(self.state.evaluate(Condition(**condition)))}
+
+    def assert_expect(self, cmd: dict) -> dict:
+        """Check an expectation about current state. ``ok`` is the pass/fail.
+
+        Forms: ``{flag, equals?}`` · ``{affection, gte|lt|equals, stat?}`` ·
+        ``{scene_played}`` · ``{condition: {...}}``.
+        """
+        if "flag" in cmd:
+            actual = self.state.events.get_flag(cmd["flag"])
+            if "equals" in cmd:
+                return {"ok": actual == cmd["equals"],
+                        "assert": f"flag {cmd['flag']} == {cmd['equals']!r}",
+                        "actual": actual}
+            return {"ok": bool(actual),
+                    "assert": f"flag {cmd['flag']} truthy", "actual": actual}
+        if "affection" in cmd:
+            stat = cmd.get("stat", "affection")
+            actual = self.state.affection.get(cmd["affection"], stat)
+            if "gte" in cmd:
+                ok, rel = actual >= cmd["gte"], f">= {cmd['gte']}"
+            elif "lt" in cmd:
+                ok, rel = actual < cmd["lt"], f"< {cmd['lt']}"
+            elif "equals" in cmd:
+                ok, rel = actual == cmd["equals"], f"== {cmd['equals']}"
+            else:
+                ok, rel = True, "present"
+            return {"ok": ok,
+                    "assert": f"affection[{cmd['affection']}.{stat}] {rel}",
+                    "actual": actual}
+        if "scene_played" in cmd:
+            actual = self.state.story.is_played(cmd["scene_played"])
+            return {"ok": bool(actual),
+                    "assert": f"scene_played {cmd['scene_played']}",
+                    "actual": actual}
+        if "condition" in cmd:
+            from .core.story_graph import Condition
+            actual = bool(self.state.evaluate(Condition(**cmd["condition"])))
+            return {"ok": actual,
+                    "assert": f"condition {cmd['condition'].get('kind')}",
+                    "actual": actual}
+        return {"ok": False, "error": "unknown assert form"}
+
+    # ----- branch exploration: snapshot / restore / diff ----------------
+
+    def snapshot(self) -> dict:
+        """A portable JSON-safe snapshot of the current state."""
+        from .dev.diff import snapshot
+        return snapshot(self.state)
+
+    def restore(self, data: dict) -> dict:
+        """Restore state in place from a :meth:`snapshot` dict."""
+        from .dev.diff import restore
+        restore(self.state, data)
+        self.last_presentation = None
+        return {"ok": True}
+
+    def diff(self, before: dict, after: dict) -> dict:
+        """Structured leaf-level diff between two snapshots."""
+        from .dev.diff import diff
+        return diff(before, after)
+
+    def take_snapshot(self, name: str = "default") -> dict:
+        """Store a named snapshot (run_script ``snapshot`` op)."""
+        from .dev.diff import snapshot
+        self._snapshots[name] = snapshot(self.state)
+        return {"ok": True, "name": name}
+
+    def restore_snapshot(self, name: str = "default") -> dict:
+        """Restore a previously stored named snapshot (run_script ``restore`` op)."""
+        from .dev.diff import restore
+        snap = self._snapshots.get(name)
+        if snap is None:
+            return {"ok": False, "error": f"no snapshot named '{name}'"}
+        restore(self.state, snap)
+        self.last_presentation = None
+        return {"ok": True, "name": name}
+
+    def affordances(self) -> dict:
+        """The current action space: what the agent can do, and why-not.
+
+        Reports available/blocked exits (with reasons), the current scene's
+        choices (with the conditions that block each disabled one), available
+        scene hooks, and the full effect/condition vocabulary the ``apply`` /
+        ``check`` ops accept.
+        """
+        from .dev.capability_manifest import all_condition_kinds, all_effect_kinds
+        flags = self.state.events.flags
+        tod = self.state.time.time_of_day.value
+        loc = self.state.map.current
+
+        exits = []
+        if loc:
+            for ex in loc.exits:
+                avail = ex.is_available(tod, flags)
+                row = {"target": ex.target, "label": ex.label, "available": avail}
+                if not avail:
+                    row["blocked_reason"] = ex.unavailable_reason(tod)
+                exits.append(row)
+
+        choices = []
+        scene_id = self.state.story.current_scene
+        scene = self.state.story.scenes.get(scene_id) if scene_id else None
+        if scene:
+            for ch in scene.choices:
+                blocked_by = []
+                for c in ch.requires:
+                    if not self.state.evaluate(c):
+                        blocked_by.append({"requires": c.kind, "target": c.target})
+                for c in ch.forbids:
+                    if self.state.evaluate(c):
+                        blocked_by.append({"forbids": c.kind, "target": c.target})
+                choices.append({"id": ch.id, "text": ch.text,
+                                "enabled": not blocked_by, "blocked_by": blocked_by})
+
+        scenes = [h.scene_id for h in self.state.map.available_scenes(
+            time_of_day=tod, flags=flags,
+            played_scenes=self.state.story.played, state=self.state)]
+
+        return {
+            "location": loc.id if loc else None,
+            "exits": exits,
+            "choices": choices,
+            "scenes_available": scenes,
+            "applicable_effects": all_effect_kinds(),
+            "applicable_conditions": all_condition_kinds(),
+        }
+
     # ----- scripted run -------------------------------------------------
 
+    def _dispatch_op(self, op: str, cmd: dict) -> dict:
+        if op == "move":
+            return self.move_to(cmd["location"])
+        if op == "start_scene":
+            return self.start_scene(cmd["scene"])
+        if op == "next":
+            return self.next_line(cmd.get("count", 1))
+        if op == "choose":
+            return self.choose(cmd["choice"])
+        if op == "chat":
+            return self.chat(cmd["npc"], cmd["message"])
+        if op == "advance_time":
+            return self.advance_time(cmd.get("phases", 1))
+        if op == "set_flag":
+            return self.set_flag(cmd["key"], cmd.get("value", True))
+        if op == "adjust_affection":
+            return self.adjust_affection(cmd["npc"], int(cmd["delta"]),
+                                         cmd.get("stat", "affection"))
+        if op == "inspect":
+            return {"ok": True, "snapshot": self.inspect()}
+        if op == "apply":
+            return self.apply_effect(cmd["effect"])
+        if op == "check":
+            return self.check_condition(cmd["condition"])
+        if op == "assert":
+            return self.assert_expect(cmd)
+        if op == "affordances":
+            return {"ok": True, "affordances": self.affordances()}
+        if op == "snapshot":
+            return self.take_snapshot(cmd.get("name", "default"))
+        if op == "restore":
+            return self.restore_snapshot(cmd.get("name", "default"))
+        return {"ok": False, "error": f"unknown op: {op}"}
+
     def run_script(self, commands: list[dict]) -> list[dict]:
+        """Execute a batch of ops; return one result dict per op.
+
+        Each result carries its ``op``, the op's return dict, and — when the
+        state changed — a structured ``diff`` of that step. The full ordered
+        execution trace (effects fired with results, lines/choices shown,
+        moves, time) is collected into ``self.transcript`` so the whole run is
+        understandable from a single call (the anti-MCP "rich batch"). Ops:
+        move, start_scene, next, choose, chat, advance_time, set_flag,
+        adjust_affection, inspect, apply, check, assert, affordances, snapshot,
+        restore.
+        """
+        from .dev.diff import diff as _diff, snapshot as _snapshot
+        if self._trace is None:
+            from .dev.trace import TraceRecorder
+            self._trace = TraceRecorder()
+        self._trace.attach()
+        self._trace.clear()
         out: list[dict] = []
-        for cmd in commands:
-            op = cmd.get("op")
-            try:
-                if op == "move":
-                    r = self.move_to(cmd["location"])
-                elif op == "start_scene":
-                    r = self.start_scene(cmd["scene"])
-                elif op == "next":
-                    r = self.next_line(cmd.get("count", 1))
-                elif op == "choose":
-                    r = self.choose(cmd["choice"])
-                elif op == "chat":
-                    r = self.chat(cmd["npc"], cmd["message"])
-                elif op == "advance_time":
-                    r = self.advance_time(cmd.get("phases", 1))
-                elif op == "set_flag":
-                    r = self.set_flag(cmd["key"], cmd.get("value", True))
-                elif op == "adjust_affection":
-                    r = self.adjust_affection(cmd["npc"], int(cmd["delta"]),
-                                              cmd.get("stat", "affection"))
-                elif op == "inspect":
-                    r = {"ok": True, "snapshot": self.inspect()}
-                else:
-                    r = {"ok": False, "error": f"unknown op: {op}"}
-            except Exception as e:
-                r = {"ok": False, "error": str(e), "op": op}
-            r["op"] = op
-            out.append(r)
+        try:
+            for cmd in commands:
+                op = cmd.get("op")
+                before = _snapshot(self.state)
+                try:
+                    r = self._dispatch_op(op, cmd)
+                except Exception as e:
+                    r = {"ok": False, "error": str(e)}
+                r["op"] = op
+                step_diff = _diff(before, _snapshot(self.state))
+                if step_diff:
+                    r["diff"] = step_diff
+                out.append(r)
+        finally:
+            # Detach so trace hooks never leak across sessions / tests.
+            self.transcript = self._trace.drain()
+            self._trace.detach()
         return out
 
 
@@ -337,7 +524,7 @@ def run_script(config: EngineConfig, script_path: str,
     data = json.loads(Path(script_path).read_text(encoding="utf-8"))
     commands = data if isinstance(data, list) else data.get("commands", [])
     results = sess.run_script(commands)
-    output = {"results": results}
+    output = {"results": results, "transcript": sess.transcript}
     if inspect_after:
         output["final_state"] = sess.inspect()
     print(json.dumps(output, ensure_ascii=False, indent=2))
