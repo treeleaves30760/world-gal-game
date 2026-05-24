@@ -1,13 +1,13 @@
 """Builtin effect handlers.
 
-Every effect kind that the engine has historically shipped (23 of
+Every builtin effect kind that the engine ships (24 of
 them) is implemented here as a free function registered
 with ``@effect("kind", plugin_id="builtin")``. The :meth:`GameState.apply`
 dispatcher looks them up in the global :data:`EFFECT_REGISTRY`.
 
 Splitting them out of ``GameState.apply`` accomplishes three things:
 
-1. The 39 if-elif dispatch table is gone — third-party plugins now use
+1. The historical if-elif dispatch table is gone — third-party plugins now use
    the same registration path the engine uses.
 2. Capability Manifest can list builtin kinds with their schema hints
    without parsing source code.
@@ -21,6 +21,15 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from .registry import effect
+from .effect_args import (
+    AffectionArgs, StatArgs, SetFlagArgs, SetFlagIfUnsetArgs, IncrementFlagArgs,
+    AdvanceTimeArgs, MoveToArgs, UnlockLocationArgs, PlaySceneArgs, EndSceneArgs,
+    LogEventArgs, GiveItemArgs, TakeItemArgs, UseItemArgs, GainResourceArgs,
+    SpendResourceArgs, SetResourceArgs, BuyItemArgs, SellItemArgs, GiftArgs,
+    StartQuestArgs, CompleteObjectiveArgs, CompleteQuestArgs, FailQuestArgs,
+    CameraPanArgs, CameraZoomArgs, ScreenShakeArgs, ScreenFlashArgs,
+    ScreenTintArgs,
+)
 from ..core.inventory import evaluate_gift
 
 if TYPE_CHECKING:
@@ -37,7 +46,7 @@ BUILTIN = "builtin"
 # ----------------------------------------------------------------------
 # Affection / stats
 
-@effect("affection", plugin_id=BUILTIN,
+@effect("affection", plugin_id=BUILTIN, args=AffectionArgs,
         description="Adjust a character's affection (default axis 'affection').",
         signature={"target": "character_id", "value": "int (delta)",
                 "stat": "str? (axis name, default 'affection')"})
@@ -48,7 +57,7 @@ def handle_affection(state: "GameState", eff: "Effect") -> dict[str, Any]:
             "unlocked": unlocked}
 
 
-@effect("stat", plugin_id=BUILTIN,
+@effect("stat", plugin_id=BUILTIN, args=StatArgs,
         description="Adjust an arbitrary character stat (alias of affection with custom axis).",
         signature={"target": "character_id", "value": "int", "stat": "str (axis name)"})
 def handle_stat(state: "GameState", eff: "Effect") -> dict[str, Any]:
@@ -61,7 +70,7 @@ def handle_stat(state: "GameState", eff: "Effect") -> dict[str, Any]:
 # ----------------------------------------------------------------------
 # Flags
 
-@effect("set_flag", plugin_id=BUILTIN,
+@effect("set_flag", plugin_id=BUILTIN, args=SetFlagArgs,
         description="Set a flag to value (defaults to True).",
         signature={"target": "flag_name", "value": "any (default True)"})
 def handle_set_flag(state: "GameState", eff: "Effect") -> dict[str, Any]:
@@ -70,7 +79,19 @@ def handle_set_flag(state: "GameState", eff: "Effect") -> dict[str, Any]:
     return {"kind": eff.kind, "target": eff.target, "value": eff.value}
 
 
-@effect("increment_flag", plugin_id=BUILTIN,
+@effect("set_flag_if_unset", plugin_id=BUILTIN, args=SetFlagIfUnsetArgs,
+        description="Set a flag only when it is currently falsy / unset.",
+        signature={"target": "flag_name", "value": "any (default True)"})
+def handle_set_flag_if_unset(state: "GameState", eff: "Effect") -> dict[str, Any]:
+    old = state.events.get_flag(eff.target)
+    if old:
+        return {"kind": eff.kind, "target": eff.target, "set": False, "old": old}
+    value = eff.value if eff.value is not None else True
+    state.events.set_flag(eff.target, value)
+    return {"kind": eff.kind, "target": eff.target, "set": True, "value": value}
+
+
+@effect("increment_flag", plugin_id=BUILTIN, args=IncrementFlagArgs,
         description="Add value (default 1) to a numeric flag.",
         signature={"target": "flag_name", "value": "int (default 1)"})
 def handle_increment_flag(state: "GameState", eff: "Effect") -> dict[str, Any]:
@@ -81,7 +102,7 @@ def handle_increment_flag(state: "GameState", eff: "Effect") -> dict[str, Any]:
 # ----------------------------------------------------------------------
 # Time / location
 
-@effect("advance_time", plugin_id=BUILTIN,
+@effect("advance_time", plugin_id=BUILTIN, args=AdvanceTimeArgs,
         description="Advance time-of-day by N phases (default 1).",
         signature={"value": "int (phases, default 1)"})
 def handle_advance_time(state: "GameState", eff: "Effect") -> dict[str, Any]:
@@ -97,7 +118,7 @@ def handle_advance_time(state: "GameState", eff: "Effect") -> dict[str, Any]:
             "day": state.time.day}
 
 
-@effect("move_to", plugin_id=BUILTIN,
+@effect("move_to", plugin_id=BUILTIN, args=MoveToArgs,
         description="Move player to a location id.",
         signature={"target": "location_id"})
 def handle_move_to(state: "GameState", eff: "Effect") -> dict[str, Any]:
@@ -115,7 +136,7 @@ def handle_move_to(state: "GameState", eff: "Effect") -> dict[str, Any]:
         return {"kind": eff.kind, "error": f"未知地點: {eff.target}"}
 
 
-@effect("unlock_location", plugin_id=BUILTIN,
+@effect("unlock_location", plugin_id=BUILTIN, args=UnlockLocationArgs,
         description="Set the implicit unlock flag for a location.",
         signature={"target": "location_id"})
 def handle_unlock_location(state: "GameState", eff: "Effect") -> dict[str, Any]:
@@ -127,21 +148,21 @@ def handle_unlock_location(state: "GameState", eff: "Effect") -> dict[str, Any]:
 # Scene control (dispatched by the dialogue engine, not GameState.apply
 # itself — these handlers return a marker dict that the engine consumes)
 
-@effect("play_scene", plugin_id=BUILTIN,
+@effect("play_scene", plugin_id=BUILTIN, args=PlaySceneArgs,
         description="Trigger transition to another scene (interpreted by DialogueEngine).",
         signature={"target": "scene_id"})
 def handle_play_scene(state: "GameState", eff: "Effect") -> dict[str, Any]:
     return {"kind": eff.kind, "scene": eff.target}
 
 
-@effect("end_scene", plugin_id=BUILTIN,
+@effect("end_scene", plugin_id=BUILTIN, args=EndSceneArgs,
         description="End the current scene (interpreted by DialogueEngine).",
         signature={})
 def handle_end_scene(state: "GameState", eff: "Effect") -> dict[str, Any]:
     return {"kind": eff.kind}
 
 
-@effect("log_event", plugin_id=BUILTIN,
+@effect("log_event", plugin_id=BUILTIN, args=LogEventArgs,
         description="Add a custom entry to the event log.",
         signature={"target": "title", "value": "str? (summary)"})
 def handle_log_event(state: "GameState", eff: "Effect") -> dict[str, Any]:
@@ -157,7 +178,7 @@ def handle_log_event(state: "GameState", eff: "Effect") -> dict[str, Any]:
 # ----------------------------------------------------------------------
 # Inventory
 
-@effect("give_item", plugin_id=BUILTIN,
+@effect("give_item", plugin_id=BUILTIN, args=GiveItemArgs,
         description="Add an item to inventory.",
         signature={"target": "item_id", "value": "int (count, default 1)"})
 def handle_give_item(state: "GameState", eff: "Effect") -> dict[str, Any]:
@@ -173,7 +194,7 @@ def handle_give_item(state: "GameState", eff: "Effect") -> dict[str, Any]:
     return {"kind": eff.kind, "item": eff.target, "count": new_count}
 
 
-@effect("take_item", plugin_id=BUILTIN,
+@effect("take_item", plugin_id=BUILTIN, args=TakeItemArgs,
         description="Remove an item from inventory.",
         signature={"target": "item_id", "value": "int (count, default 1)"})
 def handle_take_item(state: "GameState", eff: "Effect") -> dict[str, Any]:
@@ -182,7 +203,7 @@ def handle_take_item(state: "GameState", eff: "Effect") -> dict[str, Any]:
     return {"kind": eff.kind, "item": eff.target, "removed": removed}
 
 
-@effect("use_item", plugin_id=BUILTIN,
+@effect("use_item", plugin_id=BUILTIN, args=UseItemArgs,
         description="Consume one of an item and apply its use_effects in order.",
         signature={"target": "item_id"})
 def handle_use_item(state: "GameState", eff: "Effect") -> dict[str, Any]:
@@ -209,7 +230,7 @@ def handle_use_item(state: "GameState", eff: "Effect") -> dict[str, Any]:
 # ----------------------------------------------------------------------
 # Resources
 
-@effect("gain_resource", plugin_id=BUILTIN,
+@effect("gain_resource", plugin_id=BUILTIN, args=GainResourceArgs,
         description="Add (or subtract, with negative value) to a resource.",
         signature={"target": "resource_id", "value": "int (delta)"})
 def handle_gain_resource(state: "GameState", eff: "Effect") -> dict[str, Any]:
@@ -228,7 +249,7 @@ def handle_gain_resource(state: "GameState", eff: "Effect") -> dict[str, Any]:
             "delta": amount, "old": old, "new": new}
 
 
-@effect("spend_resource", plugin_id=BUILTIN,
+@effect("spend_resource", plugin_id=BUILTIN, args=SpendResourceArgs,
         description="Spend an amount of a resource. Fails (returns error) if insufficient.",
         signature={"target": "resource_id", "value": "int (positive)"})
 def handle_spend_resource(state: "GameState", eff: "Effect") -> dict[str, Any]:
@@ -250,7 +271,7 @@ def handle_spend_resource(state: "GameState", eff: "Effect") -> dict[str, Any]:
             "delta": -amount, "new": balance}
 
 
-@effect("set_resource", plugin_id=BUILTIN,
+@effect("set_resource", plugin_id=BUILTIN, args=SetResourceArgs,
         description="Set a resource to an absolute value.",
         signature={"target": "resource_id", "value": "int (absolute)"})
 def handle_set_resource(state: "GameState", eff: "Effect") -> dict[str, Any]:
@@ -261,7 +282,7 @@ def handle_set_resource(state: "GameState", eff: "Effect") -> dict[str, Any]:
 # ----------------------------------------------------------------------
 # Shopping / gifting
 
-@effect("buy_item", plugin_id=BUILTIN,
+@effect("buy_item", plugin_id=BUILTIN, args=BuyItemArgs,
         description="Spend currency, gain one item.",
         signature={"target": "item_id", "stat": "currency_id (default 'money')",
                 "value": "int (price)"})
@@ -286,7 +307,7 @@ def handle_buy_item(state: "GameState", eff: "Effect") -> dict[str, Any]:
             "price": price}
 
 
-@effect("sell_item", plugin_id=BUILTIN,
+@effect("sell_item", plugin_id=BUILTIN, args=SellItemArgs,
         description="Remove one item, gain currency.",
         signature={"target": "item_id", "stat": "currency_id (default 'money')",
                 "value": "int? (price; defaults to item.value)"})
@@ -310,7 +331,7 @@ def handle_sell_item(state: "GameState", eff: "Effect") -> dict[str, Any]:
             "price": price}
 
 
-@effect("gift", plugin_id=BUILTIN,
+@effect("gift", plugin_id=BUILTIN, args=GiftArgs,
         description="Give an item to an NPC; the gift heuristic computes a "
                     "tailored affection delta.",
         signature={"target": "npc_id", "stat": "item_id",
@@ -350,7 +371,7 @@ def handle_gift(state: "GameState", eff: "Effect") -> dict[str, Any]:
 # ----------------------------------------------------------------------
 # Quests
 
-@effect("start_quest", plugin_id=BUILTIN,
+@effect("start_quest", plugin_id=BUILTIN, args=StartQuestArgs,
         description="Activate a quest (inactive → active).",
         signature={"target": "quest_id"})
 def handle_start_quest(state: "GameState", eff: "Effect") -> dict[str, Any]:
@@ -358,7 +379,7 @@ def handle_start_quest(state: "GameState", eff: "Effect") -> dict[str, Any]:
     return {"kind": eff.kind, "quest": eff.target, "started": started}
 
 
-@effect("complete_objective", plugin_id=BUILTIN,
+@effect("complete_objective", plugin_id=BUILTIN, args=CompleteObjectiveArgs,
         description="Mark one objective on a quest as done. Auto-completes the "
                     "quest if all required objectives are now done.",
         signature={"target": "quest_id", "stat": "objective_id"})
@@ -372,7 +393,7 @@ def handle_complete_objective(state: "GameState", eff: "Effect") -> dict[str, An
             "ok": ok, "auto_completed": auto_completed}
 
 
-@effect("complete_quest", plugin_id=BUILTIN,
+@effect("complete_quest", plugin_id=BUILTIN, args=CompleteQuestArgs,
         description="Directly mark a quest as completed.",
         signature={"target": "quest_id"})
 def handle_complete_quest(state: "GameState", eff: "Effect") -> dict[str, Any]:
@@ -380,7 +401,7 @@ def handle_complete_quest(state: "GameState", eff: "Effect") -> dict[str, Any]:
     return {"kind": eff.kind, "quest": eff.target, "done": done}
 
 
-@effect("fail_quest", plugin_id=BUILTIN,
+@effect("fail_quest", plugin_id=BUILTIN, args=FailQuestArgs,
         description="Mark a quest as failed.",
         signature={"target": "quest_id"})
 def handle_fail_quest(state: "GameState", eff: "Effect") -> dict[str, Any]:
@@ -421,7 +442,7 @@ def _queue_visual_fx(state: "GameState", directive: dict[str, Any]) -> None:
     queue.append(directive)
 
 
-@effect("camera_pan", plugin_id=BUILTIN,
+@effect("camera_pan", plugin_id=BUILTIN, args=CameraPanArgs,
         description="Pan the camera to an offset (source px) over a duration. "
                     "Queued for the scene; does not touch the display.",
         signature={"value": "dict {x:float, y:float, duration:float?, "
@@ -437,7 +458,7 @@ def handle_camera_pan(state: "GameState", eff: "Effect") -> dict[str, Any]:
     return {"kind": eff.kind, "x": x, "y": y, "duration": duration}
 
 
-@effect("camera_zoom", plugin_id=BUILTIN,
+@effect("camera_zoom", plugin_id=BUILTIN, args=CameraZoomArgs,
         description="Zoom the camera to a scale (1.0 = neutral) over a "
                     "duration. Queued for the scene; does not touch the display.",
         signature={"value": "dict {scale:float, duration:float?, easing:str?}"})
@@ -451,7 +472,7 @@ def handle_camera_zoom(state: "GameState", eff: "Effect") -> dict[str, Any]:
     return {"kind": eff.kind, "scale": scale, "duration": duration}
 
 
-@effect("screen_shake", plugin_id=BUILTIN,
+@effect("screen_shake", plugin_id=BUILTIN, args=ScreenShakeArgs,
         description="Shake the whole frame with a decaying jitter. Queued for "
                     "the scene; does not touch the display.",
         signature={"value": "dict {intensity:float?, duration:float?, "
@@ -466,7 +487,7 @@ def handle_screen_shake(state: "GameState", eff: "Effect") -> dict[str, Any]:
     return {"kind": eff.kind, "intensity": intensity, "duration": duration}
 
 
-@effect("screen_flash", plugin_id=BUILTIN,
+@effect("screen_flash", plugin_id=BUILTIN, args=ScreenFlashArgs,
         description="Flash a colour overlay that fades out over a duration. "
                     "Queued for the scene; does not touch the display.",
         signature={"value": "dict {color:[r,g,b]?, duration:float?, "
@@ -483,7 +504,7 @@ def handle_screen_flash(state: "GameState", eff: "Effect") -> dict[str, Any]:
     return {"kind": eff.kind, "color": color, "duration": duration}
 
 
-@effect("screen_tint", plugin_id=BUILTIN,
+@effect("screen_tint", plugin_id=BUILTIN, args=ScreenTintArgs,
         description="Apply a persistent colour tint over the frame; fades in "
                     "over duration, or instantly when duration<=0. Pass a "
                     "clear flag (or color null) to remove the active tint. "
@@ -518,7 +539,7 @@ def handle_screen_tint(state: "GameState", eff: "Effect") -> dict[str, Any]:
 # Names re-exported for tests that want to invoke handlers directly without
 # going through GameState.apply.
 __all__ = [
-    "handle_affection", "handle_stat", "handle_set_flag", "handle_increment_flag",
+    "handle_affection", "handle_stat", "handle_set_flag", "handle_set_flag_if_unset", "handle_increment_flag",
     "handle_advance_time", "handle_move_to", "handle_unlock_location",
     "handle_play_scene", "handle_end_scene", "handle_log_event",
     "handle_give_item", "handle_take_item", "handle_use_item",

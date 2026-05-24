@@ -33,6 +33,8 @@ from typing import Any, Callable, Iterator, Protocol, TYPE_CHECKING
 from .errors import DuplicateKindError, UnknownKindError, isolate
 
 if TYPE_CHECKING:
+    from pydantic import BaseModel
+
     from ..core.game_state import GameState
     from ..core.story_graph import Condition, Effect
     from .context import PluginContext
@@ -63,13 +65,20 @@ class InspectFieldProducer(Protocol):
 
 @dataclass(frozen=True)
 class EffectEntry:
-    """Bundle a kind handler with its metadata."""
+    """Bundle a kind handler with its metadata.
+
+    ``args_model`` (optional) is a pydantic model describing this kind's
+    (target/value/stat) arguments. It powers JSON-Schema export in the
+    capability manifest and build/lint-time validation; it never feeds the
+    handler nor the tolerant runtime dispatch.
+    """
 
     kind: str
     fn: Callable[["GameState", "Effect"], dict[str, Any]]
     plugin_id: str
     description: str = ""
     signature: dict[str, Any] = field(default_factory=dict)
+    args_model: type["BaseModel"] | None = None
 
 
 @dataclass(frozen=True)
@@ -79,6 +88,7 @@ class ConditionEntry:
     plugin_id: str
     description: str = ""
     signature: dict[str, Any] = field(default_factory=dict)
+    args_model: type["BaseModel"] | None = None
 
 
 @dataclass(frozen=True)
@@ -575,7 +585,8 @@ def current_plugin_id() -> str:
 def effect(kind: str,
            *, plugin_id: str | None = None,
            description: str = "",
-           signature: dict[str, Any] | None = None) -> Callable:
+           signature: dict[str, Any] | None = None,
+           args: type["BaseModel"] | None = None) -> Callable:
     """Decorator: register an effect handler.
 
     Usage in plugin code::
@@ -588,12 +599,19 @@ def effect(kind: str,
         def handle_reset(state, eff):
             state.meta["__step_counter__"] = 0
             return {"kind": "reset_step_counter", "ok": True}
+
+    ``args`` optionally binds a pydantic model describing the
+    (target/value/stat) arguments for this kind. It is used for JSON-Schema
+    export in the capability manifest and for build/lint-time validation
+    (``wgg validate``); it changes neither the ``(state, eff)`` handler
+    signature nor the tolerant runtime dispatch in ``GameState.apply``.
     """
     def deco(fn: Callable) -> Callable:
         pid = plugin_id or current_plugin_id()
         EFFECT_REGISTRY.register(EffectEntry(
             kind=kind, fn=fn, plugin_id=pid,
             description=description, signature=signature or {},
+            args_model=args,
         ))
         # Stamp the function so tests / introspection can recognise it.
         fn.__wgg_effect_kind__ = kind  # type: ignore[attr-defined]
@@ -605,16 +623,21 @@ def effect(kind: str,
 def condition(kind: str,
               *, plugin_id: str | None = None,
               description: str = "",
-              signature: dict[str, Any] | None = None) -> Callable:
+              signature: dict[str, Any] | None = None,
+              args: type["BaseModel"] | None = None) -> Callable:
     """Decorator: register a condition handler.
 
     Handler signature: ``(state: GameState, cond: Condition) -> bool``.
+
+    ``args`` optionally binds a pydantic arg model (see :func:`effect`); it is
+    used for schema export and build/lint-time validation only.
     """
     def deco(fn: Callable) -> Callable:
         pid = plugin_id or current_plugin_id()
         CONDITION_REGISTRY.register(ConditionEntry(
             kind=kind, fn=fn, plugin_id=pid,
             description=description, signature=signature or {},
+            args_model=args,
         ))
         fn.__wgg_condition_kind__ = kind  # type: ignore[attr-defined]
         fn.__wgg_plugin_id__ = pid        # type: ignore[attr-defined]

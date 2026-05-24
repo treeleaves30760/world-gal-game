@@ -366,6 +366,40 @@ _EFFECT_KINDS = _DynamicKindList(_known_effect_kinds)
 _CONDITION_KINDS = _DynamicKindList(_known_condition_kinds)
 
 
+def _validate_args_model(raw: dict, kind: str, entry: Any, *,
+                         file: str, path: str,
+                         category: str) -> list[ValidationIssue]:
+    """Validate a kind's (target/value/stat) triple against its typed arg model.
+
+    Emits **warning**-level issues only. The runtime ``apply``/``evaluate`` path
+    is deliberately tolerant (a defensive handler casts ``int(eff.value or N)``
+    and degrades to an error dict, never crashing), so a hard error here would
+    wrongly reject content the engine actually runs. We surface a hint instead.
+    """
+    from pydantic import ValidationError
+
+    args_model = getattr(entry, "args_model", None) if entry is not None else None
+    if args_model is None:
+        return []
+    # Feed only the meaningful subset; the arg model ignores extras (extra=
+    # 'ignore') and fills defaults for absent optional fields.
+    payload = {k: raw[k] for k in ("target", "value", "stat")
+               if isinstance(raw, dict) and k in raw}
+    issues: list[ValidationIssue] = []
+    try:
+        args_model.model_validate(payload)
+    except ValidationError as exc:
+        for err in exc.errors():
+            loc = ".".join(str(p) for p in err["loc"])
+            full_path = f"{path}.{loc}" if loc else path
+            issues.append(ValidationIssue(
+                severity="warning", file=file, path=full_path,
+                message=f"{category} '{kind}' 參數可能有誤：{err['msg']}",
+                hint=f"見 `wgg capabilities --schema` 中 {kind} 的參數 schema。",
+            ))
+    return issues
+
+
 def _validate_effect_raw(raw: dict, *, file: str, path: str) -> list[ValidationIssue]:
     """Validate a single raw effect dict.
 
@@ -422,6 +456,13 @@ def _validate_effect_raw(raw: dict, *, file: str, path: str) -> list[ValidationI
                     severity="error", file=file, path=full_path,
                     message=raw_msg,
                 ))
+
+    # 3) Typed arg-model check (warning-level) for known kinds.
+    if kind_val and kind_val in known:
+        from world_gal_game.plugins import EFFECT_REGISTRY
+        issues += _validate_args_model(
+            raw, kind_val, EFFECT_REGISTRY.get(kind_val),
+            file=file, path=path, category="effect")
     return issues
 
 
@@ -469,6 +510,13 @@ def _validate_condition_raw(raw: dict, *, file: str, path: str) -> list[Validati
                     severity="error", file=file, path=full_path,
                     message=raw_msg,
                 ))
+
+    # 3) Typed arg-model check (warning-level) for known kinds.
+    if kind_val and kind_val in known:
+        from world_gal_game.plugins import CONDITION_REGISTRY
+        issues += _validate_args_model(
+            raw, kind_val, CONDITION_REGISTRY.get(kind_val),
+            file=file, path=path, category="condition")
     return issues
 
 

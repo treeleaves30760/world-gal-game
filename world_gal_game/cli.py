@@ -132,15 +132,20 @@ def inspect_pack_main(argv: list[str]) -> int:
     p.add_argument("--capabilities", action="store_true",
                    help="instead of inspecting the pack, dump the engine's "
                         "capability manifest (effect/condition/hook kinds).")
+    p.add_argument("--schema", action="store_true",
+                   help="with --capabilities, emit only the JSON-Schema bundle "
+                        "(per-kind arg schemas + content models).")
     p.add_argument("--no-reachability", action="store_true",
                    help="skip the BFS reachability section.")
     args = p.parse_args(argv)
 
     if args.capabilities:
         from world_gal_game.dev.capability_manifest import (
-            build_manifest, manifest_json, summary_table,
+            manifest_json, schema_json, summary_table,
         )
-        if args.format == "json":
+        if args.schema:
+            print(schema_json())
+        elif args.format == "json":
             print(manifest_json())
         else:
             print(summary_table())
@@ -341,6 +346,10 @@ def capabilities_main(argv: list[str]) -> int:
         description="Dump the engine's capability manifest (effect/condition/"
                     "hook kinds + loaded plugins).")
     p.add_argument("--format", choices=["text", "json"], default="text")
+    p.add_argument("--schema", action="store_true",
+                   help="emit only the JSON-Schema bundle (a real JSON Schema "
+                        "per effect/condition kind + the pack content models) "
+                        "for offline pack validation by any agent")
     p.add_argument("--pack", default=None,
                    help="optionally load a pack first so its plugins show up")
     args = p.parse_args(argv)
@@ -356,9 +365,11 @@ def capabilities_main(argv: list[str]) -> int:
         manager = None
 
     from world_gal_game.dev.capability_manifest import (
-        manifest_json, summary_table,
+        manifest_json, schema_json, summary_table,
     )
-    if args.format == "json":
+    if args.schema:
+        print(schema_json())
+    elif args.format == "json":
         print(manifest_json(manager=manager))
     else:
         print(summary_table())

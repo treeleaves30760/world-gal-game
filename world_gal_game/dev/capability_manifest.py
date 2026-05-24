@@ -77,12 +77,22 @@ def _serialize_kind_registry(reg: Any) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for kind in reg.list_kinds():
         entry = reg.get(kind)
-        out.append({
+        row: dict[str, Any] = {
             "kind": entry.kind,
             "plugin_id": entry.plugin_id,
             "description": entry.description,
             "signature": dict(entry.signature),
-        })
+        }
+        # `args_schema` is the machine-checkable JSON Schema for this kind's
+        # (target/value/stat) arguments. Emitted alongside the freeform
+        # `signature` (which existing consumers still read), never replacing it.
+        args_model = getattr(entry, "args_model", None)
+        if args_model is not None:
+            try:
+                row["args_schema"] = args_model.model_json_schema()
+            except Exception:  # pragma: no cover - a model that can't reflect
+                pass
+        out.append(row)
     return out
 
 
@@ -293,6 +303,53 @@ def manifest_json(*, indent: int = 2,
         build_manifest(manager=manager),
         ensure_ascii=False, indent=indent,
     )
+
+
+def _kind_arg_schemas(reg: Any) -> dict[str, Any]:
+    """{kind: JSON Schema} for every kind in ``reg`` that declares an arg model."""
+    out: dict[str, Any] = {}
+    for kind in reg.list_kinds():
+        entry = reg.get(kind)
+        am = getattr(entry, "args_model", None)
+        if am is not None:
+            try:
+                out[kind] = am.model_json_schema()
+            except Exception:  # pragma: no cover
+                pass
+    return out
+
+
+def schema_document() -> dict[str, Any]:
+    """A focused JSON-Schema bundle for offline validation by any agent.
+
+    Where :func:`build_manifest` is a broad capability snapshot, this returns
+    only the machine-checkable schemas an authoring tool needs: a real JSON
+    Schema per effect/condition kind (its target/value/stat arguments) plus the
+    pack-authoring content models. Language-agnostic — any agent can load this
+    and validate a pack edit without running the engine.
+
+    Reads the global registries, so call after a pack's plugins are active to
+    include plugin-provided kinds.
+    """
+    from ..core.portrait_spec import PortraitSpec
+    from ..core.story_graph import Choice, Condition, Effect, Line, Scene
+
+    models = {
+        "Effect": Effect, "Condition": Condition, "Line": Line,
+        "Scene": Scene, "Choice": Choice, "PortraitSpec": PortraitSpec,
+    }
+    return {
+        "engine_version": engine_version,
+        "generated_at": _dt.datetime.now(_dt.UTC).isoformat(),
+        "effects": _kind_arg_schemas(EFFECT_REGISTRY),
+        "conditions": _kind_arg_schemas(CONDITION_REGISTRY),
+        "models": {n: m.model_json_schema() for n, m in models.items()},
+    }
+
+
+def schema_json(*, indent: int = 2) -> str:
+    """Pretty-printed JSON Schema bundle (see :func:`schema_document`)."""
+    return json.dumps(schema_document(), ensure_ascii=False, indent=indent)
 
 
 # ----------------------------------------------------------------------

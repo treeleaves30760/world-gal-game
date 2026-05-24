@@ -24,6 +24,15 @@ Everything else lives under the sub-packages: ``core``, ``dialogue``,
 ``npc``, ``ui``, ``scenes``.
 """
 
+import os as _os
+
+# pygame-ce prints a one-line support banner to STDOUT on import. That corrupts
+# the JSON our headless / CLI commands emit for machine (AI) consumption. This
+# package module is imported before any submodule (hence before any pygame
+# import), so setting the suppression flag here keeps every command's stdout
+# clean. ``setdefault`` lets a user re-enable the banner if they really want it.
+_os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "hide")
+
 __version__ = "0.1.0"
 
 
