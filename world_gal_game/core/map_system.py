@@ -16,6 +16,8 @@ from __future__ import annotations
 from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from .story_graph import Condition
+
 
 class NPCPresence(BaseModel):
     """An NPC's presence at a location, optionally time-gated."""
@@ -44,7 +46,14 @@ class NPCPresence(BaseModel):
 
 
 class SceneHook(BaseModel):
-    """A scene that may auto-trigger or be available at a location."""
+    """A scene that may auto-trigger or be available at a location.
+
+    ``requires_flags`` / ``forbids_flags`` are kept for the common, terse
+    flag-only case.  ``requires`` / ``forbids`` accept the same full
+    condition objects as scene lines and choices, so hooks can be gated by
+    affection, visited locations, quest state, or plugin-provided
+    conditions without inventing new hook-specific fields.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -53,6 +62,8 @@ class SceneHook(BaseModel):
     requires_flags: list[str] = Field(default_factory=list)
     forbids_flags: list[str] = Field(default_factory=list)
     requires_time: list[str] = Field(default_factory=list)
+    requires: list[Condition] = Field(default_factory=list)
+    forbids: list[Condition] = Field(default_factory=list)
     once: bool = True
 
 
@@ -266,22 +277,42 @@ class MapSystem(BaseModel):
             out.append((exit_obj, loc, available, reason))
         return out
 
-    def present_npcs(self, time_of_day: str, weekday: str,
-                     flags: dict[str, Any]) -> list[str]:
-        cur = self.current
-        if cur is None:
+    def npcs_present_at(self, loc: "Location | None", time_of_day: str,
+                        weekday: str, flags: dict[str, Any]) -> list[str]:
+        """NPC ids present at a *specific* location right now.
+
+        Generalizes :meth:`present_npcs` to any location (not just the
+        current one) so a travel UI can preview who is at a destination
+        before the player commits to going there.
+        """
+        if loc is None:
             return []
-        return [p.npc_id for p in cur.npcs
+        return [p.npc_id for p in loc.npcs
                 if p.is_present(time_of_day, weekday, flags)]
 
-    def available_scenes(self, *, time_of_day: str,
-                         flags: dict[str, Any],
-                         played_scenes: set[str]) -> list[SceneHook]:
-        cur = self.current
-        if cur is None:
+    def present_npcs(self, time_of_day: str, weekday: str,
+                     flags: dict[str, Any]) -> list[str]:
+        return self.npcs_present_at(self.current, time_of_day, weekday, flags)
+
+    def scenes_available_at(self, loc: "Location | None", *,
+                            time_of_day: str,
+                            flags: dict[str, Any],
+                            played_scenes: set[str],
+                            state: Any | None = None) -> list[SceneHook]:
+        """Scene hooks currently available at a *specific* location.
+
+        Generalizes :meth:`available_scenes` to any location so a travel UI
+        can flag "something new here" on a destination before the player
+        goes. ``state`` is optional for backwards compatibility; when
+        supplied, hook-level ``requires`` / ``forbids`` are evaluated through
+        ``GameState.evaluate``; when omitted, hooks that declare full
+        conditions are treated as locked rather than guessed from the
+        partial flag snapshot.
+        """
+        if loc is None:
             return []
         out: list[SceneHook] = []
-        for h in cur.scene_hooks:
+        for h in loc.scene_hooks:
             if h.once and h.scene_id in played_scenes:
                 continue
             if h.requires_time and time_of_day not in h.requires_time:
@@ -290,8 +321,24 @@ class MapSystem(BaseModel):
                 continue
             if any(flags.get(f) for f in h.forbids_flags):
                 continue
+            if h.requires or h.forbids:
+                if state is None:
+                    continue
+                if not state.evaluate_all(h.requires):
+                    continue
+                if not state.evaluate_none(h.forbids):
+                    continue
             out.append(h)
         return out
+
+    def available_scenes(self, *, time_of_day: str,
+                         flags: dict[str, Any],
+                         played_scenes: set[str],
+                         state: Any | None = None) -> list[SceneHook]:
+        """Return scene hooks currently available at the active location."""
+        return self.scenes_available_at(
+            self.current, time_of_day=time_of_day, flags=flags,
+            played_scenes=played_scenes, state=state)
 
     def locations_by_region(self) -> dict[str | None, list[Location]]:
         """Group all locations by their region id.

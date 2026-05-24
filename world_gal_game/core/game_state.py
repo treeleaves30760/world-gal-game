@@ -6,8 +6,8 @@ save/load, and a single place to evaluate Conditions and apply Effects.
 Effect/Condition dispatch is plugin-driven. :meth:`apply` and
 :meth:`evaluate` look up the kind in
 :data:`world_gal_game.plugins.EFFECT_REGISTRY` /
-:data:`CONDITION_REGISTRY` and call the registered handler. The 39
-builtin kinds the engine has always shipped are registered by
+:data:`CONDITION_REGISTRY` and call the registered handler. The 40
+builtin kinds the engine ships are registered by
 :mod:`world_gal_game.plugins.builtin_effects` /
 :mod:`builtin_conditions`; third-party plugins extend the same registry.
 

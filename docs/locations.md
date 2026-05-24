@@ -138,7 +138,22 @@ they take time:
 | `requires_flags` | list[str] | `[]` | Available only when all flags truthy |
 | `forbids_flags` | list[str] | `[]` | Hidden when any flag truthy |
 | `requires_time` | list[str] | `[]` | Available only during listed time slots |
+| `requires` | list[Condition] | `[]` | Full condition gates; same syntax as scene lines / choices (`affection_gte`, `visited`, plugin conditions, etc.) |
+| `forbids` | list[Condition] | `[]` | Hide/block when any full condition is true |
 | `once` | bool | `true` | Remove after first play |
+
+Use `requires_flags` for simple flag checks; use `requires` when a hook needs
+non-flag state. Example:
+
+```yaml
+scene_hooks:
+  - scene_id: heroine_lunch
+    trigger: examine
+    requires_flags: [met_heroine]
+    requires:
+      - {kind: affection_gte, target: heroine, value: 20}
+      - {kind: time_in, value: [noon]}
+```
 
 ## Map overlay behaviour
 

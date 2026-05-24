@@ -3,7 +3,7 @@ import pytest
 
 from world_gal_game.core.game_state import GameState
 from world_gal_game.core.story_graph import Condition, Effect
-from world_gal_game.core.map_system import Location
+from world_gal_game.core.map_system import Location, SceneHook
 
 
 def _state_with_two_locs() -> GameState:
@@ -58,6 +58,68 @@ def test_apply_advance_time():
     assert s.time.time_of_day.value == "morning"
     s.apply(Effect(kind="advance_time", value=1))
     assert s.time.time_of_day.value == "noon"
+
+
+def test_set_flag_if_unset_keeps_first_truthy_value():
+    s = GameState()
+    out1 = s.apply(Effect(kind="set_flag_if_unset", target="first_met", value="qingyi"))
+    out2 = s.apply(Effect(kind="set_flag_if_unset", target="first_met", value="yuening"))
+    assert out1["set"] is True
+    assert out2["set"] is False
+    assert s.events.get_flag("first_met") == "qingyi"
+
+
+def test_scene_hooks_support_full_conditions_when_state_is_supplied():
+    s = GameState()
+    s.map.add_location(Location(
+        id="cafeteria",
+        name="學餐",
+        scene_hooks=[
+            SceneHook(
+                scene_id="low_affection",
+                requires=[Condition(kind="affection_lt", target="alice", value=10)],
+            ),
+            SceneHook(
+                scene_id="friend_lunch",
+                requires=[Condition(kind="affection_gte", target="alice", value=20)],
+            ),
+        ],
+    ))
+    s.map.move_to("cafeteria")
+    s.affection.register("alice")
+    s.affection.adjust("alice", 25)
+
+    hooks = s.map.available_scenes(
+        time_of_day=s.time.time_of_day.value,
+        flags=s.events.flags,
+        played_scenes=s.story.played,
+        state=s,
+    )
+    assert [h.scene_id for h in hooks] == ["friend_lunch"]
+
+
+def test_scene_hooks_with_full_conditions_are_locked_without_state():
+    s = GameState()
+    s.map.add_location(Location(
+        id="cafeteria",
+        name="學餐",
+        scene_hooks=[
+            SceneHook(
+                scene_id="friend_lunch",
+                requires=[Condition(kind="affection_gte", target="alice", value=20)],
+            ),
+        ],
+    ))
+    s.map.move_to("cafeteria")
+    s.affection.register("alice")
+    s.affection.adjust("alice", 25)
+
+    hooks = s.map.available_scenes(
+        time_of_day=s.time.time_of_day.value,
+        flags=s.events.flags,
+        played_scenes=s.story.played,
+    )
+    assert hooks == []
 
 
 # ----------------------------------------------------------------------

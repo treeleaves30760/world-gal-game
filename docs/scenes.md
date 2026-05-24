@@ -121,11 +121,17 @@ choices:
       requires_flags: [quest_started]
       forbids_flags: [obj_park_done]
       requires_time: [afternoon, evening]
+      # Full condition gates are also supported when flags/time are not enough:
+      requires:
+        - {kind: affection_gte, target: someone, value: 25}
+      forbids:
+        - {kind: scene_played, target: route_lockout}
       once: true
 ```
 
 - `trigger: enter` 或 `auto` → 玩家踏進地點時自動播
 - `trigger: examine` → 探索畫面出現一顆「場景名」按鈕讓玩家自己點
+- `requires_flags` / `forbids_flags` 是簡寫；`requires` / `forbids` 可使用完整 condition（好感度、任務、物品、plugin 條件等）。
 
 ## 全部 effect / condition kind
 

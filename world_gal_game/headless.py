@@ -124,6 +124,7 @@ class HeadlessSession:
                     time_of_day=self.state.time.time_of_day.value,
                     flags=self.state.events.flags,
                     played_scenes=self.state.story.played,
+                    state=self.state,
                 )
             ],
             "scenes_played": sorted(self.state.story.played),
@@ -157,6 +158,7 @@ class HeadlessSession:
             time_of_day=self.state.time.time_of_day.value,
             flags=flags,
             played_scenes=self.state.story.played,
+            state=self.state,
         ):
             if hook.trigger in ("enter", "auto"):
                 pres = self.dialogue.start_scene(hook.scene_id)

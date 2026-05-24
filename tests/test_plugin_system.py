@@ -57,12 +57,12 @@ def state():
 # Builtin coverage
 
 
-def test_all_39_builtin_kinds_registered():
-    """The 39 builtin kinds (23 effects + 16 conditions) are present."""
-    assert len(EFFECT_REGISTRY) >= 23
+def test_builtin_kinds_registered():
+    """The builtin effect / condition kinds are present."""
+    assert len(EFFECT_REGISTRY) >= 24
     assert len(CONDITION_REGISTRY) >= 16
     expected_effects = {
-        "affection", "stat", "set_flag", "increment_flag", "advance_time",
+        "affection", "stat", "set_flag", "set_flag_if_unset", "increment_flag", "advance_time",
         "move_to", "unlock_location", "play_scene", "end_scene", "log_event",
         "give_item", "take_item", "use_item", "gain_resource",
         "spend_resource", "set_resource", "buy_item", "sell_item", "gift",

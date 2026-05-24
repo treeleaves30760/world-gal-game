@@ -70,7 +70,13 @@ AI 協作者進場速查 [../CLAUDE.md](../CLAUDE.md)。
 |---|---|
 | [plugins.md](plugins.md) | 用 `@effect` / `@condition` / `@hook` / `@scene` / `@widget` / `@brain` / `@dialogue_op` 加新功能 |
 
-#### 4c. 引擎內部 / 發布
+#### 4c. 美術素材生成
+
+| 文件 | 用途 |
+|---|---|
+| [art-transparency.md](art-transparency.md) | 生成透明立繪 / UI、用 `cutout.py` 去背與**修白邊**（前景顏色去汙染） |
+
+#### 4d. 引擎內部 / 發布
 
 | 文件 | 用途 |
 |---|---|

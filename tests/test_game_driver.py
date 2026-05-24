@@ -66,9 +66,11 @@ def test_driver_typewriter_skip_via_space(driver):
 
 
 def test_driver_find_widget_by_label(driver):
-    """find_widget should locate exit buttons after entering exploration."""
+    """find_widget should locate destination cards inside the picker."""
     driver.new_game()
     driver.skip_dialogue(max_frames=800)
+    driver.advance_frames(5)
+    driver.press_key(pygame.K_m)        # open the destination picker
     driver.advance_frames(5)
     w = driver.find_widget(label="鎮中廣場")
     assert w is not None
@@ -76,16 +78,13 @@ def test_driver_find_widget_by_label(driver):
     assert w["has_on_click"] is True
 
 
-def test_driver_click_label_moves_location(driver):
-    """Clicking '鎮中廣場' should change current location."""
+def test_driver_travel_to_moves_location(driver):
+    """Travelling to '鎮中廣場' through the picker should change location."""
     driver.new_game()
     driver.skip_dialogue(max_frames=800)
     driver.advance_frames(5)
     before = driver.snapshot()["location"]
-    w = driver.find_widget(label="鎮中廣場")
-    assert w is not None
-    driver.click(tuple(w["rect_center"]))
-    driver.advance_frames(20)
+    assert driver.travel_to("鎮中廣場")
     after = driver.snapshot()["location"]
     assert after != before
     assert after == "town_square"
@@ -105,9 +104,9 @@ def test_driver_dump_snapshot_writes_json(driver, tmp_path):
 
 
 def test_driver_consecutive_moves_no_auto_hook(driver):
-    """Regression: moving into a location with no auto/enter hook used to
-    leave ExplorationScene's exit buttons pointing at the previous
-    location, silently swallowing every subsequent move click."""
+    """Consecutive moves through hook-free locations must each land, with the
+    picker reflecting the *current* location's exits every time (regression
+    for stale movement targets after a no-hook move)."""
     driver.new_game()
     driver.skip_dialogue(max_frames=800)
     driver.advance_frames(5)
@@ -116,26 +115,17 @@ def test_driver_consecutive_moves_no_auto_hook(driver):
     driver.app.state.events.set_flag("met_heroine_1", True)
 
     # starting_room -> town_square (no auto hook will fire now).
-    w = driver.find_widget(label="鎮中廣場")
-    assert w is not None, "expected town_square exit button from starting_room"
-    driver.click(tuple(w["rect_center"]))
-    driver.advance_frames(8)
+    assert driver.travel_to("鎮中廣場"), \
+        "expected town_square as a destination from starting_room"
     assert driver.snapshot()["location"] == "town_square"
 
     # town_square -> park (no scene hook at all on park).
-    w = driver.find_widget(label="湖畔公園")
-    assert w is not None
-    driver.click(tuple(w["rect_center"]))
-    driver.advance_frames(8)
+    assert driver.travel_to("湖畔公園")
     assert driver.snapshot()["location"] == "park"
 
-    # park -> town_square. Pre-fix, the exit buttons here were still
-    # town_square's, so "→ 鎮中廣場" wouldn't even be present.
-    w = driver.find_widget(label="鎮中廣場")
-    assert w is not None, \
-        "after a no-hook move, exit buttons must refresh to the new location"
-    driver.click(tuple(w["rect_center"]))
-    driver.advance_frames(8)
+    # park -> town_square. The picker must refresh to park's exits.
+    assert driver.travel_to("鎮中廣場"), \
+        "after a no-hook move, the picker must refresh to the new location"
     assert driver.snapshot()["location"] == "town_square"
 
 
@@ -171,14 +161,8 @@ def test_advance_time_fires_eligible_enter_hook(driver):
     ))
     # Walk in during a phase that does NOT satisfy requires_time.
     driver.app.state.time.set_phase(TimeOfDay.MORNING)
-    w = driver.find_widget(label="鎮中廣場")
-    assert w is not None
-    driver.click(tuple(w["rect_center"]))
-    driver.advance_frames(8)
-    w = driver.find_widget(label="湖畔公園")
-    assert w is not None
-    driver.click(tuple(w["rect_center"]))
-    driver.advance_frames(8)
+    assert driver.travel_to("鎮中廣場")
+    assert driver.travel_to("湖畔公園")
     assert driver.snapshot()["location"] == "park"
     assert driver.snapshot()["scene_top"] == "ExplorationScene", \
         "morning entry must not fire the evening-only hook"
@@ -223,12 +207,8 @@ def test_dialogue_end_fires_eligible_enter_hook(driver):
     ))
     driver.app.state.events.set_flag("quest_started", True)
 
-    w = driver.find_widget(label="鎮中廣場")
-    driver.click(tuple(w["rect_center"]))
-    driver.advance_frames(8)
-    w = driver.find_widget(label="湖畔公園")
-    driver.click(tuple(w["rect_center"]))
-    driver.advance_frames(8)
+    assert driver.travel_to("鎮中廣場")
+    assert driver.travel_to("湖畔公園")
     assert driver.snapshot()["location"] == "park"
     assert driver.snapshot()["scene_top"] == "ExplorationScene"
 
@@ -245,6 +225,52 @@ def test_dialogue_end_fires_eligible_enter_hook(driver):
     assert driver.snapshot()["scene_top"] == "DialogueScene"
 
 
+def test_picker_filter_persists_across_reopen(driver):
+    """A filter toggled in the picker should still be on after closing and
+    re-opening it (persisted via state.meta)."""
+    driver.new_game()
+    driver.skip_dialogue(max_frames=800)
+    driver.advance_frames(5)
+    driver.app.state.events.set_flag("met_heroine_1", True)
+    driver.press_key(pygame.K_m)        # open picker
+    driver.advance_frames(5)
+    assert type(driver.app.manager.current).__name__ == "DestinationPickerScene"
+    w = driver.find_widget(label="只看現在可去")
+    assert w is not None
+    driver.click(tuple(w["rect_center"]))
+    driver.advance_frames(3)
+    assert driver.app.manager.current.describe()["filters"]["reachable"] is True
+    # Close, then reopen — the filter must still be on.
+    driver.press_key(pygame.K_ESCAPE)
+    driver.advance_frames(3)
+    driver.press_key(pygame.K_m)
+    driver.advance_frames(5)
+    assert driver.app.manager.current.describe()["filters"]["reachable"] is True
+
+
+def test_picker_region_collapse_hides_cards(driver):
+    """Clicking a region header collapses it: its cards disappear and the
+    region shows in describe()['collapsed_regions']."""
+    driver.new_game()
+    driver.skip_dialogue(max_frames=800)
+    driver.advance_frames(5)
+    driver.app.state.events.set_flag("met_heroine_1", True)
+    driver.app._move_to("town_square")   # 3 exits, one 小鎮 region header
+    driver.advance_frames(6)
+    driver.press_key(pygame.K_m)
+    driver.advance_frames(5)
+    pk = driver.app.manager.current
+    assert type(pk).__name__ == "DestinationPickerScene"
+    assert driver.find_widget(label="湖畔公園") is not None
+    # Click the region header band to collapse it.
+    cy, _key, _label = pk._region_headers[0]
+    sy = pk._viewport.y + cy - pk._scroll
+    driver.click((pk._viewport.x + 40, sy + 8))
+    driver.advance_frames(3)
+    assert "town" in driver.app.manager.current.describe()["collapsed_regions"]
+    assert driver.find_widget(label="湖畔公園") is None
+
+
 def test_driver_cli_script(tmp_path):
     """End-to-end CLI: feed a JSON script, verify report.json is written."""
     from world_gal_game.dev.driver import _cli_main
@@ -254,7 +280,7 @@ def test_driver_cli_script(tmp_path):
         "actions": [
             {"do": "new_game"},
             {"do": "skip_dialogue", "max_frames": 800},
-            {"do": "click_label", "label": "鎮中廣場", "after": 20},
+            {"do": "travel_to", "label": "鎮中廣場", "after": 20},
             {"do": "snapshot", "path": "snap.json"},
         ],
     }))

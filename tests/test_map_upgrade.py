@@ -388,3 +388,64 @@ def test_move_to_zero_cost_does_not_advance_time():
         "zero-cost local move should not advance the clock"
     )
     d.quit()
+
+
+# ---------- per-location preview helpers ---------------------------------
+# npcs_present_at / scenes_available_at generalize present_npcs /
+# available_scenes to any location so the destination picker can preview a
+# *target* (who's there, what's new) before the player commits to going.
+
+
+class TestPerLocationPreviewHelpers:
+    def _build(self) -> MapSystem:
+        ms = MapSystem()
+        ms.add_location(Location(
+            id="hub", name="Hub",
+            exits=[Exit(target="cafe"), Exit(target="dorm")],
+        ))
+        ms.add_location(Location(
+            id="cafe", name="Cafe",
+            npcs=[NPCPresence(npc_id="barista", times=["morning", "noon"])],
+            scene_hooks=[SceneHook(scene_id="cafe_chat", trigger="examine")],
+        ))
+        ms.add_location(Location(id="dorm", name="Dorm"))
+        ms.move_to("hub")    # current != cafe, so previews target elsewhere
+        return ms
+
+    def test_npcs_present_at_targets_arbitrary_location(self):
+        ms = self._build()
+        cafe = ms.get("cafe")
+        assert ms.npcs_present_at(cafe, "morning", "mon", {}) == ["barista"]
+        assert ms.npcs_present_at(cafe, "night", "mon", {}) == []
+
+    def test_npcs_present_at_none_location_is_empty(self):
+        ms = self._build()
+        assert ms.npcs_present_at(None, "morning", "mon", {}) == []
+
+    def test_present_npcs_still_delegates_to_current(self):
+        ms = self._build()
+        ms.move_to("cafe")
+        assert ms.present_npcs("morning", "mon", {}) == ["barista"]
+        assert ms.present_npcs("night", "mon", {}) == []
+
+    def test_scenes_available_at_targets_arbitrary_location(self):
+        ms = self._build()
+        cafe = ms.get("cafe")
+        hooks = ms.scenes_available_at(
+            cafe, time_of_day="noon", flags={}, played_scenes=set())
+        assert [h.scene_id for h in hooks] == ["cafe_chat"]
+
+    def test_scenes_available_at_respects_played_once(self):
+        ms = self._build()
+        cafe = ms.get("cafe")
+        hooks = ms.scenes_available_at(
+            cafe, time_of_day="noon", flags={},
+            played_scenes={"cafe_chat"})
+        assert hooks == []   # once=True (default) + already played
+
+    def test_available_scenes_still_delegates_to_current(self):
+        ms = self._build()
+        ms.move_to("cafe")
+        hooks = ms.available_scenes(
+            time_of_day="noon", flags={}, played_scenes=set())
+        assert [h.scene_id for h in hooks] == ["cafe_chat"]

@@ -40,7 +40,13 @@ class ExplorationScene(Scene):
         self.on_move_to: Callable[[str], None] | None = None
         self.on_advance_time: Callable[[], None] | None = None
         self._info_panel: Panel | None = None
-        # list of (button, description_str | None, is_available)
+        # Single "外出" call-to-action that opens the destination picker.
+        self._travel_btn: Button | None = None
+        self._discovery_text: str | None = None
+        self._discovery_pos: tuple[int, int] = (0, 0)
+        # Retained (always empty now) so any introspection that scans
+        # `_exit_buttons` still finds an iterable. The flat exit grid moved
+        # into the card-based DestinationPickerScene.
         self._exit_buttons: list[tuple[Button, str | None, bool]] = []
         # State signature the widgets were last built for. The exit buttons,
         # action buttons, and NPC cards all depend on (current location,
@@ -123,6 +129,7 @@ class ExplorationScene(Scene):
             time_of_day=time_of_day,
             flags=flags,
             played_scenes=self.ctx.state.story.played,
+            state=self.ctx.state,
         )
         actions: list[tuple[str, Callable[[], None]]] = []
         if self.on_advance_time:
@@ -149,12 +156,12 @@ class ExplorationScene(Scene):
         cur_loc = self.ctx.state.map.current
         reserve_npc_slot = bool(cur_loc and cur_loc.npcs)
 
-        # ---- Adaptive layout ------------------------------------------------
-        # Old design: 3 fixed 200px-wide columns in the right half of a
-        # 220px panel. That overflowed once any location had more than 9
-        # exits (e.g. front_lawn now has 10). New design uses the full
-        # panel width with column count and panel height that adapt to
-        # actual content count.
+        # ---- Layout ---------------------------------------------------------
+        # The flat multi-column exit grid was replaced by a single "外出"
+        # call-to-action that opens the card-based destination picker, so
+        # the player chooses where to go from a richer view (who's there,
+        # what's new, travel cost). Sections, bottom-up: NPC cards, the
+        # travel CTA, the action buttons, then the name/description strip.
 
         panel_w = sw - 64
         PAD_X = 28
@@ -163,33 +170,51 @@ class ExplorationScene(Scene):
         BTN_GAP_X = 8
         BTN_GAP_Y = 8
         SECTION_GAP = 12          # vertical gap between sections
-        SECTION_LABEL_H = 22
-        NAME_H = 36
+        # Scale-aware heights: FontRegistry multiplies point size by
+        # screen_h/720, so the title / description / label fonts grow with
+        # resolution. Reserve their real rendered heights instead of fixed
+        # constants — otherwise the description overlaps the title at 1080p+.
+        fonts = self.ctx.fonts
+        SECTION_LABEL_H = fonts.get(14, bold=True).get_height() + 6
+        NAME_H = fonts.get(self.ctx.config.font_size_header,
+                           bold=True).get_height() + 2
         NAME_DESC_GAP = 8
-        DESC_LINE_H = 22
+        DESC_LINE_H = fonts.get(15).get_height() + 4
         DESC_LINES = 2
         NPC_CARD_W, NPC_CARD_H = 180, 56
+        TRAVEL_BTN_H = 48
 
-        n_exits = len(all_exits_info)
         n_actions = len(actions)
-        # Column count scales with exit count. Stay in [3, 6] so labels
-        # don't get squashed but we don't waste rows either.
-        if n_exits >= 11:
-            cols = 6
-        elif n_exits >= 7:
-            cols = 5
-        elif n_exits >= 4:
+        # Action buttons keep the adaptive column behaviour.
+        if n_actions >= 7:
             cols = 4
+        elif n_actions >= 4:
+            cols = 3
         else:
-            cols = max(2, max(n_exits, n_actions))
+            cols = max(2, n_actions) if n_actions else 2
 
         btn_area_w = panel_w - PAD_X * 2
         btn_w = max(120,
                     (btn_area_w - BTN_GAP_X * (cols - 1)) // cols)
 
         action_rows = (n_actions + cols - 1) // cols if n_actions else 0
-        exit_rows = (n_exits + cols - 1) // cols if n_exits else 0
         npc_rows = 1 if reserve_npc_slot else 0
+
+        # Count reachable destinations worth a look (someone present or a
+        # fresh scene hook) so the CTA can hint "● 有新發現".
+        discovery_count = 0
+        wk = self.ctx.state.time.day_of_week.value
+        for _ex, exit_loc, available, _reason in all_exits_info:
+            if not available:
+                continue
+            if self.ctx.state.map.npcs_present_at(
+                    exit_loc, time_of_day, wk, flags):
+                discovery_count += 1
+            elif self.ctx.state.map.scenes_available_at(
+                    exit_loc, time_of_day=time_of_day, flags=flags,
+                    played_scenes=self.ctx.state.story.played,
+                    state=self.ctx.state):
+                discovery_count += 1
 
         # Total height = name + gap + desc + sections + npc + paddings.
         needed_h = PAD_Y + NAME_H + NAME_DESC_GAP \
@@ -198,9 +223,8 @@ class ExplorationScene(Scene):
             needed_h += SECTION_LABEL_H + action_rows * BTN_H \
                         + max(0, action_rows - 1) * BTN_GAP_Y \
                         + SECTION_GAP
-        if exit_rows:
-            needed_h += SECTION_LABEL_H + exit_rows * BTN_H \
-                        + max(0, exit_rows - 1) * BTN_GAP_Y
+        # Travel section (label + one CTA button) is always present.
+        needed_h += SECTION_LABEL_H + TRAVEL_BTN_H
         if npc_rows:
             needed_h += SECTION_GAP + NPC_CARD_H
         needed_h += PAD_Y
@@ -215,19 +239,19 @@ class ExplorationScene(Scene):
 
         # ---- Place widgets (BOTTOM-ANCHORED) --------------------------------
         # Anchor strategy: the bottom of every interactive widget is a
-        # stable function of screen height — exit row sits at a fixed
-        # screen y, action row directly above it, NPC cards at the very
-        # bottom of the panel. The name/description strip grows UP into
-        # the empty space above. This keeps button click targets stable
-        # across rebuilds (NPC appearance, time changes, etc.) so the
-        # driver-style "find widget then click" pattern doesn't get
-        # tripped by a panel resize between the find and the click.
+        # stable function of screen height — the travel CTA sits at a fixed
+        # screen y, action rows directly above it, NPC cards at the very
+        # bottom of the panel. The name/description strip grows UP into the
+        # empty space above. This keeps click targets stable across rebuilds
+        # (NPC appearance, time changes, etc.).
 
         self._buttons = []
+        # Kept (empty) so the dev driver / older introspection that scans
+        # `_exit_buttons` finds an iterable rather than a missing attribute.
         self._exit_buttons = []
         x_start = self._info_rect.x + PAD_X
 
-        # Bottom up: paddings -> NPCs -> exits -> actions -> header.
+        # Bottom up: paddings -> NPCs -> travel CTA -> actions -> header.
         cursor_bottom = self._info_rect.bottom - PAD_Y
         if reserve_npc_slot:
             cursor_bottom -= NPC_CARD_H
@@ -236,37 +260,23 @@ class ExplorationScene(Scene):
         else:
             self._npc_cards_y = None
 
-        if exit_rows:
-            exits_block_h = exit_rows * BTN_H \
-                            + max(0, exit_rows - 1) * BTN_GAP_Y
-            exits_top_y = cursor_bottom - exits_block_h
-            self._exit_label_y = exits_top_y - SECTION_LABEL_H + 2
-            for i, (exit_obj, exit_loc, available, reason) in \
-                    enumerate(all_exits_info):
-                row = i // cols
-                col = i % cols
-                r = pygame.Rect(x_start + col * (btn_w + BTN_GAP_X),
-                                exits_top_y + row * (BTN_H + BTN_GAP_Y),
-                                btn_w, BTN_H)
-                display_label = exit_obj.label or f"→ {exit_loc.name}"
-                if available:
-                    btn = Button(r, display_label, fonts=self.ctx.fonts,
-                                 theme=self.ctx.theme, font_size=15,
-                                 on_click=(lambda lid=exit_loc.id:
-                                            self._move(lid)))
-                else:
-                    hint_reason = reason or "目前無法前往"
-                    btn = Button(r, display_label, fonts=self.ctx.fonts,
-                                 theme=self.ctx.theme, font_size=15,
-                                 style="ghost",
-                                 on_click=(lambda label=exit_loc.name,
-                                                  why=hint_reason:
-                                           self._notify_blocked(label, why)))
-                desc = exit_obj.description or reason
-                self._exit_buttons.append((btn, desc, available))
-            cursor_bottom = exits_top_y - SECTION_LABEL_H - SECTION_GAP
-        else:
-            self._exit_label_y = None
+        # Travel CTA: one primary button that opens the destination picker.
+        travel_top_y = cursor_bottom - TRAVEL_BTN_H
+        self._travel_label_y = travel_top_y - SECTION_LABEL_H + 2
+        travel_w = min(420, btn_area_w)
+        n_dest = len(all_exits_info)
+        cta_label = f"外出（{n_dest} 個地點）" if n_dest else "外出"
+        self._travel_btn = Button(
+            pygame.Rect(x_start, travel_top_y, travel_w, TRAVEL_BTN_H),
+            cta_label, fonts=self.ctx.fonts, theme=self.ctx.theme,
+            font_size=17, style="primary",
+            on_click=(self.on_map if self.on_map else None),
+            enabled=bool(self.on_map) and n_dest > 0,
+        )
+        self._discovery_text = "● 有新發現" if discovery_count > 0 else None
+        self._discovery_pos = (x_start + travel_w + 16,
+                               travel_top_y + (TRAVEL_BTN_H - 18) // 2)
+        cursor_bottom = travel_top_y - SECTION_LABEL_H - SECTION_GAP
 
         if action_rows:
             actions_block_h = action_rows * BTN_H \
@@ -294,7 +304,7 @@ class ExplorationScene(Scene):
             "desc_lines":  DESC_LINES,
             "desc_line_h": DESC_LINE_H,
             "action_label_y": self._action_label_y,
-            "exit_label_y":   self._exit_label_y,
+            "travel_label_y": self._travel_label_y,
         }
 
         self._npc_cards = []
@@ -340,8 +350,8 @@ class ExplorationScene(Scene):
             b.update(dt, inp)
         for b in self._buttons:
             b.update(dt, inp)
-        for btn, _desc, _avail in self._exit_buttons:
-            btn.update(dt, inp)
+        if self._travel_btn is not None:
+            self._travel_btn.update(dt, inp)
         # NPC card clicks
         if inp.mouse_clicked:
             for rect, nid in self._npc_cards:
@@ -471,28 +481,26 @@ class ExplorationScene(Scene):
                                fonts=self.ctx.fonts, size=15,
                                color=self.ctx.theme.text_mute)
             desc.draw(surface)
-        # Section labels — "動作" above the action row, "前往" above exits.
+        # Section labels — "動作" above the action row, "移動" above the CTA.
         section_color = self.ctx.theme.text_mute
         if self._layout.get("action_label_y") is not None and self._buttons:
             lbl = self.ctx.fonts.render("動作", 14, section_color, bold=True)
             surface.blit(lbl, (self._info_rect.x + 28,
                                self._layout["action_label_y"]))
-        if self._layout.get("exit_label_y") is not None \
-                and self._exit_buttons:
-            lbl = self.ctx.fonts.render("前往", 14, section_color, bold=True)
+        if self._layout.get("travel_label_y") is not None:
+            lbl = self.ctx.fonts.render("移動", 14, section_color, bold=True)
             surface.blit(lbl, (self._info_rect.x + 28,
-                               self._layout["exit_label_y"]))
+                               self._layout["travel_label_y"]))
         # action buttons
         for b in self._buttons:
             b.draw(surface)
-        # exit buttons with optional description hint underneath
-        for btn, desc, available in self._exit_buttons:
-            btn.draw(surface)
-            if desc:
-                hint = self.ctx.fonts.render(desc, 11,
-                                             self.ctx.theme.text_mute)
-                surface.blit(hint, (btn.rect.x + 4,
-                                    btn.rect.bottom + 1))
+        # travel CTA + "new here" hint
+        if self._travel_btn is not None:
+            self._travel_btn.draw(surface)
+            if self._discovery_text:
+                hint = self.ctx.fonts.render(self._discovery_text, 16,
+                                             self.ctx.theme.accent)
+                surface.blit(hint, self._discovery_pos)
         # NPC cards
         for rect, nid in self._npc_cards:
             npc = self.ctx.npcs.get(nid)

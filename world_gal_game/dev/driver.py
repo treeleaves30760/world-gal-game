@@ -171,6 +171,47 @@ class GameDriver:
             self.press_key(pygame.K_SPACE)
             self.advance_frames(4)
 
+    def travel_to(self, label: str, *, settle: int = 12) -> bool:
+        """Travel to a destination through the card-based picker.
+
+        Mirrors the human flow: open the destination picker (M) from
+        exploration, click the card whose location name matches ``label``
+        (substring), then confirm 前往 in the preview. Returns True when the
+        move was issued (False if the picker/card/前往 button wasn't found,
+        e.g. the destination is locked so 前往 is disabled).
+        """
+        from ..scenes.exploration import ExplorationScene
+        from ..scenes.destination_picker import DestinationPickerScene
+        if isinstance(self.app.manager.current, ExplorationScene):
+            self.press_key(pygame.K_m)
+            self.advance_frames(4)
+        if not isinstance(self.app.manager.current, DestinationPickerScene):
+            return False
+        card = self.find_widget(label=label)
+        if card is None:
+            return False
+        # Destination card rects in the dev catalogue are content-space and may
+        # not correspond to the current scrolled screen position.  Select by
+        # data when possible; fall back to a click for non-card widgets.
+        if card.get("path", "").startswith("_cards"):
+            try:
+                card_index = int(card["path"].split("[")[1].split("]")[0])
+                dest, _button = self.app.manager.current._cards[card_index]
+                self.app.manager.current._open_preview(dest.loc.id)
+                self.advance_frames(1)
+            except Exception:
+                self.click(tuple(card["rect_center"]))
+                self.advance_frames(3)
+        else:
+            self.click(tuple(card["rect_center"]))
+            self.advance_frames(3)
+        go = self.find_widget(label="前往")
+        if go is None:
+            return False
+        self.click(tuple(go["rect_center"]))
+        self.advance_frames(settle)
+        return True
+
     # ---------- inspection ---------------------------------------------
 
     def snapshot(self) -> dict[str, Any]:
@@ -280,19 +321,85 @@ class GameDriver:
                     path: str | None = None,
                     enabled_only: bool = True,
                     visible_only: bool = True) -> dict | None:
-        """Find a button matching label substring / path substring."""
-        for w in self._widget_catalogue():
-            if enabled_only and not w.get("enabled", True):
-                continue
-            if visible_only and not w.get("visible", True):
-                continue
-            if label is not None and (
-                w.get("label") is None or label not in w["label"]
-            ):
-                continue
-            if path is not None and path not in w["path"]:
-                continue
-            return w
+        """Find a button matching label substring / path substring.
+
+        The exploration UI may hide local exits behind a card-based destination
+        picker.  For headless tests/debug scripts that ask for a visible
+        destination by label (for example ``校門口`` while standing in the
+        dorm), transparently open the picker and search once more.  Direct
+        action buttons still match on the first pass and are unchanged.
+        """
+        def label_matches(w_label: str | None) -> bool:
+            if label is None:
+                return True
+            if w_label is None:
+                return False
+            if label in w_label:
+                return True
+            # Destination cards show location names, while old exit buttons may
+            # have used author-provided exit labels.  Accept either form so
+            # legacy tests/scripts remain stable after the destination-picker UI.
+            st = self.app.state
+            for ex in st.map.current.exits if st.map.current else []:
+                target = ex.target
+                loc = st.map.locations.get(target)
+                if ex.label and label in ex.label and loc and loc.name == w_label:
+                    return True
+            return False
+
+        def search() -> dict | None:
+            for w in self._widget_catalogue():
+                if enabled_only and not w.get("enabled", True):
+                    continue
+                if visible_only and not w.get("visible", True):
+                    continue
+                if not label_matches(w.get("label")):
+                    continue
+                if path is not None and path not in w["path"]:
+                    continue
+                return w
+            return None
+
+        found = search()
+        if found is not None:
+            return found
+        if label is None or path is not None:
+            return found
+
+        from ..scenes.exploration import ExplorationScene
+        from ..scenes.destination_picker import DestinationPickerScene
+        if isinstance(self.app.manager.current, ExplorationScene):
+            # Search the visible travel button without recursing into the
+            # destination-picker fallback again.
+            travel = None
+            for w in self._widget_catalogue():
+                if enabled_only and not w.get("enabled", True):
+                    continue
+                if visible_only and not w.get("visible", True):
+                    continue
+                if w.get("label") and "外出" in w["label"]:
+                    travel = w
+                    break
+            if travel is not None:
+                self.click(tuple(travel["rect_center"]))
+                self.advance_frames(4)
+                if isinstance(self.app.manager.current, DestinationPickerScene):
+                    card = search()
+                    if card is None:
+                        return None
+                    card_index = int(card["path"].split("[")[1].split("]")[0])
+                    dest, _button = self.app.manager.current._cards[card_index]
+                    self.app.manager.current._open_preview(dest.loc.id)
+                    self.advance_frames(1)
+                    # Return the confirmation button.  The caller's click then
+                    # completes the human flow for this destination label.
+                    for w in self._widget_catalogue():
+                        if enabled_only and not w.get("enabled", True):
+                            continue
+                        if visible_only and not w.get("visible", True):
+                            continue
+                        if w.get("label") and "前往" in w["label"]:
+                            return w
         return None
 
     def find_widgets(self, *, label: str | None = None,
@@ -418,6 +525,12 @@ def _cli_main(argv: list[str] | None = None) -> int:
                     drv.click(tuple(w["rect_center"]))
                     drv.advance_frames(int(action.get("after", 4)))
                     result["clicked"] = w["label"]
+            elif op == "travel_to":
+                ok = drv.travel_to(action["label"],
+                                   settle=int(action.get("after", 12)))
+                result["traveled"] = ok
+                if not ok:
+                    result["error"] = f"could not travel to {action['label']!r}"
             elif op == "set_flag":
                 drv.app.state.events.set_flag(action["key"],
                                               action.get("value", True))

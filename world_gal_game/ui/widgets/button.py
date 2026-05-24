@@ -26,9 +26,14 @@ class Button(Widget):
         self.style = style
         self.enabled = enabled
         self._hover = False
+        # Eased highlight [0,1]: lerps toward the hover state each frame so
+        # the brighten fades in/out (~120ms) instead of snapping.
+        self._hover_t = 0.0
 
     def update(self, dt: float, inp) -> None:
         self._hover = self.enabled and self.rect.collidepoint(inp.mouse_pos)
+        target = 1.0 if self._hover else 0.0
+        self._hover_t += (target - self._hover_t) * min(1.0, dt * 12.0)
         if self._hover and inp.mouse_clicked and self.on_click is not None:
             self.on_click()
 
@@ -48,9 +53,11 @@ class Button(Widget):
             base = self.theme.bg_panel
             border = self.theme.border_soft
 
-        if self._hover and self.enabled:
-            base = (min(255, base[0] + 30), min(255, base[1] + 25),
-                    min(255, base[2] + 30),
+        if self.enabled and self._hover_t > 0.01:
+            amt = self._hover_t
+            base = (min(255, int(base[0] + 30 * amt)),
+                    min(255, int(base[1] + 25 * amt)),
+                    min(255, int(base[2] + 30 * amt)),
                     base[3] if len(base) > 3 else 220)
         if not self.enabled:
             base = (60, 60, 60, 160)

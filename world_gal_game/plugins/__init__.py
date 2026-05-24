@@ -29,7 +29,7 @@ Three big pieces this module exposes:
 
 Import side effect: importing this package eagerly imports
 :mod:`builtin_effects` and :mod:`builtin_conditions`, which populates
-the global registries with the 39 kinds the engine has always shipped.
+the global registries with the builtin kinds the engine ships.
 Without that bootstrap step :meth:`GameState.apply` would have nothing
 to dispatch to.
 """
@@ -57,7 +57,7 @@ from .errors import (
 from .manifest import PluginManifest, SideEffectFlags, ExtensionDeclaration, Extends
 from .context import PluginContext, HookEvent
 
-# Trigger registration of the 39 builtin effect/condition handlers.
+# Trigger registration of the builtin effect/condition handlers.
 # IMPORTANT: this must come AFTER the registry/errors imports above, but
 # may run BEFORE ``manager`` is imported — the builtin modules only
 # depend on the registry, not on the manager. Splitting like this avoids

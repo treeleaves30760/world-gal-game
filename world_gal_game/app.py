@@ -30,6 +30,7 @@ from .scenes.title import TitleScene
 from .scenes.exploration import ExplorationScene
 from .scenes.dialogue_scene import DialogueScene
 from .scenes.map_scene import MapScene
+from .scenes.destination_picker import DestinationPickerScene
 from .scenes.affection_scene import AffectionScene
 from .scenes.event_log_scene import EventLogScene
 from .scenes.save_scene import SaveScene
@@ -480,9 +481,20 @@ class GalGameApp:
                               on_endings=self._open_endings)
 
     def _open_map(self) -> None:
-        self.manager.push(MapScene(self.ctx),
+        # The card-based destination picker is the primary travel surface.
+        # The node-graph map is reachable from it as a "世界地圖" overview.
+        self.manager.push(DestinationPickerScene(self.ctx),
                           on_close=self.manager.pop,
-                          on_move_to=self._move_from_map)
+                          on_move_to=self._move_from_map,
+                          on_world_map=self._open_world_map)
+
+    def _open_world_map(self) -> None:
+        # Swap the picker for the node graph at the same overlay level, so
+        # closing the map returns straight to exploration (not back to the
+        # picker) and a move pops exactly one overlay before travelling.
+        self.manager.replace(MapScene(self.ctx),
+                             on_close=self.manager.pop,
+                             on_move_to=self._move_from_map)
 
     def _open_affection(self) -> None:
         self.manager.push(AffectionScene(self.ctx),
@@ -680,6 +692,7 @@ class GalGameApp:
             time_of_day=self.state.time.time_of_day.value,
             flags=flags,
             played_scenes=self.state.story.played,
+            state=self.state,
         ):
             if hook.trigger in ("enter", "auto"):
                 self._start_dialogue(hook.scene_id)
@@ -688,7 +701,9 @@ class GalGameApp:
 
     def _move_to(self, loc_id: str) -> None:
         flags = self.state.events.flags
-        if not self.state.map.can_move_to(loc_id, flags):
+        if not self.state.map.can_move_to(
+            loc_id, flags, time_of_day=self.state.time.time_of_day.value
+        ):
             return
         # Look up the exit (from current to target) BEFORE moving so we
         # can read its travel_cost. Local moves cost 0 phases; long trips
@@ -981,6 +996,7 @@ class GalGameApp:
                     time_of_day=self.state.time.time_of_day.value,
                     flags=self.state.events.flags,
                     played_scenes=self.state.story.played,
+                    state=self.state,
                 )
             ],
             "scenes_played": list(self.state.story.played),

@@ -92,13 +92,22 @@ class AssetManager:
             return surf
         try:
             surf = pygame.image.load(str(abs_path))
+        except pygame.error:
+            surf = self._placeholder(fallback_size or (320, 320), fallback_color,
+                                     label=Path(path).name)
+            self._images[path] = surf
+            return surf
+        # convert() / convert_alpha() speed up later blits, but they need a
+        # display surface. In headless rendering (screenshot tooling, visual
+        # check) there is none — keep the *unconverted* loaded surface so real
+        # art still renders instead of silently degrading to a placeholder.
+        try:
             if surf.get_alpha() is not None:
                 surf = surf.convert_alpha()
             else:
                 surf = surf.convert()
         except pygame.error:
-            surf = self._placeholder(fallback_size or (320, 320), fallback_color,
-                                     label=Path(path).name)
+            pass
         self._images[path] = surf
         return surf
 

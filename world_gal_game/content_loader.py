@@ -74,7 +74,12 @@ def load_locations(content_root: Path, state: GameState) -> None:
     for raw in data:
         raw = dict(raw)
         npc_presences = [NPCPresence(**p) for p in raw.pop("npcs", [])]
-        scene_hooks = [SceneHook(**h) for h in raw.pop("scene_hooks", [])]
+        scene_hooks = []
+        for hook_raw in raw.pop("scene_hooks", []):
+            hook_raw = dict(hook_raw)
+            hook_raw["requires"] = _to_conditions(hook_raw.get("requires"))
+            hook_raw["forbids"] = _to_conditions(hook_raw.get("forbids"))
+            scene_hooks.append(SceneHook(**hook_raw))
         exits = _parse_exits(raw.pop("exits", []))
         loc = Location(npcs=npc_presences, scene_hooks=scene_hooks,
                        exits=exits, **raw)
