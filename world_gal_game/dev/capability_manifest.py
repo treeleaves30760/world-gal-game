@@ -62,6 +62,7 @@ from ..plugins import (
     EFFECT_REGISTRY, CONDITION_REGISTRY,
     HOOK_REGISTRY, INSPECT_FIELD_REGISTRY,
     WIDGET_REGISTRY, SCENE_REGISTRY, BRAIN_REGISTRY, DIALOGUE_OP_REGISTRY,
+    PORTRAIT_BACKEND_REGISTRY,
 )
 from ..plugins.context import HookEvent
 
@@ -267,6 +268,7 @@ def _serialize_markup() -> dict[str, Any]:
         ],
         "easing": list(EASING_NAMES),
         "portrait_animations": anims,
+        "portrait_backends": all_portrait_backend_names(),
     }
 
 
@@ -290,6 +292,8 @@ def build_manifest(*, manager: "PluginManager | None" = None) -> dict[str, Any]:
                                                    extra_keys=("overlay",)),
         "brains": _serialize_named_class_registry(BRAIN_REGISTRY),
         "dialogue_ops": _serialize_dialogue_ops(),
+        "portrait_backends": _serialize_named_class_registry(
+            PORTRAIT_BACKEND_REGISTRY),
         "content_schema": _serialize_content_schema(),
         "markup": _serialize_markup(),
         "plugins": _serialize_plugins(manager),
@@ -389,6 +393,10 @@ def all_brain_names() -> list[str]:
 
 def all_dialogue_op_names() -> list[str]:
     return DIALOGUE_OP_REGISTRY.list_names()
+
+
+def all_portrait_backend_names() -> list[str]:
+    return PORTRAIT_BACKEND_REGISTRY.list_names()
 
 
 def all_line_fields() -> list[str]:

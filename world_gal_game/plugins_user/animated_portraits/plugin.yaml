@@ -1,0 +1,39 @@
+id: animated_portraits
+name: Animated Portraits
+version: 0.1.0
+description: |
+  Built-in, web-safe portrait render backends that make a resting portrait
+  move without any external library:
+
+    - breath: procedural idle motion (gentle breathing scale + bob + optional
+      sway) on a single still. Needs no extra art — works on any portrait.
+    - sprite: sprite-sheet frame animation (cols x rows, fps). Needs a sheet,
+      but is the simplest "real" frame animation and decodes to plain pygame
+      surfaces, so it runs identically on desktop and web (pygbag).
+
+  Both degrade gracefully: a missing asset becomes a placeholder, bad params
+  fall back to a static blit. Native rigs (Live2D / Spine) are intentionally
+  NOT here — they need platform-specific SDKs and belong in a desktop-only
+  plugin; this bundle covers the web-safe majority.
+author: World Gal-Game
+engine_version: ">=0.1.0"
+depends: []
+entry_module: plugin
+
+extends:
+  portrait_backends:
+    - kind: breath
+      description: Procedural idle breathing (scale + bob + sway) on a still.
+    - kind: sprite
+      description: Sprite-sheet frame animation (cols x rows at a fixed fps).
+
+side_effects:
+  reads_filesystem: false
+  writes_filesystem: false
+  network: false
+  subprocess: false
+
+tags:
+  - bundled
+  - portrait
+  - animation

@@ -66,6 +66,13 @@ class DialogueScene(Scene):
         self._slot_specs: dict[str, PortraitSpec | None] = {
             "left": None, "center": None, "right": None,
         }
+        # Active portrait backend instance per slot (procedural breathing,
+        # sprite frames, Live2D ...). None means the slot uses the plain static
+        # blit. Backends own the *resting* animation; enter/exit/crossfade
+        # transitions stay surface-based (they animate base_surface()).
+        self._slot_backends: dict[str, object | None] = {
+            "left": None, "center": None, "right": None,
+        }
 
         # Background transition.
         self._bg_surface: pygame.Surface | None = None
@@ -262,26 +269,73 @@ class DialogueScene(Scene):
         self._slot_surfaces[slot] = new_surf
         self._slot_specs[slot] = new_spec
 
+    def _resolve_slot(self, spec: PortraitSpec | None, sw: int, sh: int
+                      ) -> tuple[pygame.Surface | None, object | None]:
+        """Resolve a spec to ``(surface, backend_instance)``.
+
+        A spec naming a registered, non-``"static"`` backend gets a per-slot
+        backend instance; its resting frame (``base_surface()``) becomes the
+        surface the enter/exit/crossfade transition animates, so the handoff to
+        the live backend on settle is seamless. Anything else (no spec, static
+        backend, unknown/failed backend) returns the plain resolved still and no
+        backend — i.e. byte-for-byte the historical path.
+        """
+        if spec is None:
+            return None, None
+        backend = None
+        name = getattr(spec, "backend", "static")
+        if name and name != "static":
+            try:
+                from ..plugins.registry import PORTRAIT_BACKEND_REGISTRY
+                if PORTRAIT_BACKEND_REGISTRY.has(name):
+                    fallback = (480, sh - 230 - 32 - 60)
+                    backend = PORTRAIT_BACKEND_REGISTRY.spawn(
+                        name, spec, self.ctx.assets, fallback)
+            except Exception:
+                backend = None  # unknown / broken backend -> static fallback
+        if backend is not None:
+            base = None
+            try:
+                base = backend.base_surface()
+            except Exception:
+                base = None
+            if base is None:
+                base = self.ctx.assets.resolve_portrait(spec)
+            return base, backend
+        return self.ctx.assets.resolve_portrait(spec), None
+
     def _update_portraits(self, line) -> None:
         """Compute which slots change this line and start transitions."""
         sw, sh = self.ctx.screen_size
         if line.portraits:
             # Multi-slot: clear all then populate from the spec list.
-            wanted: dict[str, tuple[pygame.Surface | None, PortraitSpec | None]] = {
-                "left": (None, None), "center": (None, None), "right": (None, None),
+            wanted: dict[str, tuple[pygame.Surface | None,
+                                    PortraitSpec | None, object | None]] = {
+                "left": (None, None, None), "center": (None, None, None),
+                "right": (None, None, None),
             }
             for spec in line.portraits:
-                surf = self.ctx.assets.resolve_portrait(spec)
-                wanted[spec.slot] = (surf, spec)
-            for slot, (surf, spec) in wanted.items():
+                surf, backend = self._resolve_slot(spec, sw, sh)
+                wanted[spec.slot] = (surf, spec, backend)
+            for slot, (surf, spec, backend) in wanted.items():
+                self._slot_backends[slot] = backend
                 self._start_slot_transition(slot, surf, spec, sw, sh)
         else:
             # Single-portrait / legacy path goes to center; clear other slots.
-            center_surf = self._surface_for_portrait(
-                line.portrait, line.speaker, line.expression)
-            center_spec = line.portrait if isinstance(line.portrait, PortraitSpec) else None
+            if isinstance(line.portrait, PortraitSpec):
+                center_surf, center_backend = self._resolve_slot(
+                    line.portrait, sw, sh)
+                center_spec = line.portrait
+            else:
+                center_surf = self._surface_for_portrait(
+                    line.portrait, line.speaker, line.expression)
+                center_spec = None
+                center_backend = None
+            self._slot_backends["center"] = center_backend
             self._start_slot_transition("center", center_surf, center_spec, sw, sh)
+            self._slot_backends["left"] = None
             self._start_slot_transition("left", None, None, sw, sh)
+            self._slot_backends["right"] = None
             self._start_slot_transition("right", None, None, sw, sh)
 
     # ------------------------------------------------------------------
@@ -523,6 +577,15 @@ class DialogueScene(Scene):
                 fade.update(dt)
                 if fade.done:
                     self._slot_fades[slot] = None
+            # Advance the resting animation backend (breathing / sprite / rig).
+            # Isolated: a backend that raises is dropped, reverting the slot to
+            # the static blit rather than crashing the frame.
+            backend = self._slot_backends.get(slot)
+            if backend is not None:
+                try:
+                    backend.update(dt)
+                except Exception:
+                    self._slot_backends[slot] = None
 
         # Tick background fade.
         if self._bg_fade is not None:
@@ -732,14 +795,28 @@ class DialogueScene(Scene):
                     elif fade is not None:
                         fade.draw(surface, rect)
                     elif self._slot_surfaces.get(slot) is not None:
-                        src = self._slot_surfaces[slot]
-                        # Fit (don't stretch) the portrait into the slot so its
-                        # native aspect ratio is preserved; bottom-anchored.
-                        dest = fit_rect(src.get_size(), rect)
-                        surf = pygame.transform.smoothscale(src, dest.size)
-                        if spec is not None and spec.flip:
-                            surf = pygame.transform.flip(surf, True, False)
-                        surface.blit(surf, dest.topleft)
+                        # Once a slot has settled (no transition in flight), a
+                        # backend owns its resting animation. Isolated: a backend
+                        # that raises is dropped and the static still drawn, so a
+                        # bad backend degrades instead of crashing the frame.
+                        backend = self._slot_backends.get(slot)
+                        drawn = False
+                        if backend is not None:
+                            try:
+                                backend.draw(surface, rect,
+                                             flip=bool(spec and spec.flip))
+                                drawn = True
+                            except Exception:
+                                self._slot_backends[slot] = None
+                        if not drawn:
+                            src = self._slot_surfaces[slot]
+                            # Fit (don't stretch) the portrait into the slot so
+                            # its native aspect ratio is preserved; bottom-anchored.
+                            dest = fit_rect(src.get_size(), rect)
+                            surf = pygame.transform.smoothscale(src, dest.size)
+                            if spec is not None and spec.flip:
+                                surf = pygame.transform.flip(surf, True, False)
+                            surface.blit(surf, dest.topleft)
             elif self.portrait:
                 # Legacy fallback: no slot surfaces active, use PortraitView.
                 self.portrait.draw(surface)

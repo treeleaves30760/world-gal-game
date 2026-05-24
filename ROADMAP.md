@@ -6,8 +6,9 @@ onboarding) and [docs/architecture.md](docs/architecture.md) (engine internals).
 > Last updated: 2026-05-24. Phases 1-2 done, including the **AI-Coding-Native
 > contract** (typed arg JSON-Schema, `run_script` trace/diff/snapshot/ops,
 > determinism — see [docs/ai-native-contract.md](docs/ai-native-contract.md)).
-> A Phase 3 distribution + platform push and Phase 5 GalGame-maturity items
-> (Live2D, video, i18n extraction) remain.
+> A Phase 3 distribution + platform push remains. Phase 5 GalGame-maturity:
+> **animated portraits (5A) + i18n extraction (5C) done**; video playback (5B)
+> and native Live2D/Spine rigs remain.
 
 ---
 
@@ -21,12 +22,12 @@ The engine is built around three pillars (see CLAUDE.md for the framing):
   AI can play, inspect, edit, extend, and self-verify via `HeadlessSession`,
   `GameDriver`, `PackInspector`, `PackEditor`, `CapabilityManifest`, `SelfCheck`,
   `SmokeRunner`, `VisualCheck`, and `asset_studio`.
-- **Pillar C — third-party plugins extend the engine:** complete. All eight
+- **Pillar C — third-party plugins extend the engine:** complete. All nine
   extension points work in code *and* are declarable in `plugin.yaml`;
   `PluginManager` reconciles declared-vs-registered (see
   [Extension points](#extension-points-pillar-c)).
 
-Test suite: 807 cases, all green.
+Test suite: 829 cases, all green.
 
 ---
 
@@ -53,7 +54,7 @@ Done:
 
 Wrap-up — done 2026-05-24:
 
-- **Manifest schema alignment** — `plugin.yaml` declares all eight categories;
+- **Manifest schema alignment** — `plugin.yaml` declares all nine categories;
   `PluginManager` reconciles declared-vs-registered and warns on mismatch.
 - **Auto-generated** `effects-reference.md` / `conditions-reference.md` via
   `tools/gen_references.py` (`--check` drift guard).
@@ -111,9 +112,9 @@ Still deferred:
 
 ## Extension points (Pillar C)
 
-The one place that tracks declared-vs-implemented status. All eight register via
-decorator and resolve through a registry singleton; only the first four can be
-declared in `plugin.yaml`'s `extends`:
+The one place that tracks declared-vs-implemented status. All nine register via
+decorator, resolve through a registry singleton, and can be declared in
+`plugin.yaml`'s `extends`:
 
 | Decorator | Registry | `extends` field | Status |
 |---|---|---|---|
@@ -125,8 +126,9 @@ declared in `plugin.yaml`'s `extends`:
 | `@scene` | `SCENE_REGISTRY` | `scenes` | done |
 | `@brain` | `BRAIN_REGISTRY` | `brains` | done |
 | `@dialogue_op` | `DIALOGUE_OP_REGISTRY` | `dialogue_ops` | done |
+| `@portrait_backend` | `PORTRAIT_BACKEND_REGISTRY` | `portrait_backends` | done |
 
-All eight register via decorator and can be *declared* in `plugin.yaml`'s
+All nine register via decorator and can be *declared* in `plugin.yaml`'s
 `extends`. `PluginManager` reconciles declared-vs-registered per plugin and
 records advisory warnings on mismatch (`PluginRecord.warnings`), so the manifest
 is a checkable description of a plugin's surface.
@@ -148,15 +150,20 @@ PRs #1-3 (manifest alignment, dynamic references, edit hints) **shipped
 
 ### 1. GalGame maturity (Phase 5) — presentation / production table-stakes
 
-Mostly plugin-able (`@scene` / `@widget` / `@dialogue_op`); Live2D and video may
-need a thin runtime / portrait hook. Each warrants its own design spike.
+Mostly plugin-able (`@scene` / `@widget` / `@dialogue_op` / `@portrait_backend`);
+video may need a thin runtime hook. See `docs/galgame-maturity.md`.
 
-- **Live2D / Spine animated 立繪** — abstract a portrait backend in
-  `core/portrait_spec.py`; deliver model load/drive as a plugin.
-- **Video / movie playback** (OP/ED/過場) — `@dialogue_op` or `@scene`; evaluate
-  the web/pygbag decode path.
-- **i18n translation extraction** — walk pack scenes YAML → translatable string
-  table + a merge-back path (CJK fonts already handled).
+- **5A — animated 立繪 — done.** `@portrait_backend` (9th extension category) is
+  the seam in `core/portrait_spec.py` (`backend` / `backend_args`); the dialogue
+  scene delegates the resting draw, transitions stay surface-based, `"static"`
+  is unchanged. Bundled `animated_portraits` plugin ships web-safe `breath`
+  (procedural idle) + `sprite` (sheet frames). **Remaining:** native Live2D /
+  Spine rigs as a desktop-only plugin (no pygame binding; out of core).
+- **5B — video / movie playback** (OP/ED/過場) — `@dialogue_op` or `@scene`;
+  evaluate the web/pygbag decode path. Open.
+- **5C — i18n translation extraction — done** (`tools/i18n_extract.py`):
+  pack scenes YAML → translatable string table + `--check` coverage; runtime
+  apply-translation is the follow-up.
 
 ### 2. Plugin distribution design
 
@@ -209,5 +216,8 @@ vs `pyproject.toml`-pinned, and seek review.
 | 2026-05-23 | Phase 3 presentation/extras table-stakes: CG gallery, music room, scene replay, endings + completion, Auto/Skip polish, NVL mode, camera/screen FX, per-character voice, quicksave/autosave + save-UX | done |
 | 2026-05-24 | Phase 2 wrap-up: manifest schema alignment (all 8 categories) + reconciliation, dynamic references (`tools/gen_references.py`), `wgg edit`/`validate` did-you-mean | done |
 | 2026-05-24 | Phase 2.5: AI-Coding-Native contract — typed arg JSON-Schema (`--schema`), `run_script` trace/diff + apply/check/assert/affordances/snapshot/restore, determinism seed | done |
-| — | Phase 5: GalGame maturity — Live2D/Spine, video playback, i18n extraction | open (Next PR #1) |
+| 2026-05-24 | Phase 5C: i18n translation extraction (`tools/i18n_extract.py`) — pack scenes → string table + `--check` coverage | done |
+| 2026-05-24 | Phase 5A: animated portraits — `@portrait_backend` (9th extension category), `PortraitSpec.backend`/`backend_args`, dialogue-scene seam, bundled `animated_portraits` (breath + sprite) | done |
+| — | Phase 5B: video / movie playback (OP/ED/過場) | open (Next PR #1) |
+| — | Phase 5A native rigs: Live2D / Spine as a desktop-only plugin | open (Next PR #1) |
 | — | Phase 3: LLM NPC, autonomous spec-to-pack, cross-pack plugins | deferred |

@@ -52,9 +52,17 @@ rendering, pack migration). The **AI-Coding-Native contract has landed** — rea
   **trace** (`transcript`).
 - **Determinism**: `EngineConfig.seed` → `GameState.rng()`.
 - The three former plugin loose ends are **closed**: `plugin.yaml` declares all
-  eight extension categories (manager reconciles & warns); references generate
+  nine extension categories (manager reconciles & warns); references generate
   from `build_manifest()` (`tools/gen_references.py`); `wgg edit` / `wgg
   validate` return "did you mean" hints.
+- **Animated portraits (Phase 5A) have landed**: a 9th extension category,
+  `@portrait_backend`, is the seam between *which* portrait (`PortraitSpec`)
+  and *how it moves* once it settles. `PortraitSpec.backend` (default
+  `"static"` = the unchanged blit) routes a portrait's resting animation
+  through a registered backend; the bundled `animated_portraits` plugin ships
+  web-safe `breath` (procedural idle) and `sprite` (sheet frames) backends.
+  Native rigs (Live2D/Spine) are a documented desktop-only plugin path, not
+  core. See `docs/galgame-maturity.md`.
 
 See [ROADMAP.md](ROADMAP.md) for the full picture.
 
@@ -104,9 +112,9 @@ See [ROADMAP.md](ROADMAP.md) for the full picture.
 ### Extend the engine (write a plugin, don't edit core)
 
 - A plugin is a directory (`plugins/<id>/`) with a `plugin.yaml` plus a Python
-  entry module (default `plugin.py`). The entry registers handlers via eight
+  entry module (default `plugin.py`). The entry registers handlers via nine
   decorators: `@effect`, `@condition`, `@hook`, `@inspect_field`, `@widget`,
-  `@scene`, `@brain`, `@dialogue_op`.
+  `@scene`, `@brain`, `@dialogue_op`, `@portrait_backend`.
 - 16 lifecycle `HookEvent`s: `pack.{before_load,after_load}`,
   `game.state_ready`, `effect.{before_apply,after_apply}`,
   `save.{before_serialize,after_load}`, `scene.{push,pop,replace}`,
@@ -115,7 +123,8 @@ See [ROADMAP.md](ROADMAP.md) for the full picture.
 - Three scan roots: `world_gal_game/plugins_user/` (bundled),
   `~/.world-gal-game/plugins/` (per-user), `<pack>/plugins/` (pack-local).
 - Example: `games/demo_pack/plugins/step_counter/` (demonstrates effect +
-  condition + hook + inspect_field).
+  condition + hook + inspect_field); `world_gal_game/plugins_user/animated_portraits/`
+  (bundled, demonstrates `@portrait_backend`).
 - See `docs/plugins.md`, `docs/ai-developer-guide.md`.
 
 ### Self-verify / end-to-end dev loop

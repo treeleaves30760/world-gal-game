@@ -1,56 +1,64 @@
-# GalGame 成熟度:動態立繪與影片(Phase 5 設計)
+# GalGame 成熟度:動態立繪與影片(Phase 5)
 
-Phase 5 把引擎推向商業 VN 的「演出/製作」門檻。三項中 **i18n 抽取已完成**
-(`tools/i18n_extract.py`);本文是另外兩項 —— **Live2D/Spine 動態立繪**(5A)與
-**影片播放**(5B)—— 的設計 spike:落地點、技術選項、web 限制與建議路線。
+Phase 5 把引擎推向商業 VN 的「演出/製作」門檻。進度:
 
-兩者都**牽涉外部依賴與渲染決策**(哪個函式庫、桌面 vs web),屬於需要你拍板的決策,
-不適合盲目實作;下面把決策點列清楚。
+- **5C i18n 抽取 —— 已完成**(`tools/i18n_extract.py`)。
+- **5A 動態立繪 —— 已實作**:portrait backend 接縫 + 內建 `breath`/`sprite`
+  後端(下方 5A 節)。唯一剩下的是原生骨架(Live2D/Spine)的桌面插件,需要函式庫/
+  授權決策才開工。
+- **5B 影片播放 —— 待辦**:仍是設計 spike(下方 5B 節),牽涉外部解碼依賴與
+  桌面 vs web 取捨,需要你拍板。
 
 ---
 
-## 5A — Live2D / Spine 動態立繪
+## 5A — 動態立繪(**已實作**)
 
-### 現況與限制
+採用「先做 seam + 內建 web-safe 後端,native 骨架走桌面插件」的分流路線(下方原始
+建議),已於 2026-05-24 落地。
 
-立繪目前是**靜態 PNG + 槽位動畫**:`core/portrait_spec.py`(`PortraitSpec`:base +
-expression + pose + outfit 的 fallback 鏈)決定貼哪張圖,`scenes/dialogue_scene.py`
-做三槽 staging,`ui/portrait_anim.py`(fade/slide/bounce/pop)+
-`ui/transitions.py`(`PortraitCrossfade`)做進出場動畫。
+### 已實作:portrait backend 接縫(第 9 個擴充類別)
 
-- **Live2D** 官方 Cubism SDK 是 C++/專有,**沒有可用的 pygame 綁定**,純 Python 無
-  法直接驅動 `.model3.json`。
-- **Spine** 有 `spine-python` runtime(社群),但維護與授權需評估。
+立繪過去是**靜態 PNG + 槽位動畫**:`core/portrait_spec.py`(base + expression +
+pose + outfit 的 fallback 鏈)決定貼哪張圖,`scenes/dialogue_scene.py` 做三槽
+staging,`ui/portrait_anim.py`(fade/slide/bounce/pop)+ `ui/transitions.py` 做
+進出場動畫。現在在「畫哪張」與「怎麼動」之間多了一層 backend:
 
-### 落地點:portrait backend 抽象
+- **`PortraitSpec.backend: str = "static"`** + `backend_args: dict`(純加欄、可選,
+  舊存檔零遷移)。`"static"` = 不動,與過去**逐位元相同**。
+- **`@portrait_backend(name)`** —— 第 9 個擴充 decorator,比照既有八個的模式:
+  `PortraitBackendEntry` / `PortraitBackendRegistry`,進 `plugin.yaml` 的
+  `extends.portrait_backends`,`PluginManager` 比對宣告 vs 實際註冊並警告,
+  `wgg capabilities` 與 markup 都列出已註冊後端。
+- **後端介面**(每槽實例化 `cls(spec, assets, fallback_size)`,見
+  `world_gal_game/ui/portrait_backend.py`):`update(dt)` /
+  `draw(surface, rect, *, flip, alpha)` / `base_surface()`。
+- **`scenes/dialogue_scene.py`**:槽位**安定後**的待機繪製委派給後端;
+  enter/exit/crossfade 轉場仍走既有 surface 路徑(動畫的是 `base_surface()`)。
+  後端呼叫以 try/except 隔離 —— 壞後端退回靜態繪製,絕不讓單幀崩潰。未註冊的後端名
+  也優雅退回靜態。
 
-關鍵是在「決定畫什麼」與「實際 blit」之間插一層 backend:
+### 已實作:內建 `animated_portraits` 插件(web-safe,純 pygame)
 
-- `core/portrait_spec.py` 增一個 `backend: str = "static"` 欄位(預設不變)。
-- 新增 portrait-backend 註冊點(比照八個 decorator 的模式,例如
-  `@portrait_backend("live2d")`),backend 介面:`load(spec) -> handle` /
-  `update(handle, dt, expression)` / `draw(surface, handle, rect)`。
-- `scenes/dialogue_scene.py` 的立繪繪製改為:`backend == "static"` 走現有路徑;
-  否則委派給註冊的 backend。**現有靜態路徑就是預設 backend,零行為變更。**
+`world_gal_game/plugins_user/animated_portraits/` 提供兩個後端,桌面/web(pygbag)
+表現一致,皆防禦式降級(缺圖→placeholder、壞參數→靜態):
 
-如此 Live2D/Spine/分層骨架都能以 **plugin** 提供,核心不綁特定函式庫(符合
-「core 不放 game 邏輯」原則)。
+- **`breath`** —— 單張立繪的程序化待機(呼吸縮放 + 起伏 + 可選晃動),**不需額外
+  美術**,套在 demo_pack 現有平面立繪上即可動。參數:`period`/`scale`/`bob`/`sway`。
+- **`sprite`** —— sprite-sheet 影格動畫。參數:`cols`/`rows`/`fps`/`frames`。
 
-### 選項
+### 仍待辦:原生骨架(Live2D / Spine)
 
-| 方案 | 可行性 | web(pygbag) | 備註 |
+- **Live2D** 官方 Cubism SDK 是 C++/專有,**沒有可用的 pygame 綁定**;**Spine** 的
+  `spine-python` 維護/授權待評估。兩者皆**桌面限定、需 native 依賴**,因此**不進核心**
+  —— 上面的 `@portrait_backend` 擴充點讓它們可作為**桌面插件**提供。這是 5A 唯一
+  剩下、且需要決策(函式庫/授權)才開工的部分。
+
+| 方案 | 狀態 | web(pygbag) | 備註 |
 |---|---|---|---|
-| 分層 PNG + 簡易變形(呼吸/眨眼/嘴型) | 高(純 pygame) | ✓ | 涵蓋多數「會動的立繪」需求,無外部依賴 |
-| sprite-sheet 影格動畫 | 高 | ✓ | 美術成本高,但技術最簡單 |
-| Spine(`spine-python`) | 中 | 需驗證 | 授權/維護需評估 |
-| Live2D Cubism(native) | 低 | ✗ | 需 native SDK,桌面限定,工程量大 |
-
-### 建議
-
-1. 先做 **portrait-backend seam**(核心,低風險,不動既有靜態演出)。
-2. 內建一個 **分層 PNG / sprite-sheet backend**(可行、web-safe),滿足「動態立繪」
-   的大宗需求。
-3. **Live2D 列為桌面限定 plugin**(native 依賴),不進核心、不保證 web。
+| `breath` 程序化待機 | 已內建 | ✓ | 無外部依賴,套現有立繪即動 |
+| `sprite` 影格動畫 | 已內建 | ✓ | 需 sheet,技術最簡單 |
+| Spine(`spine-python`) | 待辦 | 需驗證 | 桌面插件;授權/維護需評估 |
+| Live2D Cubism(native) | 待辦 | ✗ | 桌面插件;需 native SDK,工程量大 |
 
 ---
 
@@ -91,10 +99,13 @@ expression + pose + outfit 的 fallback 鏈)決定貼哪張圖,`scenes/dialogue_
 
 ## 需要你決定的
 
-1. **動態立繪技術**:接受「分層 PNG / sprite-sheet backend(web-safe)+ Live2D 桌面
-   plugin」的分流,還是要優先投入 Live2D(桌面限定、工程量大)?
-2. **影片**:image-sequence(web-safe、檔案大)先行可接受嗎?真 video 的桌面函式庫
-   選 `opencv` 還是 `pyvidplayer2`?web 是否一定要支援?
-3. **優先序**:5A 與 5B 哪個先做?(i18n 抽取已完成,runtime 套用譯文是其後續。)
+1. ~~**動態立繪技術**~~ —— **已定案並實作**:seam + web-safe `breath`/`sprite`
+   後端已內建;native Live2D/Spine 走桌面插件。剩下要你拍板的只有:**是否現在就做
+   原生骨架插件**,要做的話 **Spine(`spine-python`)還是 Live2D(native SDK)**
+   先行?
+2. **影片(5B)**:image-sequence(web-safe、檔案大)先行可接受嗎?真 video 的桌面
+   函式庫選 `opencv` 還是 `pyvidplayer2`?web 是否一定要支援?
+3. **優先序**:接下來做 5B 影片,還是 5A 的原生骨架插件?(runtime 套用譯文是 5C 的
+   後續。)
 
-落地點(portrait-backend seam、movie scene/op 契約)都已盤好,任一方向拍板後即可開工。
+落地點(movie scene/op 契約)已盤好,任一方向拍板後即可開工。

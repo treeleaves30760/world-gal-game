@@ -68,7 +68,7 @@ AI 協作者進場速查 [../CLAUDE.md](../CLAUDE.md)。
 
 | 文件 | 用途 |
 |---|---|
-| [plugins.md](plugins.md) | 用 `@effect` / `@condition` / `@hook` / `@scene` / `@widget` / `@brain` / `@dialogue_op` 加新功能 |
+| [plugins.md](plugins.md) | 用 `@effect` / `@condition` / `@hook` / `@scene` / `@widget` / `@brain` / `@dialogue_op` / `@portrait_backend` 加新功能 |
 
 #### 4c. 美術素材生成
 

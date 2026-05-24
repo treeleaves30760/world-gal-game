@@ -7,9 +7,9 @@ Falls back step-by-step when a more specific file is missing.
 """
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 Slot = Literal["left", "center", "right"]
 
@@ -46,6 +46,17 @@ class PortraitSpec(BaseModel):
     flip: bool = False                 # mirror horizontally
     enter: str | None = None           # entry animation (see PORTRAIT_ANIMATIONS)
     exit: str | None = None            # exit animation (see PORTRAIT_ANIMATIONS)
+    # Render backend: how the *resting* portrait animates once it has settled
+    # (enter/exit transitions stay surface-based regardless). "static" is the
+    # built-in default and means "no backend" — the engine blits the resolved
+    # still, exactly as before. Other names resolve against the global
+    # PortraitBackendRegistry (plugin-provided: breath / sprite / live2d / ...);
+    # an unregistered name degrades gracefully back to the static blit.
+    backend: str = "static"
+    # Backend-specific parameters (fps, columns, blink interval, model path...).
+    # Kept free-form so core stays library-agnostic — each backend reads the
+    # keys it understands and ignores the rest.
+    backend_args: dict[str, Any] = Field(default_factory=dict)
 
     def candidate_paths(self) -> list[str]:
         """Return paths to try, most specific first."""

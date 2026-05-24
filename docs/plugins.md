@@ -8,10 +8,11 @@
 ---
 
 插件是擴充引擎能力的官方路徑。不必動 `world_gal_game/core/` 一行程式碼，
-就可以新增 effect / condition / hook / scene / widget / brain / dialogue_op。
-第三方主題（恐怖、戀愛、養成…）、自訂遊戲機制、AI 工具產生的新功能 — 都應該走插件。
+就可以新增 effect / condition / hook / scene / widget / brain / dialogue_op /
+portrait_backend。第三方主題（恐怖、戀愛、養成…）、自訂遊戲機制、AI 工具產生的
+新功能 — 都應該走插件。
 
-七種擴充點（Phase 1 開了 4 個，Phase 2 補齊另外 3 個）：
+九種擴充點（Phase 1 開了 4 個，Phase 2 補齊 4 個，Phase 5A 加上 portrait backend）：
 
 | Decorator | 用途 | Phase |
 |---|---|---|
@@ -23,6 +24,7 @@
 | `@scene(scene_id)` | 新 Scene 類別 | 2 |
 | `@brain(name)` | 新 LLM Brain 實作 | 2 |
 | `@dialogue_op(name)` | 新 `[[name:arg]]` 內嵌指令 | 2 |
+| `@portrait_backend(name)` | 立繪渲染後端（動態立繪） | 5A |
 
 ---
 
@@ -287,6 +289,57 @@ def upper(state, arg):
 ```
 
 未知 op 會保留原樣（`[[unknown:foo]]`），讓作者一眼發現拼錯。
+
+### `@portrait_backend(name, *, description="", plugin_id=None)`  *(Phase 5A)*
+
+Class decorator：註冊一個「立繪渲染後端」。它是「**畫哪張立繪**」（`PortraitSpec`
+解析）與「**它怎麼動**」（每幀繪製）之間的接縫 —— 讓核心不綁定任何特定動畫函式庫。
+`PortraitSpec.backend`（預設 `"static"` = 不動，與過去一致）指名某個後端，該立繪
+**安定後的待機動畫**就交給它；enter/exit/crossfade 轉場仍走既有 surface 路徑。
+未註冊的後端名會優雅退回靜態繪製，所以缺插件不會弄壞畫面。
+
+後端 class 由對話場景**每槽**實例化為 `cls(spec, assets, fallback_size)`，需實作
+三個方法（見 `world_gal_game/ui/portrait_backend.py`）：
+
+```python
+from world_gal_game.plugins import portrait_backend
+from world_gal_game.ui.portrait_backend import blit_fitted   # 與靜態路徑同幾何
+
+@portrait_backend("wiggle", description="左右輕晃。")
+class WiggleBackend:
+    def __init__(self, spec, assets, fallback_size):
+        self._surf = assets.resolve_portrait(spec, fallback_size=fallback_size)
+        self._t = 0.0
+    def update(self, dt):                  # 推進動畫時鐘
+        self._t += dt
+    def base_surface(self):                # 給轉場用的「靜止幀」（可回 None）
+        return self._surf
+    def draw(self, surface, rect, *, flip=False, alpha=255):
+        import math
+        dx = int(8 * math.sin(self._t * 3))
+        blit_fitted(surface, self._surf,
+                    rect.move(dx, 0), flip=flip, alpha=alpha)
+```
+
+```yaml
+# 場景 YAML — 對白 line 上的 portraits（PortraitSpec list）
+- text: "嗨！"
+  portraits:
+    - character: heroine_1
+      backend: wiggle            # 指名後端
+      backend_args: {amp: 8}     # 後端自取參數（核心不解讀）
+```
+
+引擎內建一個 **`animated_portraits`** 插件（`world_gal_game/plugins_user/`），
+提供兩個 web-safe（純 pygame）後端：
+
+- **`breath`** — 單張立繪的程序化待機（呼吸縮放 + 微幅起伏 + 可選晃動），**不需額外
+  美術**。`backend_args`：`period` / `scale` / `bob` / `sway`。
+- **`sprite`** — sprite-sheet 影格動畫。`backend_args`：`cols` / `rows` / `fps` /
+  `frames`。
+
+原生骨架（Live2D / Spine）刻意**不進核心**：它們需要平台專屬 SDK、`pygame` 下無可用
+綁定，應以**桌面限定插件**提供 —— 上面的擴充點讓這成為可能。
 
 ---
 

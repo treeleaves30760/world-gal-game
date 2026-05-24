@@ -171,6 +171,30 @@ class DialogueOpEntry:
     description: str = ""
 
 
+@dataclass(frozen=True)
+class PortraitBackendEntry:
+    """A plugin-registered portrait render backend.
+
+    A backend governs how a *resting* portrait animates once its enter/exit
+    transition has settled — procedural breathing, sprite-sheet frames, or a
+    native rig (Live2D/Spine) shipped as a desktop-only plugin. It is the seam
+    between "which portrait" (``PortraitSpec`` resolution) and "how it moves"
+    (per-frame draw), so the engine core binds to no specific animation library.
+
+    ``cls`` is instantiated per slot by the dialogue scene as
+    ``cls(spec, assets, fallback_size)`` and is expected to expose
+    ``update(dt)`` / ``draw(surface, rect, *, flip, alpha)`` /
+    ``base_surface()`` (see :mod:`world_gal_game.ui.portrait_backend`). The
+    built-in ``"static"`` backend is implicit (no entry): it means "no
+    animation, blit the still".
+    """
+
+    name: str
+    cls: type
+    plugin_id: str
+    description: str = ""
+
+
 # ----------------------------------------------------------------------
 # Registries
 
@@ -490,6 +514,19 @@ class BrainRegistry(_NamedClassRegistry):
         return entry.cls(*args, **kwargs)
 
 
+class PortraitBackendRegistry(_NamedClassRegistry):
+    """name → PortraitBackendEntry. ``spawn`` returns a per-slot instance."""
+
+    def __init__(self) -> None:
+        super().__init__(category="portrait_backend")
+
+    def spawn(self, name: str, *args: Any, **kwargs: Any) -> Any:
+        entry = self._entries.get(name)
+        if entry is None:
+            raise UnknownKindError(name, category="portrait_backend")
+        return entry.cls(*args, **kwargs)
+
+
 class DialogueOpRegistry:
     """name → DialogueOpEntry. Used by parsed ``[[name:arg]]`` directives."""
 
@@ -548,6 +585,7 @@ WIDGET_REGISTRY = WidgetRegistry()
 SCENE_REGISTRY = SceneRegistry()
 BRAIN_REGISTRY = BrainRegistry()
 DIALOGUE_OP_REGISTRY = DialogueOpRegistry()
+PORTRAIT_BACKEND_REGISTRY = PortraitBackendRegistry()
 
 
 # ----------------------------------------------------------------------
@@ -761,6 +799,42 @@ def brain(name: str,
     return deco
 
 
+def portrait_backend(name: str,
+                     *, plugin_id: str | None = None,
+                     description: str = "") -> Callable:
+    """Class decorator: register a portrait render backend.
+
+    The class becomes the per-slot renderer the dialogue scene instantiates as
+    ``cls(spec, assets, fallback_size)``; it should expose ``update(dt)`` /
+    ``draw(surface, rect, *, flip=False, alpha=255)`` / ``base_surface()`` (see
+    :mod:`world_gal_game.ui.portrait_backend`). A ``PortraitSpec.backend`` field
+    naming this backend routes that portrait's resting animation through it;
+    ``"static"`` (the default) bypasses backends entirely. Unknown names fall
+    back to the static blit, so a missing plugin never breaks rendering.
+
+    Usage::
+
+        from world_gal_game.plugins import portrait_backend
+        from world_gal_game.ui.portrait_backend import blit_fitted
+
+        @portrait_backend("breath", description="Procedural idle breathing.")
+        class BreathBackend:
+            def __init__(self, spec, assets, fallback_size): ...
+            def update(self, dt): ...
+            def draw(self, surface, rect, *, flip=False, alpha=255): ...
+            def base_surface(self): ...
+    """
+    def deco(cls: type) -> type:
+        pid = plugin_id or current_plugin_id()
+        PORTRAIT_BACKEND_REGISTRY.register(PortraitBackendEntry(
+            name=name, cls=cls, plugin_id=pid, description=description,
+        ))
+        cls.__wgg_portrait_backend__ = name   # type: ignore[attr-defined]
+        cls.__wgg_plugin_id__ = pid           # type: ignore[attr-defined]
+        return cls
+    return deco
+
+
 def dialogue_op(name: str,
                 *, plugin_id: str | None = None,
                 description: str = "") -> Callable:
@@ -852,6 +926,7 @@ class _RegistrySnapshot:
     scenes: dict[str, SceneEntry]
     brains: dict[str, BrainEntry]
     dialogue_ops: dict[str, DialogueOpEntry]
+    portrait_backends: dict[str, PortraitBackendEntry]
 
 
 def snapshot() -> _RegistrySnapshot:
@@ -865,6 +940,7 @@ def snapshot() -> _RegistrySnapshot:
         scenes=dict(SCENE_REGISTRY._entries),
         brains=dict(BRAIN_REGISTRY._entries),
         dialogue_ops=dict(DIALOGUE_OP_REGISTRY._entries),
+        portrait_backends=dict(PORTRAIT_BACKEND_REGISTRY._entries),
     )
 
 
@@ -886,3 +962,5 @@ def restore(snap: _RegistrySnapshot) -> None:
     BRAIN_REGISTRY._entries.update(snap.brains)
     DIALOGUE_OP_REGISTRY._entries.clear()
     DIALOGUE_OP_REGISTRY._entries.update(snap.dialogue_ops)
+    PORTRAIT_BACKEND_REGISTRY._entries.clear()
+    PORTRAIT_BACKEND_REGISTRY._entries.update(snap.portrait_backends)

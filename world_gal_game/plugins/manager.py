@@ -49,6 +49,7 @@ from .manifest import PluginManifest
 from .registry import (
     EFFECT_REGISTRY, CONDITION_REGISTRY, HOOK_REGISTRY, INSPECT_FIELD_REGISTRY,
     WIDGET_REGISTRY, SCENE_REGISTRY, BRAIN_REGISTRY, DIALOGUE_OP_REGISTRY,
+    PORTRAIT_BACKEND_REGISTRY,
     loading,
 )
 from .context import HookEvent, PluginContext
@@ -83,6 +84,7 @@ class PluginRecord:
     scene_ids: list[str] = field(default_factory=list)
     brain_names: list[str] = field(default_factory=list)
     dialogue_ops: list[str] = field(default_factory=list)
+    portrait_backend_names: list[str] = field(default_factory=list)
     # Advisory mismatches between plugin.yaml's extends.* and what the entry
     # module actually registered (see PluginManager._reconcile_declarations).
     warnings: list[str] = field(default_factory=list)
@@ -239,6 +241,7 @@ class PluginManager:
             SCENE_REGISTRY.unregister_plugin(record.id)
             BRAIN_REGISTRY.unregister_plugin(record.id)
             DIALOGUE_OP_REGISTRY.unregister_plugin(record.id)
+            PORTRAIT_BACKEND_REGISTRY.unregister_plugin(record.id)
             record.state = "discovered"
             record.module = None
 
@@ -296,6 +299,7 @@ class PluginManager:
                     "scenes": r.scene_ids,
                     "brains": r.brain_names,
                     "dialogue_ops": r.dialogue_ops,
+                    "portrait_backends": r.portrait_backend_names,
                     "side_effects": r.manifest.side_effects.model_dump(),
                     "warnings": r.warnings,
                 }
@@ -400,7 +404,8 @@ class PluginManager:
         """
         for reg in (EFFECT_REGISTRY, CONDITION_REGISTRY, HOOK_REGISTRY,
                     INSPECT_FIELD_REGISTRY, WIDGET_REGISTRY, SCENE_REGISTRY,
-                    BRAIN_REGISTRY, DIALOGUE_OP_REGISTRY):
+                    BRAIN_REGISTRY, DIALOGUE_OP_REGISTRY,
+                    PORTRAIT_BACKEND_REGISTRY):
             reg.unregister_plugin(record.id)
 
         # Snapshot kinds-by-plugin before, so we can diff afterwards.
@@ -413,6 +418,7 @@ class PluginManager:
         before_scenes = set(SCENE_REGISTRY.list_names())
         before_brains = set(BRAIN_REGISTRY.list_names())
         before_dops = set(DIALOGUE_OP_REGISTRY.list_names())
+        before_backends = set(PORTRAIT_BACKEND_REGISTRY.list_names())
 
         try:
             with loading(record.id):
@@ -447,6 +453,8 @@ class PluginManager:
         record.scene_ids = sorted(set(SCENE_REGISTRY.list_names()) - before_scenes)
         record.brain_names = sorted(set(BRAIN_REGISTRY.list_names()) - before_brains)
         record.dialogue_ops = sorted(set(DIALOGUE_OP_REGISTRY.list_names()) - before_dops)
+        record.portrait_backend_names = sorted(
+            set(PORTRAIT_BACKEND_REGISTRY.list_names()) - before_backends)
         # Hooks need an explicit re-scan since they're list-valued.
         record.hook_events = sorted({
             event for event in HOOK_REGISTRY.list_events()
@@ -480,6 +488,8 @@ class PluginManager:
             ("scene", ext.scenes, record.scene_ids),
             ("brain", ext.brains, record.brain_names),
             ("dialogue_op", ext.dialogue_ops, record.dialogue_ops),
+            ("portrait_backend", ext.portrait_backends,
+             record.portrait_backend_names),
         ]
         for category, declarations, registered in categories:
             declared_set = {d.kind for d in declarations}

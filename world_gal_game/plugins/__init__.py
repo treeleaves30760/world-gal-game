@@ -39,13 +39,15 @@ from __future__ import annotations
 # modules below depend on them.
 from .registry import (
     effect, condition, hook, inspect_field,
-    widget, scene, brain, dialogue_op, save_migration,
+    widget, scene, brain, dialogue_op, portrait_backend, save_migration,
     EFFECT_REGISTRY, CONDITION_REGISTRY, HOOK_REGISTRY, INSPECT_FIELD_REGISTRY,
     WIDGET_REGISTRY, SCENE_REGISTRY, BRAIN_REGISTRY, DIALOGUE_OP_REGISTRY,
+    PORTRAIT_BACKEND_REGISTRY,
     EffectEntry, ConditionEntry, HookEntry, InspectFieldEntry,
-    WidgetEntry, SceneEntry, BrainEntry, DialogueOpEntry,
+    WidgetEntry, SceneEntry, BrainEntry, DialogueOpEntry, PortraitBackendEntry,
     EffectRegistry, ConditionRegistry, HookRegistry, InspectFieldRegistry,
     WidgetRegistry, SceneRegistry, BrainRegistry, DialogueOpRegistry,
+    PortraitBackendRegistry,
     EffectHandler, ConditionHandler, HookHandler, InspectFieldProducer,
     loading, current_plugin_id, snapshot, restore,
 )
@@ -109,19 +111,21 @@ def fire_event(state, event: str, /, **kwargs):
 __all__ = [
     # decorators
     "effect", "condition", "hook", "inspect_field",
-    "widget", "scene", "brain", "dialogue_op", "save_migration",
+    "widget", "scene", "brain", "dialogue_op", "portrait_backend",
+    "save_migration",
     # registries (singletons)
     "EFFECT_REGISTRY", "CONDITION_REGISTRY", "HOOK_REGISTRY",
     "INSPECT_FIELD_REGISTRY",
     "WIDGET_REGISTRY", "SCENE_REGISTRY", "BRAIN_REGISTRY",
-    "DIALOGUE_OP_REGISTRY",
+    "DIALOGUE_OP_REGISTRY", "PORTRAIT_BACKEND_REGISTRY",
     # registry types + entry types
     "EffectRegistry", "ConditionRegistry", "HookRegistry",
     "InspectFieldRegistry",
     "WidgetRegistry", "SceneRegistry", "BrainRegistry",
-    "DialogueOpRegistry",
+    "DialogueOpRegistry", "PortraitBackendRegistry",
     "EffectEntry", "ConditionEntry", "HookEntry", "InspectFieldEntry",
     "WidgetEntry", "SceneEntry", "BrainEntry", "DialogueOpEntry",
+    "PortraitBackendEntry",
     # handler protocol types
     "EffectHandler", "ConditionHandler", "HookHandler",
     "InspectFieldProducer",
