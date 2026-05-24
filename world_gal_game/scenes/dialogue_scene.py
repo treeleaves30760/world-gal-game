@@ -73,6 +73,9 @@ class DialogueScene(Scene):
         self._slot_backends: dict[str, object | None] = {
             "left": None, "center": None, "right": None,
         }
+        # Which slot holds the current speaker, so lip-sync only moves their
+        # mouth (and only while their line is still typing). None = nobody.
+        self._speaking_slot: str | None = None
 
         # Background transition.
         self._bg_surface: pygame.Surface | None = None
@@ -307,6 +310,8 @@ class DialogueScene(Scene):
     def _update_portraits(self, line) -> None:
         """Compute which slots change this line and start transitions."""
         sw, sh = self.ctx.screen_size
+        speaker = getattr(line, "speaker", None)
+        self._speaking_slot = None
         if line.portraits:
             # Multi-slot: clear all then populate from the spec list.
             wanted: dict[str, tuple[pygame.Surface | None,
@@ -317,6 +322,9 @@ class DialogueScene(Scene):
             for spec in line.portraits:
                 surf, backend = self._resolve_slot(spec, sw, sh)
                 wanted[spec.slot] = (surf, spec, backend)
+                # The slot whose character is speaking drives lip-sync.
+                if speaker and spec.character == speaker:
+                    self._speaking_slot = spec.slot
             for slot, (surf, spec, backend) in wanted.items():
                 self._slot_backends[slot] = backend
                 self._start_slot_transition(slot, surf, spec, sw, sh)
@@ -332,6 +340,9 @@ class DialogueScene(Scene):
                 center_spec = None
                 center_backend = None
             self._slot_backends["center"] = center_backend
+            # Single portrait == the speaker on screen, so it drives lip-sync.
+            if center_surf is not None and speaker:
+                self._speaking_slot = "center"
             self._start_slot_transition("center", center_surf, center_spec, sw, sh)
             self._slot_backends["left"] = None
             self._start_slot_transition("left", None, None, sw, sh)
@@ -578,12 +589,16 @@ class DialogueScene(Scene):
                 if fade.done:
                     self._slot_fades[slot] = None
             # Advance the resting animation backend (breathing / sprite / rig).
-            # Isolated: a backend that raises is dropped, reverting the slot to
-            # the static blit rather than crashing the frame.
+            # The speaker's slot is "talking" while their line is still typing,
+            # which a layered rig uses to drive lip-sync. Isolated: a backend
+            # that raises is dropped, reverting the slot to the static blit
+            # rather than crashing the frame.
             backend = self._slot_backends.get(slot)
             if backend is not None:
+                talking = (slot == self._speaking_slot and self.box is not None
+                           and not self.box.fully_revealed())
                 try:
-                    backend.update(dt)
+                    backend.update(dt, talking=talking)
                 except Exception:
                     self._slot_backends[slot] = None
 

@@ -111,6 +111,19 @@ class AssetManager:
         self._images[path] = surf
         return surf
 
+    def has_image(self, path: str | None) -> bool:
+        """True iff ``path`` resolves to an image file that actually exists.
+
+        Unlike :meth:`image` (which returns a placeholder for a missing file),
+        this just probes the filesystem. The layered portrait backend uses it to
+        skip optional layers (blink / mouth) whose art isn't present, rather than
+        compositing a visible placeholder over the portrait.
+        """
+        if not path:
+            return False
+        abs_path = self._resolve(path)
+        return abs_path is not None and Path(abs_path).exists()
+
     def scaled(self, path: str | None, size: tuple[int, int],
                *, fit: str = "cover", fallback_color: tuple = (40, 30, 60)) -> pygame.Surface:
         """Return a scaled copy. fit = 'cover' | 'contain' | 'stretch'."""

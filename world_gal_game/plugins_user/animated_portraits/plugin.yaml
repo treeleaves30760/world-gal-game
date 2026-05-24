@@ -10,11 +10,14 @@ description: |
     - sprite: sprite-sheet frame animation (cols x rows, fps). Needs a sheet,
       but is the simplest "real" frame animation and decodes to plain pygame
       surfaces, so it runs identically on desktop and web (pygbag).
+    - layered: the flagship cross-platform rig — composites stacked PNG layers
+      (body + eyes + mouth) and animates blink, lip-sync (driven by the scene's
+      talking signal) and breathing. The Live2D "feel" in pure pygame.
 
-  Both degrade gracefully: a missing asset becomes a placeholder, bad params
-  fall back to a static blit. Native rigs (Live2D / Spine) are intentionally
-  NOT here — they need platform-specific SDKs and belong in a desktop-only
-  plugin; this bundle covers the web-safe majority.
+  All degrade gracefully: missing layers are skipped, a missing asset becomes a
+  placeholder, bad params fall back to a static blit. Native rigs (Live2D /
+  Spine) are intentionally NOT here — they need platform-specific SDKs and
+  belong in a desktop-only plugin; this bundle covers the all-platform majority.
 author: World Gal-Game
 engine_version: ">=0.1.0"
 depends: []
@@ -26,6 +29,8 @@ extends:
       description: Procedural idle breathing (scale + bob + sway) on a still.
     - kind: sprite
       description: Sprite-sheet frame animation (cols x rows at a fixed fps).
+    - kind: layered
+      description: Layered rig — blink + lip-sync + breathing on stacked PNGs.
 
 side_effects:
   reads_filesystem: false

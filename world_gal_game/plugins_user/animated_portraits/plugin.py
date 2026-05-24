@@ -65,7 +65,7 @@ class BreathBackend:
         self._sway = _f(a, "sway", 0.0)
         self._t = 0.0
 
-    def update(self, dt: float) -> None:
+    def update(self, dt: float, **_ctx) -> None:
         self._t += dt
 
     def base_surface(self):
@@ -110,6 +110,9 @@ class SpriteBackend:
         self._frames = self._slice(sheet, cols, rows, a.get("frames"))
         self._t = 0.0
 
+    def update(self, dt: float, **_ctx) -> None:
+        self._t += dt
+
     @staticmethod
     def _slice(sheet, cols, rows, cap):
         w = sheet.get_width() // cols
@@ -128,9 +131,6 @@ class SpriteBackend:
                 pass
         return frames or [sheet]
 
-    def update(self, dt: float) -> None:
-        self._t += dt
-
     def base_surface(self):
         return self._frames[0]
 
@@ -141,3 +141,144 @@ class SpriteBackend:
             idx = int(self._t * self._fps) % len(self._frames)
             frame = self._frames[idx]
         blit_fitted(surface, frame, rect, flip=flip, alpha=alpha)
+
+
+@portrait_backend("layered",
+                  description="Layered rig: blink + lip-sync + breathing (web-safe).")
+class LayeredBackend:
+    """The flagship cross-platform animated portrait — pure pygame, web-safe.
+
+    Composites stacked PNG layers (all sharing the base's canvas / registration)
+    and animates them procedurally to approximate the Live2D *feel* without any
+    native SDK or model asset:
+
+    - **blink** — swaps the eye layer on a natural, self-driven schedule (no
+      external signal). 2 layers = [open, closed]; 3 = [open, mid, closed]
+      (mid eases the close/open).
+    - **lip-sync** — cycles mouth layers while the scene reports ``talking=True``
+      (the slot's character is the active speaker, mid-typewriter); rests on the
+      closed mouth otherwise.
+    - **breathing** — the whole composite gently breathes (shared with ``breath``).
+
+    ``backend_args`` (everything optional; missing layers are simply skipped, so
+    a spec degrades from a full rig down to a breathing still):
+      ``base``   path to the body layer        (default: the spec's resolved still)
+      ``blink``  [open, closed] or [open, mid, closed] layer paths
+      ``mouth``  [closed, ..., open] layer paths (>=2 to lip-sync)
+      ``blink_min`` / ``blink_max`` seconds between blinks  (default 2.5 / 6.0)
+      ``blink_dur`` eyes-closed duration in seconds          (default 0.12)
+      ``mouth_fps`` mouth cycling rate while talking          (default 10)
+      ``period`` / ``scale`` / ``bob`` / ``sway`` breathing   (subtle defaults)
+
+    Blink timing uses a tiny inline LCG (no ``import random`` — the engine's
+    determinism guard scans this file), so it looks irregular yet reproducible.
+    """
+
+    def __init__(self, spec, assets, fallback_size):
+        a = _args(spec)
+        # Base layer: explicit path, else the spec's normal resolved still.
+        base_path = a.get("base")
+        if isinstance(base_path, str) and assets.has_image(base_path):
+            self._base = assets.image(base_path, fallback_size=fallback_size)
+        else:
+            self._base = assets.resolve_portrait(spec, fallback_size=fallback_size)
+        size = self._base.get_size()
+        self._blink = self._load_layers(assets, a.get("blink"), size)
+        self._mouth = self._load_layers(assets, a.get("mouth"), size)
+        self._blink_min = max(0.05, _f(a, "blink_min", 2.5))
+        self._blink_max = max(self._blink_min, _f(a, "blink_max", 6.0))
+        self._blink_dur = max(0.02, _f(a, "blink_dur", 0.12))
+        self._mouth_fps = max(0.0, _f(a, "mouth_fps", 10.0))
+        self._period = max(0.2, _f(a, "period", 4.0))
+        self._scale = _f(a, "scale", 0.015)
+        self._bob = _f(a, "bob", 4.0)
+        self._sway = _f(a, "sway", 0.0)
+
+        self._t = 0.0
+        self._talking = False
+        # Blink state machine.
+        self._lcg = (abs(hash(getattr(spec, "character", "x"))) % 2147483647) or 1
+        self._next_blink = self._rand(self._blink_min, self._blink_max)
+        self._blink_until = -1.0
+        # Composite cache keyed by (eye_idx, mouth_idx).
+        self._cache_key = None
+        self._composite = None
+
+    @staticmethod
+    def _load_layers(assets, paths, size):
+        """Load a list of layer paths that exist; missing ones are dropped."""
+        if not isinstance(paths, (list, tuple)):
+            return []
+        out = []
+        for p in paths:
+            if isinstance(p, str) and assets.has_image(p):
+                out.append(assets.image(p, fallback_size=size))
+        return out
+
+    def _rand(self, lo, hi):
+        """Next interval in [lo, hi] from an inline LCG (no global random)."""
+        self._lcg = (self._lcg * 1103515245 + 12345) & 0x7FFFFFFF
+        return lo + (hi - lo) * (self._lcg / 0x7FFFFFFF)
+
+    # ------------------------------------------------------------------
+
+    def update(self, dt: float, *, talking: bool = False, **_ctx) -> None:
+        self._t += dt
+        self._talking = bool(talking)
+        # Blink scheduler: when due, close the eyes for blink_dur, then schedule
+        # the next blink. No-op when no blink layers were provided.
+        if self._blink and self._t >= self._next_blink and self._blink_until < 0:
+            self._blink_until = self._t + self._blink_dur
+        if self._blink_until >= 0 and self._t >= self._blink_until:
+            self._blink_until = -1.0
+            self._next_blink = self._t + self._rand(self._blink_min, self._blink_max)
+
+    def _eye_index(self):
+        if len(self._blink) < 2 or self._blink_until < 0:
+            return 0  # eyes open (or no blink layers)
+        # 3-frame blink: mid frame on the first/last 30% of the close, else shut.
+        if len(self._blink) >= 3:
+            frac = 1.0 - (self._blink_until - self._t) / max(1e-3, self._blink_dur)
+            return 1 if (frac < 0.3 or frac > 0.7) else 2
+        return 1  # 2-frame: just closed
+
+    def _mouth_index(self):
+        if len(self._mouth) < 2 or not self._talking or self._mouth_fps <= 0:
+            return 0  # closed / resting
+        return int(self._t * self._mouth_fps) % len(self._mouth)
+
+    def _compose(self):
+        key = (self._eye_index(), self._mouth_index())
+        if key == self._cache_key and self._composite is not None:
+            return self._composite
+        comp = self._base.copy()
+        if self._blink:
+            comp.blit(self._blink[min(key[0], len(self._blink) - 1)], (0, 0))
+        if self._mouth:
+            comp.blit(self._mouth[min(key[1], len(self._mouth) - 1)], (0, 0))
+        self._cache_key = key
+        self._composite = comp
+        return comp
+
+    def base_surface(self):
+        # Resting frame (eyes open, mouth closed) for enter/exit transitions.
+        self._talking = False
+        self._blink_until = -1.0
+        return self._compose()
+
+    def draw(self, surface, rect, *, flip: bool = False, alpha: int = 255) -> None:
+        comp = self._compose()
+        # Breathing: grow the composite from its bottom baseline + gentle bob/sway.
+        phase = (self._t / self._period) * math.tau
+        inhale = 0.5 - 0.5 * math.cos(phase)
+        grow_w = int(round(rect.width * self._scale * inhale))
+        grow_h = int(round(rect.height * self._scale * inhale))
+        bob = int(round(-self._bob * inhale))
+        sway = int(round(self._sway * math.sin(phase)))
+        animated = pygame.Rect(
+            rect.x - grow_w // 2 + sway,
+            rect.y - grow_h + bob,
+            rect.width + grow_w,
+            rect.height + grow_h,
+        )
+        blit_fitted(surface, comp, animated, flip=flip, alpha=alpha)

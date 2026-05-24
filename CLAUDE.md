@@ -60,9 +60,10 @@ rendering, pack migration). The **AI-Coding-Native contract has landed** — rea
   and *how it moves* once it settles. `PortraitSpec.backend` (default
   `"static"` = the unchanged blit) routes a portrait's resting animation
   through a registered backend; the bundled `animated_portraits` plugin ships
-  web-safe `breath` (procedural idle) and `sprite` (sheet frames) backends.
-  Native rigs (Live2D/Spine) are a documented desktop-only plugin path, not
-  core. See `docs/galgame-maturity.md`.
+  web-safe `breath` (procedural idle), `sprite` (sheet frames), and `layered`
+  (blink + lip-sync + breathing on stacked PNGs — the flagship cross-platform
+  rig) backends. Native rigs (Live2D/Spine) are a documented desktop-only
+  plugin path, not core. See `docs/galgame-maturity.md`.
 
 See [ROADMAP.md](ROADMAP.md) for the full picture.
 

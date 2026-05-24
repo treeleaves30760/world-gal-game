@@ -39,12 +39,18 @@ staging,`ui/portrait_anim.py`(fade/slide/bounce/pop)+ `ui/transitions.py` 做
 
 ### 已實作:內建 `animated_portraits` 插件(web-safe,純 pygame)
 
-`world_gal_game/plugins_user/animated_portraits/` 提供兩個後端,桌面/web(pygbag)
-表現一致,皆防禦式降級(缺圖→placeholder、壞參數→靜態):
+`world_gal_game/plugins_user/animated_portraits/` 提供三個後端,桌面/web(pygbag)
+表現一致,皆防禦式降級(缺層/缺圖→略過或 placeholder、壞參數→靜態):
 
 - **`breath`** —— 單張立繪的程序化待機(呼吸縮放 + 起伏 + 可選晃動),**不需額外
   美術**,套在 demo_pack 現有平面立繪上即可動。參數:`period`/`scale`/`bob`/`sway`。
 - **`sprite`** —— sprite-sheet 影格動畫。參數:`cols`/`rows`/`fps`/`frames`。
+- **`layered`** —— **旗艦跨平台 rig**:疊層 PNG(身體 + 眼睛 + 嘴)合成,程序化
+  **眨眼**(自驅、LCG 排程,無 `import random`)、**嘴型 lip-sync**(吃場景的
+  `talking` 訊號 —— 只有當前說話者、台詞打字中才動嘴)、**呼吸**。在純 pygame /
+  全平台下做到 Live2D 的「感覺」。參數:`base`/`blink`/`mouth`/`blink_min`/
+  `blink_max`/`blink_dur`/`mouth_fps` + 呼吸參數。對話場景透過
+  `update(dt, talking=...)` 餵訊號,並以 `_speaking_slot` 確保只動說話者的嘴。
 
 ### 仍待辦:原生骨架(Live2D / Spine)
 
@@ -57,6 +63,7 @@ staging,`ui/portrait_anim.py`(fade/slide/bounce/pop)+ `ui/transitions.py` 做
 |---|---|---|---|
 | `breath` 程序化待機 | 已內建 | ✓ | 無外部依賴,套現有立繪即動 |
 | `sprite` 影格動畫 | 已內建 | ✓ | 需 sheet,技術最簡單 |
+| `layered` 眨眼/嘴型/呼吸 rig | 已內建 | ✓ | 旗艦;疊層 PNG,Live2D 的「感覺」,無外部依賴 |
 | Spine(`spine-python`) | 待辦 | 需驗證 | 桌面插件;授權/維護需評估 |
 | Live2D Cubism(native) | 待辦 | ✗ | 桌面插件;需 native SDK,工程量大 |
 

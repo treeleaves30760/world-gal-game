@@ -310,8 +310,8 @@ class WiggleBackend:
     def __init__(self, spec, assets, fallback_size):
         self._surf = assets.resolve_portrait(spec, fallback_size=fallback_size)
         self._t = 0.0
-    def update(self, dt):                  # 推進動畫時鐘
-        self._t += dt
+    def update(self, dt, **ctx):           # 推進動畫時鐘；ctx 可含場景訊號
+        self._t += dt                      # 例如 ctx["talking"]（lip-sync 用）
     def base_surface(self):                # 給轉場用的「靜止幀」（可回 None）
         return self._surf
     def draw(self, surface, rect, *, flip=False, alpha=255):
@@ -320,6 +320,9 @@ class WiggleBackend:
         blit_fitted(surface, self._surf,
                     rect.move(dx, 0), flip=flip, alpha=alpha)
 ```
+
+`update(dt, **ctx)` 的 `**ctx` 讓場景餵入每幀訊號;目前標準鍵是 `talking: bool`
+(該槽角色正在說話且台詞還在打字),layered 後端用它驅動嘴型。不在乎的後端忽略即可。
 
 ```yaml
 # 場景 YAML — 對白 line 上的 portraits（PortraitSpec list）
@@ -331,15 +334,21 @@ class WiggleBackend:
 ```
 
 引擎內建一個 **`animated_portraits`** 插件（`world_gal_game/plugins_user/`），
-提供兩個 web-safe（純 pygame）後端：
+提供三個 web-safe（純 pygame、桌面/web 一致）後端：
 
 - **`breath`** — 單張立繪的程序化待機（呼吸縮放 + 微幅起伏 + 可選晃動），**不需額外
   美術**。`backend_args`：`period` / `scale` / `bob` / `sway`。
 - **`sprite`** — sprite-sheet 影格動畫。`backend_args`：`cols` / `rows` / `fps` /
   `frames`。
+- **`layered`** — 旗艦跨平台 rig：疊層 PNG（身體 + 眼睛 + 嘴）合成,程序化**眨眼**、
+  **嘴型（lip-sync，吃 `talking` 訊號）**、**呼吸**。在純 pygame 下做到 Live2D 的
+  「感覺」。`backend_args`：`base` / `blink:[open,(mid,)closed]` /
+  `mouth:[closed,…,open]` / `blink_min` / `blink_max` / `blink_dur` /
+  `mouth_fps` + 呼吸參數。缺哪層就略過哪層(降級成「會呼吸的靜像」)。
 
 原生骨架（Live2D / Spine）刻意**不進核心**：它們需要平台專屬 SDK、`pygame` 下無可用
-綁定，應以**桌面限定插件**提供 —— 上面的擴充點讓這成為可能。
+綁定（皆走 OpenGL/mesh,不直接 blit 到 pygame surface），且需專屬製作工具與授權,
+應以**桌面限定插件**提供 —— 上面的擴充點讓這成為可能。
 
 ---
 

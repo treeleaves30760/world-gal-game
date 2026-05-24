@@ -16,9 +16,16 @@ that same static blit, so a missing plugin never breaks rendering.
 Contract (a backend class, instantiated per slot by the dialogue scene)::
 
     backend = cls(spec, assets, fallback_size)        # PortraitSpec, AssetManager, (w, h)
-    backend.update(dt)                                # advance the animation clock
+    backend.update(dt, **ctx)                         # advance the clock; **ctx carries
+                                                      #   signals from the scene
     backend.draw(surface, rect, *, flip=, alpha=)     # render the current frame into rect
     base = backend.base_surface()                     # a resting still for transitions (or None)
+
+``**ctx`` lets the scene feed per-frame signals a backend may use; backends that
+don't care ignore them. The one standard key today is ``talking: bool`` (True
+while the slot's character is the active speaker and their line is still typing)
+— a layered rig uses it to drive lip-sync. More keys can be added without
+breaking existing backends.
 
 A backend lives in the UI layer (it blits pygame surfaces) and holds **no game
 state**. The scene isolates backend calls so a buggy backend can never crash a
@@ -70,7 +77,7 @@ class PortraitBackend(Protocol):
     need not import or subclass anything.
     """
 
-    def update(self, dt: float) -> None: ...
+    def update(self, dt: float, **ctx: Any) -> None: ...
 
     def draw(self, surface: pygame.Surface, rect: pygame.Rect, *,
              flip: bool = False, alpha: int = 255) -> None: ...
@@ -92,7 +99,7 @@ class StaticBackend:
                  fallback_size: tuple[int, int]) -> None:
         self._surf = assets.resolve_portrait(spec, fallback_size=fallback_size)
 
-    def update(self, dt: float) -> None:  # noqa: D401 - no-op
+    def update(self, dt: float, **ctx: Any) -> None:  # noqa: D401 - no-op
         pass
 
     def base_surface(self) -> pygame.Surface | None:

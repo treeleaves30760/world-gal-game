@@ -169,10 +169,10 @@ def test_build_manifest_includes_portrait_backends(backends_loaded):
     man = build_manifest()
     assert "portrait_backends" in man
     names = {row["name"] for row in man["portrait_backends"]}
-    assert {"breath", "sprite"} <= names
+    assert {"breath", "sprite", "layered"} <= names
     # markup advertises them for agents that read the capability bundle.
     assert "portrait_backends" in man["markup"]
-    assert {"breath", "sprite"} <= set(man["markup"]["portrait_backends"])
+    assert {"breath", "sprite", "layered"} <= set(man["markup"]["portrait_backends"])
     # the PortraitSpec content schema gained the backend field.
     ps = schema_document()["models"]["PortraitSpec"]
     assert "backend" in ps["properties"]
@@ -185,7 +185,7 @@ def test_build_manifest_includes_portrait_backends(backends_loaded):
 def test_bundled_animated_portraits_loads_clean(backends_loaded):
     rec = backends_loaded.records.get("animated_portraits")
     assert rec is not None and rec.state == "loaded"
-    assert rec.portrait_backend_names == ["breath", "sprite"]
+    assert rec.portrait_backend_names == ["breath", "layered", "sprite"]
     assert rec.warnings == []
 
 
@@ -225,6 +225,94 @@ def test_sprite_backend_degrades_to_single_frame(backends_loaded):
     surf = pygame.Surface((400, 400), pygame.SRCALPHA)
     sb.update(1.0)
     sb.draw(surf, pygame.Rect(0, 0, 200, 300))  # no exception
+
+
+# ----------------------------------------------------------------------
+# Bundled layered rig (blink + lip-sync + breathing)
+
+
+class _LayerAssets:
+    """Returns a distinct solid layer per known path; reports existence."""
+
+    _KNOWN = {"base", "eo", "ec", "mc", "mo"}
+
+    def _mk(self, color, region):
+        s = pygame.Surface((120, 200), pygame.SRCALPHA)
+        s.fill((0, 0, 0, 0))
+        s.fill((*color, 255), region)
+        return s
+
+    def has_image(self, p):
+        return p in self._KNOWN
+
+    def image(self, p, fallback_size=(120, 200)):
+        return {
+            "base": self._mk((90, 90, 90), pygame.Rect(0, 0, 120, 200)),
+            "eo": self._mk((0, 220, 0), pygame.Rect(30, 30, 60, 20)),
+            "ec": self._mk((220, 0, 0), pygame.Rect(30, 30, 60, 8)),
+            "mc": self._mk((0, 0, 220), pygame.Rect(45, 150, 30, 6)),
+            "mo": self._mk((220, 220, 0), pygame.Rect(45, 150, 30, 24)),
+        }[p]
+
+    def resolve_portrait(self, spec, fallback_size=(120, 200)):
+        return self._mk((90, 90, 90), pygame.Rect(0, 0, 120, 200))
+
+
+def _layered(args):
+    spec = PortraitSpec(character="h", backend="layered", backend_args=args)
+    return PORTRAIT_BACKEND_REGISTRY.spawn("layered", spec, _LayerAssets(), (120, 200))
+
+
+def _layer_frame(be):
+    s = pygame.Surface((160, 260), pygame.SRCALPHA)
+    be.draw(s, pygame.Rect(0, 0, 120, 200))
+    return _md5(s)
+
+
+def test_layered_blinks_over_time(backends_loaded):
+    be = _layered({"base": "base", "blink": ["eo", "ec"],
+                   "blink_min": 0.1, "blink_max": 0.15, "blink_dur": 0.3})
+    rest = _layer_frame(be)
+    be.update(0.2, talking=False)   # past the scheduled blink -> eyes closed
+    assert _layer_frame(be) != rest
+
+
+def test_layered_lip_sync_follows_talking(backends_loaded):
+    be = _layered({"base": "base", "mouth": ["mc", "mo"], "mouth_fps": 10})
+    be.update(0.0, talking=True)
+    a = _layer_frame(be)
+    be.update(0.15, talking=True)   # crosses a mouth-frame boundary
+    assert _layer_frame(be) != a
+    # Silent -> mouth rests on frame 0 no matter the clock.
+    be.update(0.37, talking=False)
+    assert be._mouth_index() == 0
+
+
+def test_layered_degrades_without_layers(backends_loaded):
+    # No blink/mouth layers -> a breathing still; base_surface present, no crash.
+    be = _layered({})
+    assert be.base_surface() is not None
+    be.update(0.3, talking=True)
+    be.draw(pygame.Surface((160, 260), pygame.SRCALPHA), pygame.Rect(0, 0, 120, 200))
+
+
+def test_layered_skips_missing_optional_layers(backends_loaded):
+    # Unknown layer paths are dropped (has_image False), not composited as
+    # placeholders -> no blink/mouth layers loaded.
+    be = _layered({"base": "base", "blink": ["nope1", "nope2"],
+                   "mouth": ["alsogone"]})
+    assert be._blink == [] and be._mouth == []
+
+
+def test_asset_manager_has_image(tmp_path):
+    from world_gal_game.ui.assets import AssetManager
+    am = AssetManager(pack_root=tmp_path)
+    (tmp_path / "assets").mkdir()
+    real = tmp_path / "assets" / "p.png"
+    pygame.image.save(pygame.Surface((4, 4)), str(real))
+    assert am.has_image("assets/p.png") is True
+    assert am.has_image("assets/missing.png") is False
+    assert am.has_image(None) is False
 
 
 # ----------------------------------------------------------------------
@@ -275,6 +363,19 @@ def test_resolve_slot_returns_backend_for_registered_spec(backends_loaded):
     _, b_unknown = scene._resolve_slot(
         PortraitSpec(character="x", backend="live2d_not_loaded"), 1920, 1080)
     assert b_static is None and b_unknown is None
+
+
+def test_scene_marks_speaking_slot_for_lip_sync(backends_loaded):
+    from world_gal_game.scenes.dialogue_scene import DialogueScene
+    ctx = SimpleNamespace(assets=_LayerAssets(), screen_size=(1920, 1080))
+    scene = DialogueScene(ctx)
+    line = SimpleNamespace(
+        portraits=[PortraitSpec(character="h", slot="left", backend="layered",
+                                backend_args={"base": "base"})],
+        portrait=None, speaker="h", expression=None)
+    scene._update_portraits(line)
+    assert scene._speaking_slot == "left"      # speaker's slot drives lip-sync
+    assert scene._slot_backends["left"] is not None
 
 
 def test_dialogue_scene_renders_breathing_portrait_without_crash():

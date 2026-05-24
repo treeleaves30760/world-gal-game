@@ -27,7 +27,7 @@ The engine is built around three pillars (see CLAUDE.md for the framing):
   `PluginManager` reconciles declared-vs-registered (see
   [Extension points](#extension-points-pillar-c)).
 
-Test suite: 829 cases, all green.
+Test suite: 835 cases, all green.
 
 ---
 
@@ -157,8 +157,11 @@ video may need a thin runtime hook. See `docs/galgame-maturity.md`.
   the seam in `core/portrait_spec.py` (`backend` / `backend_args`); the dialogue
   scene delegates the resting draw, transitions stay surface-based, `"static"`
   is unchanged. Bundled `animated_portraits` plugin ships web-safe `breath`
-  (procedural idle) + `sprite` (sheet frames). **Remaining:** native Live2D /
-  Spine rigs as a desktop-only plugin (no pygame binding; out of core).
+  (procedural idle) + `sprite` (sheet frames) + `layered` (blink + lip-sync +
+  breathing on stacked PNGs — the flagship cross-platform rig; lip-sync driven
+  by a `talking` signal the scene feeds via `update(dt, **ctx)`).
+  **Remaining:** native Live2D / Spine rigs as a desktop-only plugin (no pygame
+  binding; out of core).
 - **5B — video / movie playback** (OP/ED/過場) — `@dialogue_op` or `@scene`;
   evaluate the web/pygbag decode path. Open.
 - **5C — i18n translation extraction — done** (`tools/i18n_extract.py`):
@@ -217,7 +220,7 @@ vs `pyproject.toml`-pinned, and seek review.
 | 2026-05-24 | Phase 2 wrap-up: manifest schema alignment (all 8 categories) + reconciliation, dynamic references (`tools/gen_references.py`), `wgg edit`/`validate` did-you-mean | done |
 | 2026-05-24 | Phase 2.5: AI-Coding-Native contract — typed arg JSON-Schema (`--schema`), `run_script` trace/diff + apply/check/assert/affordances/snapshot/restore, determinism seed | done |
 | 2026-05-24 | Phase 5C: i18n translation extraction (`tools/i18n_extract.py`) — pack scenes → string table + `--check` coverage | done |
-| 2026-05-24 | Phase 5A: animated portraits — `@portrait_backend` (9th extension category), `PortraitSpec.backend`/`backend_args`, dialogue-scene seam, bundled `animated_portraits` (breath + sprite) | done |
+| 2026-05-24 | Phase 5A: animated portraits — `@portrait_backend` (9th extension category), `PortraitSpec.backend`/`backend_args`, dialogue-scene seam, bundled `animated_portraits` (breath + sprite + layered blink/lip-sync/breathing rig) | done |
 | — | Phase 5B: video / movie playback (OP/ED/過場) | open (Next PR #1) |
 | — | Phase 5A native rigs: Live2D / Spine as a desktop-only plugin | open (Next PR #1) |
 | — | Phase 3: LLM NPC, autonomous spec-to-pack, cross-pack plugins | deferred |
