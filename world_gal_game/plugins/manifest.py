@@ -16,11 +16,14 @@ The manifest is intentionally narrow:
 - ``engine_version``                                   — semver range against engine's __version__
 - ``depends``                                          — other plugin ids
 - ``entry_module``                                     — Python module path relative to plugin dir
-- ``extends.{effects,conditions,hooks,inspect_fields}``— declared extension points
+- ``extends.{effects,conditions,hooks,inspect_fields,widgets,scenes,brains,dialogue_ops}``
+      — declared extension points (all eight categories the decorators cover)
 - ``side_effects.{reads_filesystem,network,subprocess}`` — boolean disclosure flags
 
-Widget / scene / brain / dialogue_op handlers register in code but are
-not declared here yet.
+Declaring extension points is optional, but when a plugin *does* declare
+them, :class:`PluginManager` reconciles the declaration against what the
+entry module actually registers and warns on any mismatch — so the
+manifest can serve as a checkable description of the plugin's surface.
 """
 from __future__ import annotations
 
@@ -87,6 +90,14 @@ class Extends(BaseModel):
     # event name (e.g. "effect.after_apply").
     hooks: list[ExtensionDeclaration] = Field(default_factory=list)
     inspect_fields: list[ExtensionDeclaration] = Field(default_factory=list)
+    # Class-based extension points registered in code via @widget / @scene /
+    # @brain / @dialogue_op. ``kind`` is the registered name (widget name /
+    # scene id / brain name / dialogue-op name). Declaring them is optional;
+    # PluginManager warns when a declaration and the code disagree.
+    widgets: list[ExtensionDeclaration] = Field(default_factory=list)
+    scenes: list[ExtensionDeclaration] = Field(default_factory=list)
+    brains: list[ExtensionDeclaration] = Field(default_factory=list)
+    dialogue_ops: list[ExtensionDeclaration] = Field(default_factory=list)
 
 
 class PluginManifest(BaseModel):

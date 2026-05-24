@@ -265,7 +265,7 @@ class PackEditor:
                   *, path: str = "") -> Any:
         """Run pydantic validation; wrap errors as PackEditError."""
         try:
-            return model.model_validate(raw)
+            obj = model.model_validate(raw)
         except ValidationError as ve:
             errs = ve.errors()
             first = errs[0]
@@ -292,6 +292,56 @@ class PackEditor:
                 got=repr(first.get("input")),
                 hint=hint,
             ) from ve
+        PackEditor._check_kinds(obj, op, path)
+        return obj
+
+    @staticmethod
+    def _check_kinds(obj: Any, op: str, path: str) -> None:
+        """Catch a misspelled effect/condition kind on a validated model.
+
+        ``Effect``/``Condition`` accept any non-empty ``kind`` (plugins extend
+        the set), so pydantic never flags a typo. We walk the validated object
+        for Effect/Condition nodes and, when a kind is unknown **and** there is
+        a close match among registered kinds, raise with a "did you mean" hint.
+        An unknown kind with *no* close match is left alone — it is most likely
+        a plugin kind not loaded in this process, and blocking it would reject a
+        legitimate edit.
+        """
+        import difflib
+
+        from world_gal_game.core.story_graph import Condition, Effect
+        from world_gal_game.dev.capability_manifest import (
+            all_condition_kinds, all_effect_kinds, find_condition, find_effect,
+        )
+
+        def check(kind: str, *, category: str, known, finder, where: str) -> None:
+            if not kind or finder(kind) is not None:
+                return
+            match = difflib.get_close_matches(kind, known(), n=1, cutoff=0.6)
+            if match:
+                raise PackEditError(
+                    op=op, path=where, field="kind", got=kind,
+                    message=f"unknown {category} kind '{kind}'",
+                    hint=(f"did you mean '{match[0]}'? "
+                          "(run `wgg capabilities` for the full list)"),
+                )
+
+        def walk(node: Any, where: str) -> None:
+            if isinstance(node, Effect):
+                check(node.kind, category="effect", known=all_effect_kinds,
+                      finder=find_effect, where=f"{where}.kind")
+            elif isinstance(node, Condition):
+                check(node.kind, category="condition",
+                      known=all_condition_kinds, finder=find_condition,
+                      where=f"{where}.kind")
+            if isinstance(node, BaseModel):
+                for fname in type(node).model_fields:
+                    walk(getattr(node, fname), f"{where}.{fname}")
+            elif isinstance(node, (list, tuple)):
+                for i, item in enumerate(node):
+                    walk(item, f"{where}[{i}]")
+
+        walk(obj, path or type(obj).__name__.lower())
 
     # ------------------------------------------------------------------
     # Scene operations

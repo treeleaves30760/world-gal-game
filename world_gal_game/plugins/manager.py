@@ -83,6 +83,9 @@ class PluginRecord:
     scene_ids: list[str] = field(default_factory=list)
     brain_names: list[str] = field(default_factory=list)
     dialogue_ops: list[str] = field(default_factory=list)
+    # Advisory mismatches between plugin.yaml's extends.* and what the entry
+    # module actually registered (see PluginManager._reconcile_declarations).
+    warnings: list[str] = field(default_factory=list)
 
     @property
     def id(self) -> str:
@@ -294,6 +297,7 @@ class PluginManager:
                     "brains": r.brain_names,
                     "dialogue_ops": r.dialogue_ops,
                     "side_effects": r.manifest.side_effects.model_dump(),
+                    "warnings": r.warnings,
                 }
                 for r in self.loaded()
             ],
@@ -450,7 +454,47 @@ class PluginManager:
             if h.plugin_id == record.id and (event, h.fn) not in before_hooks
         })
 
+        self._reconcile_declarations(record)
         record.state = "loaded"
+
+    def _reconcile_declarations(self, record: PluginRecord) -> None:
+        """Warn when plugin.yaml's declared extension points disagree with what
+        the entry module actually registered.
+
+        Declaring ``extends.*`` is optional. Per category we flag:
+
+        - **declared but not registered** — a broken promise; always warned.
+        - **registered but not declared** — only warned when that category has
+          at least one declaration, so plugins that declare nothing in a
+          category are never nagged (full backward compatibility).
+
+        Warnings are advisory: logged and stored on the record, never fatal.
+        """
+        ext = record.manifest.extends
+        categories = [
+            ("effect", ext.effects, record.effect_kinds),
+            ("condition", ext.conditions, record.condition_kinds),
+            ("hook", ext.hooks, record.hook_events),
+            ("inspect_field", ext.inspect_fields, record.inspect_keys),
+            ("widget", ext.widgets, record.widget_names),
+            ("scene", ext.scenes, record.scene_ids),
+            ("brain", ext.brains, record.brain_names),
+            ("dialogue_op", ext.dialogue_ops, record.dialogue_ops),
+        ]
+        for category, declarations, registered in categories:
+            declared_set = {d.kind for d in declarations}
+            registered_set = set(registered)
+            for missing in sorted(declared_set - registered_set):
+                msg = (f"plugin '{record.id}' declares {category} '{missing}' "
+                       f"in plugin.yaml but did not register it")
+                record.warnings.append(msg)
+                _log.warning(msg)
+            if declared_set:  # opted into declaring this category
+                for undeclared in sorted(registered_set - declared_set):
+                    msg = (f"plugin '{record.id}' registered {category} "
+                           f"'{undeclared}' not declared in plugin.yaml")
+                    record.warnings.append(msg)
+                    _log.warning(msg)
 
     def _import_entry_module(self, record: PluginRecord) -> None:
         """importlib.util based module loader, isolated to the plugin dir."""
