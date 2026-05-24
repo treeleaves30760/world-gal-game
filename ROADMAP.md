@@ -3,9 +3,11 @@
 Where the engine is going next. Read alongside [CLAUDE.md](CLAUDE.md) (AI
 onboarding) and [docs/architecture.md](docs/architecture.md) (engine internals).
 
-> Last updated: 2026-05-23. Phase 1 done, Phase 2 mostly done. A Phase 3
-> distribution + platform push (incl. VN presentation/extras table-stakes) is
-> currently in the working tree (uncommitted).
+> Last updated: 2026-05-24. Phases 1-2 done, including the **AI-Coding-Native
+> contract** (typed arg JSON-Schema, `run_script` trace/diff/snapshot/ops,
+> determinism — see [docs/ai-native-contract.md](docs/ai-native-contract.md)).
+> A Phase 3 distribution + platform push and Phase 5 GalGame-maturity items
+> (Live2D, video, i18n extraction) remain.
 
 ---
 
@@ -19,11 +21,12 @@ The engine is built around three pillars (see CLAUDE.md for the framing):
   AI can play, inspect, edit, extend, and self-verify via `HeadlessSession`,
   `GameDriver`, `PackInspector`, `PackEditor`, `CapabilityManifest`, `SelfCheck`,
   `SmokeRunner`, `VisualCheck`, and `asset_studio`.
-- **Pillar C — third-party plugins extend the engine:** all eight extension
-  points work in code, but the manifest schema only declares four of them (the
-  one real gap — see [Extension points](#extension-points-pillar-c)).
+- **Pillar C — third-party plugins extend the engine:** complete. All eight
+  extension points work in code *and* are declarable in `plugin.yaml`;
+  `PluginManager` reconciles declared-vs-registered (see
+  [Extension points](#extension-points-pillar-c)).
 
-Test suite: 766 cases, all green.
+Test suite: 807 cases, all green.
 
 ---
 
@@ -48,11 +51,28 @@ Done:
 - AI end-to-end dev loop: `SelfCheck` (schema → refs → dead-ends → smoke →
   visual), `SmokeRunner`, `VisualCheck` (md5 + pixel diff), `asset_studio`.
 
-Remaining (the wrap-up — see [Next PRs](#next-prs)):
+Wrap-up — done 2026-05-24:
 
-- **Manifest schema alignment** for the four Phase 2 extension points.
-- **Auto-generated** `effects-reference.md` / `conditions-reference.md`.
-- **`wgg edit` capability hints** on unknown kinds.
+- **Manifest schema alignment** — `plugin.yaml` declares all eight categories;
+  `PluginManager` reconciles declared-vs-registered and warns on mismatch.
+- **Auto-generated** `effects-reference.md` / `conditions-reference.md` via
+  `tools/gen_references.py` (`--check` drift guard).
+- **`wgg edit` / `wgg validate` capability hints** — "did you mean ..." on a
+  misspelled kind.
+
+### Phase 2.5 — AI-Coding-Native contract — Done (2026-05-24)
+
+See [docs/ai-native-contract.md](docs/ai-native-contract.md).
+
+- **Typed arg models** for all 45 builtin effects/conditions
+  (`plugins/{effect_args,condition_args}.py`) → real **JSON-Schema export**
+  (`wgg capabilities --schema`) and warning-level validator arg checks.
+- **`run_script`** gained `apply` / `check` / `assert` / `affordances` /
+  `snapshot` / `restore` ops, per-op state **diff**, and an execution **trace**
+  (`dev/trace.py` + `dev/diff.py`; the dormant `transcript` is now populated).
+- **Determinism**: `EngineConfig.seed` → `GameState.rng()`; a test guards
+  against uncontrolled global `random`.
+- pygame-ce stdout banner suppressed so all CLI/headless JSON is clean.
 
 ### Phase 3 — Distribution, platforms, presentation, autonomy — In progress
 
@@ -101,15 +121,15 @@ declared in `plugin.yaml`'s `extends`:
 | `@condition` | `CONDITION_REGISTRY` | `conditions` | done |
 | `@hook` | `HOOK_REGISTRY` | `hooks` | done |
 | `@inspect_field` | `INSPECT_FIELD_REGISTRY` | `inspect_fields` | done |
-| `@widget` | `WIDGET_REGISTRY` | — | registry only, manifest lags |
-| `@scene` | `SCENE_REGISTRY` | — | registry only, manifest lags |
-| `@brain` | `BRAIN_REGISTRY` | — | registry only, manifest lags |
-| `@dialogue_op` | `DIALOGUE_OP_REGISTRY` | — | registry only, manifest lags |
+| `@widget` | `WIDGET_REGISTRY` | `widgets` | done |
+| `@scene` | `SCENE_REGISTRY` | `scenes` | done |
+| `@brain` | `BRAIN_REGISTRY` | `brains` | done |
+| `@dialogue_op` | `DIALOGUE_OP_REGISTRY` | `dialogue_ops` | done |
 
-Plugins can register all eight, but a `plugin.yaml` can only *declare* the first
-four — so for the last four the "declared side-effects" guarantee is broken, and
-`PluginManager.activate()` does no declared-vs-registered consistency check.
-Closing this is the top next PR.
+All eight register via decorator and can be *declared* in `plugin.yaml`'s
+`extends`. `PluginManager` reconciles declared-vs-registered per plugin and
+records advisory warnings on mismatch (`PluginRecord.warnings`), so the manifest
+is a checkable description of a plugin's surface.
 
 Other plugin-system facts: 3 scan roots (bundled / per-user / pack-local),
 `isolate()` wraps every handler call (log + safe default, never an engine
@@ -123,51 +143,35 @@ filtered out by `SaveManager`, and `depends` + topological load ordering exist
 
 In priority order.
 
-### 1. Align the manifest schema with the registry (high leverage, low effort)
+PRs #1-3 (manifest alignment, dynamic references, edit hints) **shipped
+2026-05-24** — see the Phase 2 wrap-up + Phase 2.5 above. Remaining:
 
-`@widget` / `@scene` / `@brain` / `@dialogue_op` work, but `plugin.yaml` can't
-declare them, breaking side-effect transparency.
+### 1. GalGame maturity (Phase 5) — presentation / production table-stakes
 
-- `plugins/manifest.py` — add `widgets` / `scenes` / `brains` / `dialogue_ops`
-  to `Extends` (reuse the `ExtensionDeclaration` shape).
-- `plugins/manager.py` — `activate()` compares declared vs registered and warns
-  on mismatch (without blocking load).
-- `docs/plugins.md` — add `@widget` / `@scene` / `@brain` / `@dialogue_op`
-  examples, plus a small `<pack>/plugins/widget_example/` demo.
-- Test the declared-vs-implemented mismatch warning path.
+Mostly plugin-able (`@scene` / `@widget` / `@dialogue_op`); Live2D and video may
+need a thin runtime / portrait hook. Each warrants its own design spike.
 
-### 2. Auto-generate the effect / condition references (medium effort, high long-term value)
+- **Live2D / Spine animated 立繪** — abstract a portrait backend in
+  `core/portrait_spec.py`; deliver model load/drive as a plugin.
+- **Video / movie playback** (OP/ED/過場) — `@dialogue_op` or `@scene`; evaluate
+  the web/pygbag decode path.
+- **i18n translation extraction** — walk pack scenes YAML → translatable string
+  table + a merge-back path (CJK fonts already handled).
 
-The two reference docs are hand-maintained and drift from the registry.
+### 2. Plugin distribution design
 
-- `tools/gen_reference.py` (new) — run `build_manifest()`, emit markdown.
-- `docs/effects-reference.md` / `conditions-reference.md` — mark as generated.
-- Add the generation step to the dev loop.
-
-### 3. Wire `wgg edit` to CapabilityManifest hints (medium effort, high UX value)
-
-Today a misspelled kind yields a bare "unknown kind." Add "did you mean ...".
-
-- `dev/pack_editor.py` — on a kind validation failure, run
-  `difflib.get_close_matches` against `EFFECT_REGISTRY.list_kinds()`.
-- Test the hint path.
-
-### 4. Plugin distribution design (Phase 3 starter)
-
-Sharing one plugin across packs currently means copying. Out of scope for the
-PRs above — start with a `docs/distribution-plugins.md` proposal weighing PyPI
-namespace vs git submodule vs `pyproject.toml`-pinned, and seek review.
+Sharing one plugin across packs currently means copying. Start with a
+`docs/distribution-plugins.md` proposal weighing PyPI namespace vs git submodule
+vs `pyproject.toml`-pinned, and seek review.
 
 ---
 
 ## Known gaps
 
-- **References hand-maintained** (Pillar A) — fixed by Next PR #2.
 - **`PackEditor` lacks `add_clue` / `add_quest` / `add_achievement`** (Pillar B)
   — it covers scene / choice / npc / location / item / save-migration only;
   other pack-level collections have no dedicated mutator yet.
 - **No autonomous spec-to-pack example** (Pillar B) — the loop exists piecewise.
-- **Manifest schema lags registry** (Pillar C) — fixed by Next PR #1.
 - **No `@field` decorator** for public plugin state — plugins use
   `state.meta["__plugin:<id>__"]` for private state and `@inspect_field` for the
   read path; writing public fields into `GameState` is not yet a first-class API.
@@ -203,5 +207,7 @@ namespace vs git submodule vs `pyproject.toml`-pinned, and seek review.
 | 2026-05-19 | Clue / Journal system (`core/clue.py`, `scenes/clues_scene.py`, `ui/widgets/clue_log.py`, `content/clues.yaml`) | done |
 | 2026-05-22 | Phase 3: distribution + platform + presentation (web/Steam/mobile, rich text, voice, touch, responsive, pack migration) | in progress (working tree) |
 | 2026-05-23 | Phase 3 presentation/extras table-stakes: CG gallery, music room, scene replay, endings + completion, Auto/Skip polish, NVL mode, camera/screen FX, per-character voice, quicksave/autosave + save-UX | done |
-| — | Phase 2 wrap-up: manifest schema alignment / dynamic references / `wgg edit` hints | open (Next PRs #1–3) |
+| 2026-05-24 | Phase 2 wrap-up: manifest schema alignment (all 8 categories) + reconciliation, dynamic references (`tools/gen_references.py`), `wgg edit`/`validate` did-you-mean | done |
+| 2026-05-24 | Phase 2.5: AI-Coding-Native contract — typed arg JSON-Schema (`--schema`), `run_script` trace/diff + apply/check/assert/affordances/snapshot/restore, determinism seed | done |
+| — | Phase 5: GalGame maturity — Live2D/Spine, video playback, i18n extraction | open (Next PR #1) |
 | — | Phase 3: LLM NPC, autonomous spec-to-pack, cross-pack plugins | deferred |

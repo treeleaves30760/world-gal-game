@@ -7,6 +7,11 @@
 - **AI agent** — 我（Claude）可以驅動引擎、看狀態、自動驗證
 - **整合測試** — 你自己寫的 pytest 套件
 
+> Agent 操控/驗證的完整契約（`run_script` 的 `apply`/`check`/`assert`/
+> `affordances`/`snapshot`/`restore` ops、per-op `diff`、execution `transcript`、
+> JSON-Schema 匯出、determinism seed）見
+> [ai-native-contract.md](ai-native-contract.md)。
+
 ## 印當前狀態
 
 ```bash

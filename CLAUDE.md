@@ -40,19 +40,23 @@ first-class developer throughout:
 
 ## Current focus
 
-A **distribution and platform push is currently in the working tree** (web via
+A **distribution and platform push is in the working tree** (web via
 pygbag/WASM, Steam, Android/mobile + PWA, rich text, voice, touch and responsive
-rendering, pack migration). Separately, three Phase 2 plugin-system loose ends
-remain open. See [ROADMAP.md](ROADMAP.md) for the full picture; the highest-value
-next PRs:
+rendering, pack migration). The **AI-Coding-Native contract has landed** — read
+[docs/ai-native-contract.md](docs/ai-native-contract.md):
 
-1. **Align the manifest schema with the registry** — let `plugin.yaml` declare
-   `@widget` / `@scene` / `@brain` / `@dialogue_op`, which today only register
-   in Python.
-2. **Generate the effect / condition references dynamically** from
-   `build_manifest()` (currently hand-written and drifts).
-3. **Wire `wgg edit` to CapabilityManifest hints** — a misspelled kind returns
-   "did you mean ...".
+- Typed effect/condition arg models with real **JSON-Schema export**
+  (`wgg capabilities --schema`); `wgg validate` does warning-level arg checks.
+- `run_script` gained `apply` / `check` / `assert` / `affordances` /
+  `snapshot` / `restore` ops, per-op state **diff**, and an execution
+  **trace** (`transcript`).
+- **Determinism**: `EngineConfig.seed` → `GameState.rng()`.
+- The three former plugin loose ends are **closed**: `plugin.yaml` declares all
+  eight extension categories (manager reconciles & warns); references generate
+  from `build_manifest()` (`tools/gen_references.py`); `wgg edit` / `wgg
+  validate` return "did you mean" hints.
+
+See [ROADMAP.md](ROADMAP.md) for the full picture.
 
 ---
 
@@ -62,8 +66,12 @@ next PRs:
 
 - `world_gal_game.headless.HeadlessSession` — high-level ops (`start_scene`,
   `next_line`, `choose`, `move_to`, `advance_time`, `set_flag`,
-  `adjust_affection`, `inspect`, `run_script`). Pure Python, no pygame display.
-  See `docs/headless.md`.
+  `adjust_affection`, `inspect`, `run_script`) **plus agent state control**:
+  `apply` (any effect), `check` / `assert` (conditions / expectations),
+  `snapshot` / `restore` (branch exploration), `affordances` (action space).
+  `run_script` returns per-op `diff`s and collects an execution `transcript`.
+  Pure Python, no pygame display. See `docs/headless.md` and
+  `docs/ai-native-contract.md`.
 - `world_gal_game.dev.driver.GameDriver` — low-level pygame events + screenshot +
   widget queries, for pixel-level UI debugging. See `docs/ai-debug.md`.
 - CLI: `wgg --headless --inspect`, `wgg --headless --script <json>`,
@@ -79,7 +87,9 @@ next PRs:
   `all_*_kinds()` / `find_effect()` / `find_condition()` helpers. Includes
   loaded plugins.
 - CLI: `wgg inspect-pack <pack>`, `wgg inspect-pack <pack> --capabilities`,
-  `wgg capabilities --pack <pack>`.
+  `wgg capabilities --pack <pack>`, `wgg capabilities --pack <pack> --schema`
+  (JSON-Schema bundle: per-kind arg schemas + content models, for offline
+  validation by any agent).
 
 ### Edit packs structurally
 
@@ -192,6 +202,7 @@ uv run python main.py
 | Goal | Location |
 |---|---|
 | Engine internals | `docs/architecture.md` |
+| AI-Coding-Native contract (schema / ops / trace / determinism) | `docs/ai-native-contract.md` |
 | Full AI developer guide | `docs/ai-developer-guide.md` |
 | AI plays the game | `docs/headless.md` |
 | AI debugs the UI | `docs/ai-debug.md` |
@@ -206,6 +217,9 @@ uv run python main.py
 | Scene framework | `world_gal_game/scenes/base.py` |
 | Plugin registry / manager | `world_gal_game/plugins/{registry,manager,manifest,context}.py` |
 | Builtin effects / conditions | `world_gal_game/plugins/{builtin_effects,builtin_conditions}.py` |
+| Effect / condition arg models (JSON Schema) | `world_gal_game/plugins/{effect_args,condition_args}.py` |
+| Execution trace / state diff (headless) | `world_gal_game/dev/{trace,diff}.py` |
+| Reference doc generator | `tools/gen_references.py` |
 | Pack structure analysis | `world_gal_game/dev/pack_inspector.py` |
 | Pack structure editing | `world_gal_game/dev/pack_editor.py` |
 | Engine capability list | `world_gal_game/dev/capability_manifest.py` |
