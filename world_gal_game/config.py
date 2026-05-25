@@ -29,6 +29,7 @@ _PERSISTED_SETTING_FIELDS: tuple[str, ...] = (
     "auto_play_wait_voice",
     "skip_unread_only",
     "nvl_mode",
+    "rollback_enabled",
     "per_character_voice_volume",
     "autosave_enabled",
     "autosave_slot_count",
@@ -183,6 +184,11 @@ class EngineConfig:
 
     # NVL (full-screen accumulating text) presentation mode toggle.
     nvl_mode: bool = False
+
+    # Player-facing rollback (rewind the game state to a previous line within
+    # the current scene). Built on the same snapshot/restore machinery the
+    # headless agent layer uses for branch exploration. Bound to Backspace.
+    rollback_enabled: bool = True
 
     # Per-character voice volume overrides keyed by speaker id; speakers
     # absent here fall back to ``voice_volume``. UI lives in the settings

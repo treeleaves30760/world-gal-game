@@ -6,6 +6,7 @@ from typing import Callable
 import pygame
 
 from .base import Scene, SceneContext
+from ..core.history import StateHistory
 from ..ui.widgets import DialogueBox, ChoiceMenu, PortraitView, QuickMenuBar
 from ..ui.nvl_box import NVLBox
 from ..ui.transitions import PortraitCrossfade, BackgroundFade
@@ -37,6 +38,13 @@ class DialogueScene(Scene):
         self._current_line = None
         self._scene_started = False
         self._pending_choices = False
+        # Player-facing rollback: per-scene history of (state snapshot, the
+        # presentation that was on screen). Created fresh in enter() when
+        # config.rollback_enabled, so rewinding stays within the current scene.
+        # _rewinding guards _render_presentation from re-recording while it is
+        # redrawing a rewound presentation.
+        self._history: StateHistory | None = None
+        self._rewinding: bool = False
         # Skip / auto-play state
         self.auto_play_enabled: bool = False
         self._auto_play_timer: float = 0.0
@@ -104,6 +112,11 @@ class DialogueScene(Scene):
         self.scene_id = scene_id
         self.on_done = on_done
         self.on_scrollback = on_scrollback
+        # Fresh rollback history per scene (rewind stays within this scene).
+        self._history = (StateHistory()
+                         if getattr(self.ctx.config, "rollback_enabled", True)
+                         else None)
+        self._rewinding = False
         sw, sh = self.ctx.screen_size
         box_h = 230
         margin = 32
@@ -427,6 +440,16 @@ class DialogueScene(Scene):
         elif pres.kind == "end":
             self._end()
 
+        # Record this display for player rollback. Only line / choice displays
+        # are recorded (not transitions / ends), and never while we are redrawing
+        # a rewound presentation (self._rewinding) — otherwise a rewind would
+        # immediately re-push what it just restored. The presentation is stored
+        # as the payload so a rewind redraws it without re-running the engine
+        # (which would re-fire the line's effects / dialogue ops).
+        if (self._history is not None and not self._rewinding
+                and pres.kind in ("line", "choice")):
+            self._history.record(self.ctx.state, pres)
+
     def _end(self) -> None:
         if self.on_done is not None:
             cb = self.on_done
@@ -631,6 +654,23 @@ class DialogueScene(Scene):
             if e.type == pygame.KEYDOWN and e.key == pygame.K_b and self.on_scrollback:
                 self.on_scrollback()
                 return
+
+        # Rollback on Backspace: rewind the game state to the previous line in
+        # this scene and redraw it. Distinct from scrollback (wheel-up / B),
+        # which is a read-only text log; rollback actually rewinds state.
+        if self._history is not None:
+            for e in inp.events:
+                if e.type == pygame.KEYDOWN and e.key == pygame.K_BACKSPACE:
+                    if self._history.can_rewind():
+                        pres = self._history.rewind(self.ctx.state)
+                        if pres is not None:
+                            self.ctx.assets.stop_voice()
+                            self._rewinding = True
+                            try:
+                                self._render_presentation(pres)
+                            finally:
+                                self._rewinding = False
+                    return
 
         # Skip: each Ctrl-down fires one skip step (which itself jumps all the
         # way to the next stopping point — see _trigger_skip). Ctrl-down also
