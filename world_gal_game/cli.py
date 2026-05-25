@@ -137,6 +137,13 @@ def inspect_pack_main(argv: list[str]) -> int:
                         "(per-kind arg schemas + content models).")
     p.add_argument("--no-reachability", action="store_true",
                    help="skip the BFS reachability section.")
+    p.add_argument("--dataflow", action="store_true",
+                   help="dump the flag/scene/item/resource writers+readers "
+                        "cross-reference and conditioned scene edges instead "
+                        "of the structural view (loads the pack).")
+    p.add_argument("--references", default=None, metavar="SYMBOL",
+                   help="show the writers+readers of a single symbol id "
+                        "(flag/scene/item/resource) and exit.")
     args = p.parse_args(argv)
 
     if args.capabilities:
@@ -156,6 +163,30 @@ def inspect_pack_main(argv: list[str]) -> int:
     if not pack_path.exists():
         print(f"[error] pack 目錄不存在：{pack_path}", file=sys.stderr)
         return 1
+
+    # Dataflow / cross-reference view (loads the pack for typed fidelity).
+    if args.dataflow or args.references:
+        from world_gal_game.dev.dataflow import DataflowAnalyzer
+        analyzer = DataflowAnalyzer(pack_path)
+        if args.references:
+            print(_json.dumps(analyzer.references(args.references),
+                              ensure_ascii=False, indent=2))
+            return 0
+        declared = {v["key"] for v in PackInspector(pack_path).variables()}
+        report = analyzer.analyze(declared_flags=declared or None)
+        if args.format == "json":
+            print(_json.dumps(report.model_dump(), ensure_ascii=False, indent=2))
+            return 0
+        print("flags (writers / readers):")
+        for fid, usage in report.flags.items():
+            print(f"  {fid}: {len(usage.writers)}w / {len(usage.readers)}r")
+        if report.undeclared_flags:
+            print("  used-but-undeclared: " + ", ".join(report.undeclared_flags))
+        if report.unused_declared_flags:
+            print("  declared-but-unused: " + ", ".join(report.unused_declared_flags))
+        guarded = sum(1 for e in report.edges if e.guard)
+        print(f"edges: {len(report.edges)} scene->scene ({guarded} guarded)")
+        return 0
 
     inspector = PackInspector(pack_path)
     if args.format == "mermaid":
@@ -376,6 +407,169 @@ def capabilities_main(argv: list[str]) -> int:
     return 0
 
 
+def variables_main(argv: list[str]) -> int:
+    """Entry point for ``wgg variables <pack>``."""
+    import argparse
+    import json as _json
+    p = argparse.ArgumentParser(
+        prog="world-gal-game variables",
+        description="List a pack's declared narrative-state variables "
+                    "(content/variables.yaml) — the typed state schema. With "
+                    "--check, cross-checks declared vs. used flags.")
+    p.add_argument("pack", help="path to the pack directory")
+    p.add_argument("--format", choices=["text", "json"], default="text")
+    p.add_argument("--check", action="store_true",
+                   help="cross-check declared vs. used: report used-but-"
+                        "undeclared and declared-but-unused flags (loads the "
+                        "pack).")
+    args = p.parse_args(argv)
+
+    pack_path = Path(args.pack).resolve()
+    if not pack_path.exists():
+        print(f"[error] pack 目錄不存在：{pack_path}", file=sys.stderr)
+        return 1
+
+    from world_gal_game.dev.pack_inspector import PackInspector
+    declared = PackInspector(pack_path).variables()
+    out: dict = {"variables": declared}
+    if args.check:
+        from world_gal_game.dev.dataflow import DataflowAnalyzer
+        report = DataflowAnalyzer(pack_path).analyze(
+            declared_flags={v["key"] for v in declared})
+        out["undeclared_flags"] = report.undeclared_flags
+        out["unused_declared_flags"] = report.unused_declared_flags
+
+    if args.format == "json":
+        print(_json.dumps(out, ensure_ascii=False, indent=2))
+        return 0
+
+    if not declared:
+        print("(this pack declares no variables; add content/variables.yaml)")
+    else:
+        print(f"declared variables ({len(declared)}):")
+        for v in declared:
+            cat = f" [{v['category']}]" if v["category"] else ""
+            print(f"  {v['key']}: {v['type']} = {v['default']!r}{cat}"
+                  + (f"  — {v['description']}" if v["description"] else ""))
+    if args.check:
+        undeclared = out["undeclared_flags"]
+        unused = out["unused_declared_flags"]
+        print()
+        print("used-but-undeclared: "
+              + (", ".join(undeclared) if undeclared else "none"))
+        print("declared-but-unused: "
+              + (", ".join(unused) if unused else "none"))
+    return 0
+
+
+def session_main(argv: list[str]) -> int:
+    """Entry point for ``wgg session`` — a warm NDJSON control session."""
+    import argparse
+    p = argparse.ArgumentParser(
+        prog="world-gal-game session",
+        description="Start a warm NDJSON control session: load the pack once, "
+                    "then read one JSON command per line on stdin and write one "
+                    "JSON response per line on stdout. The fast, language-"
+                    "agnostic control plane — no per-call process spawn, no RPC "
+                    "envelope. Same op vocabulary as --headless --script. "
+                    "Control ops: __ping__ / __inspect__ / __affordances__ / "
+                    "__reset__ / __quit__.")
+    p.add_argument("--pack", default="demo_pack", help="pack name or path")
+    p.add_argument("--seed", type=int, default=None,
+                   help="determinism seed (GameState.rng)")
+    args = p.parse_args(argv)
+    from world_gal_game.dev.session_server import run_session
+    run_session(pack=args.pack, seed=args.seed)
+    return 0
+
+
+def plan_main(argv: list[str]) -> int:
+    """Entry point for ``wgg plan`` — goal-directed path search."""
+    import argparse
+    import json as _json
+    p = argparse.ArgumentParser(
+        prog="world-gal-game plan",
+        description="Goal-directed search: find a sequence of ops that reaches "
+                    "a goal predicate, using the deterministic forward model + "
+                    "snapshot/restore. Prints the op path as JSON.")
+    p.add_argument("--pack", default="demo_pack", help="pack name or path")
+    p.add_argument("--goal", required=True,
+                   help='JSON goal predicate, e.g. \'{"flag":"quest_started"}\' '
+                        'or \'{"scene_played":"meet_heroine"}\'')
+    p.add_argument("--setup", default=None,
+                   help="JSON list of setup ops to run before searching, e.g. "
+                        '\'[{"op":"start_scene","scene":"prologue"}]\'')
+    p.add_argument("--seed", type=int, default=42)
+    p.add_argument("--max-depth", type=int, default=30)
+    p.add_argument("--max-nodes", type=int, default=4000)
+    p.add_argument("--no-moves", action="store_true",
+                   help="don't branch on location moves")
+    p.add_argument("--no-scenes", action="store_true",
+                   help="don't branch on scene starts")
+    args = p.parse_args(argv)
+
+    try:
+        goal = _json.loads(args.goal)
+        setup = _json.loads(args.setup) if args.setup else None
+    except _json.JSONDecodeError as e:
+        print(f"[error] bad JSON: {e}", file=sys.stderr)
+        return 2
+
+    from world_gal_game.dev.planner import Planner
+    result = Planner(args.pack, seed=args.seed).find_path(
+        goal, setup=setup,
+        explore_moves=not args.no_moves, explore_scenes=not args.no_scenes,
+        max_depth=args.max_depth, max_nodes=args.max_nodes,
+    )
+    print(_json.dumps(result.model_dump(), ensure_ascii=False, indent=2))
+    return 0 if result.found else 1
+
+
+def coverage_main(argv: list[str]) -> int:
+    """Entry point for ``wgg coverage <pack> [--script s.json]``."""
+    import argparse
+    import json as _json
+    p = argparse.ArgumentParser(
+        prog="world-gal-game coverage",
+        description="Report scene/line/choice/ending coverage of a script run "
+                    "against the pack's totals.")
+    p.add_argument("pack", help="path to the pack directory")
+    p.add_argument("--script", default=None,
+                   help="JSON script (a list of ops or {commands:[...]}) to "
+                        "run; omitted = report the totals with zero coverage.")
+    p.add_argument("--seed", type=int, default=None)
+    p.add_argument("--format", choices=["text", "json"], default="text")
+    args = p.parse_args(argv)
+
+    pack_path = Path(args.pack).resolve()
+    if not pack_path.exists():
+        print(f"[error] pack 目錄不存在：{pack_path}", file=sys.stderr)
+        return 1
+
+    from world_gal_game.config import EngineConfig
+    from world_gal_game.dev.coverage import CoverageTracker
+    from world_gal_game.headless import HeadlessSession
+
+    tracker = CoverageTracker(pack_path)
+    sess = HeadlessSession.open(EngineConfig(seed=args.seed), pack=str(pack_path))
+    if args.script:
+        data = _json.loads(Path(args.script).read_text(encoding="utf-8"))
+        commands = data if isinstance(data, list) else data.get("commands", [])
+        sess.run_script(commands)
+    report = tracker.report(sess)
+
+    if args.format == "json":
+        print(_json.dumps(report.model_dump(), ensure_ascii=False, indent=2))
+        return 0
+    for name in ("scenes", "lines", "choices", "endings"):
+        b = getattr(report, name)
+        line = f"  {name:8} {b.seen}/{b.total} ({b.pct}%)"
+        if b.missing and name in ("scenes", "endings"):
+            line += f"  missing: {', '.join(b.missing)}"
+        print(line)
+    return 0
+
+
 def smoke_main(argv: list[str]) -> int:
     """Entry point for ``wgg smoke <pack>`` — runs every scripts/test_*.json."""
     import argparse
@@ -529,6 +723,14 @@ def main(argv: list[str] | None = None) -> int:
         return edit_main(_args[1:])
     if _args[:1] == ["capabilities"]:
         return capabilities_main(_args[1:])
+    if _args[:1] == ["variables"]:
+        return variables_main(_args[1:])
+    if _args[:1] == ["session"]:
+        return session_main(_args[1:])
+    if _args[:1] == ["plan"]:
+        return plan_main(_args[1:])
+    if _args[:1] == ["coverage"]:
+        return coverage_main(_args[1:])
     if _args[:1] == ["smoke"]:
         return smoke_main(_args[1:])
     if _args[:1] == ["visual-check"]:
