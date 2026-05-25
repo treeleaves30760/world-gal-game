@@ -9,7 +9,10 @@
 > 操作,零 RPC 來回。MCP 真正有價值的是「可發現、有型別的工具契約」,那一點我們用
 > **JSON Schema 匯出 + 自我描述的 SDK** 補足(見下),不必付出 server 來回的代價。
 
-能力分三層:**理解 → 操控 → 信任**。
+能力分三層:**理解 → 操控 → 信任**。本篇是 Agent 的**動詞**(apply / snapshot /
+diff / trace);要在動手前先**讀懂** pack 的狀態空間與後果(變數清單、資料流、條件化
+圖、規劃器、覆蓋率、常駐 NDJSON session、以及玩家 rollback),見
+[ai-native-world-model.md](ai-native-world-model.md)。
 
 ---
 
@@ -146,5 +149,6 @@ uv run python -m world_gal_game.cli --headless --script <s.json> --pack demo_pac
 uv run python tools/gen_references.py [--check]        # 重生/檢查 reference 文件
 ```
 
-相關文件:[ai-developer-guide.md](ai-developer-guide.md)、[headless.md](headless.md)、
+相關文件:[ai-native-world-model.md](ai-native-world-model.md)、
+[ai-developer-guide.md](ai-developer-guide.md)、[headless.md](headless.md)、
 [plugins.md](plugins.md)、[architecture.md](architecture.md)。

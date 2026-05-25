@@ -65,6 +65,17 @@ rendering, pack migration). The **AI-Coding-Native contract has landed** — rea
   rig) backends. Native rigs (Live2D/Spine) are a documented desktop-only
   plugin path, not core. See `docs/galgame-maturity.md`.
 
+The **AI-native world model (Phase 6) has landed** — read
+[docs/ai-native-world-model.md](docs/ai-native-world-model.md). It extends the
+contract from *verbs* to *reasoning*: a typed `VariableManifest`
+(`content/variables.yaml`), a `DataflowAnalyzer` (`flag/scene/item/resource →
+{writers, readers}` + conditioned scene edges), a warm NDJSON `SessionServer`
+(load-once, stream ops over stdio — the faster-than-MCP path), a goal-directed
+`Planner`, and a `CoverageTracker`. The same `dev/diff` snapshot/restore the
+agent layer uses for branch exploration now also powers **player rollback**
+(`core/history.py`, Backspace in the dialogue scene) — one mechanism, two
+audiences.
+
 See [ROADMAP.md](ROADMAP.md) for the full picture.
 
 ---
@@ -99,6 +110,26 @@ See [ROADMAP.md](ROADMAP.md) for the full picture.
   `wgg capabilities --pack <pack>`, `wgg capabilities --pack <pack> --schema`
   (JSON-Schema bundle: per-kind arg schemas + content models, for offline
   validation by any agent).
+
+### Reason about a pack before editing (world model)
+
+Beyond the contract's verbs, a static/searchable world model — see
+[docs/ai-native-world-model.md](docs/ai-native-world-model.md):
+
+- `world_gal_game.core.variable_spec` — `VariableManifest` (typed declared
+  state: key/type/default/description/category). Optional
+  `<pack>/content/variables.yaml`; surfaced in `inspect()` + `wgg variables`.
+- `world_gal_game.dev.dataflow.DataflowAnalyzer` — `flag/scene/item/resource →
+  {writers, readers}` impact analysis + conditioned scene→scene edges.
+- `world_gal_game.dev.planner.Planner` — goal-directed BFS (`find_path(goal)`)
+  over next/choose/move/start_scene via snapshot/restore.
+- `world_gal_game.dev.coverage.CoverageTracker` — scene/line/choice/ending
+  coverage of a run vs. pack totals.
+- `world_gal_game.dev.session_server` — warm NDJSON session (load once, stream
+  ops over stdin/stdout); the language-agnostic fast path, not MCP.
+- CLI: `wgg variables <pack> [--check]`, `wgg inspect-pack <pack> --dataflow`,
+  `wgg inspect-pack <pack> --references <sym>`, `wgg session --pack <pack>`,
+  `wgg plan --pack <pack> --goal '<json>'`, `wgg coverage <pack> --script <s>`.
 
 ### Edit packs structurally
 
@@ -146,7 +177,7 @@ See [ROADMAP.md](ROADMAP.md) for the full picture.
 ## Quick dev loop
 
 ```bash
-# Unit tests (614 cases)
+# Unit tests (888 cases)
 uv run pytest tests/
 
 # End-to-end playthrough (demo_pack's lover / friend / alone routes)
@@ -213,6 +244,7 @@ uv run python main.py
 |---|---|
 | Engine internals | `docs/architecture.md` |
 | AI-Coding-Native contract (schema / ops / trace / determinism) | `docs/ai-native-contract.md` |
+| AI-native world model (variables / dataflow / session / planner / coverage / rollback) | `docs/ai-native-world-model.md` |
 | Full AI developer guide | `docs/ai-developer-guide.md` |
 | AI plays the game | `docs/headless.md` |
 | AI debugs the UI | `docs/ai-debug.md` |
@@ -229,6 +261,12 @@ uv run python main.py
 | Builtin effects / conditions | `world_gal_game/plugins/{builtin_effects,builtin_conditions}.py` |
 | Effect / condition arg models (JSON Schema) | `world_gal_game/plugins/{effect_args,condition_args}.py` |
 | Execution trace / state diff (headless) | `world_gal_game/dev/{trace,diff}.py` |
+| Variable manifest (typed narrative-state schema) | `world_gal_game/core/variable_spec.py` |
+| Dataflow / cross-reference + conditioned graph | `world_gal_game/dev/dataflow.py` |
+| Warm NDJSON control session (faster-than-MCP) | `world_gal_game/dev/session_server.py` |
+| Goal-directed planner | `world_gal_game/dev/planner.py` |
+| Coverage tracker (scene/line/choice/ending) | `world_gal_game/dev/coverage.py` |
+| Player rollback buffer (shared snapshot machinery) | `world_gal_game/core/history.py` |
 | Reference doc generator | `tools/gen_references.py` |
 | Pack structure analysis | `world_gal_game/dev/pack_inspector.py` |
 | Pack structure editing | `world_gal_game/dev/pack_editor.py` |

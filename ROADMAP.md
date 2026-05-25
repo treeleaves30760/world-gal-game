@@ -3,12 +3,16 @@
 Where the engine is going next. Read alongside [CLAUDE.md](CLAUDE.md) (AI
 onboarding) and [docs/architecture.md](docs/architecture.md) (engine internals).
 
-> Last updated: 2026-05-24. Phases 1-2 done, including the **AI-Coding-Native
+> Last updated: 2026-05-25. Phases 1-2 done, including the **AI-Coding-Native
 > contract** (typed arg JSON-Schema, `run_script` trace/diff/snapshot/ops,
 > determinism — see [docs/ai-native-contract.md](docs/ai-native-contract.md)).
-> A Phase 3 distribution + platform push remains. Phase 5 GalGame-maturity:
-> **animated portraits (5A) + i18n extraction (5C) done**; video playback (5B)
-> and native Live2D/Spine rigs remain.
+> **Phase 6 — AI-native world model + player rollback — done** (variable
+> manifest, dataflow / conditioned graph, warm NDJSON session, goal planner,
+> coverage, and snapshot-powered rollback — see
+> [docs/ai-native-world-model.md](docs/ai-native-world-model.md)). A Phase 3
+> distribution + platform push remains. Phase 5 GalGame-maturity: **animated
+> portraits (5A) + i18n extraction (5C) done**; video playback (5B) and native
+> Live2D/Spine rigs remain.
 
 ---
 
@@ -21,13 +25,17 @@ The engine is built around three pillars (see CLAUDE.md for the framing):
 - **Pillar B — AI develops packs:** complete except autonomous spec-to-pack.
   AI can play, inspect, edit, extend, and self-verify via `HeadlessSession`,
   `GameDriver`, `PackInspector`, `PackEditor`, `CapabilityManifest`, `SelfCheck`,
-  `SmokeRunner`, `VisualCheck`, and `asset_studio`.
+  `SmokeRunner`, `VisualCheck`, and `asset_studio`. The **world-model** layer
+  (Phase 6) adds a typed `VariableManifest`, `DataflowAnalyzer` (writers/readers +
+  conditioned edges), a warm NDJSON `SessionServer`, a goal-directed `Planner`,
+  and a `CoverageTracker` — so an agent can reason about a pack before editing it,
+  not just step through it.
 - **Pillar C — third-party plugins extend the engine:** complete. All nine
   extension points work in code *and* are declarable in `plugin.yaml`;
   `PluginManager` reconciles declared-vs-registered (see
   [Extension points](#extension-points-pillar-c)).
 
-Test suite: 835 cases, all green.
+Test suite: 888 cases, all green.
 
 ---
 
@@ -74,6 +82,40 @@ See [docs/ai-native-contract.md](docs/ai-native-contract.md).
 - **Determinism**: `EngineConfig.seed` → `GameState.rng()`; a test guards
   against uncontrolled global `random`.
 - pygame-ce stdout banner suppressed so all CLI/headless JSON is clean.
+
+### Phase 6 — AI-native world model + player rollback — Done (2026-05-25)
+
+Extends the Phase 2.5 contract from *verbs* (apply / snapshot / diff / trace) to
+a *world model* (reason before acting). See
+[docs/ai-native-world-model.md](docs/ai-native-world-model.md).
+
+- **Variable manifest** — `core/variable_spec.py` (`VariableSpec` /
+  `VariableManifest`); optional `content/variables.yaml` declares typed
+  narrative state (key/type/default/description/category). Loaded onto
+  `state.meta["__variables__"]`, surfaced in `inspect()` (`variables` view) and
+  `wgg variables <pack>`; `wgg validate` does a pure-YAML used-vs-declared
+  cross-check ("did you mean" on a typo'd flag, advisory on an unused one).
+- **Dataflow / conditioned graph** — `dev/dataflow.py` (`DataflowAnalyzer`):
+  per-symbol `writers`/`readers` (flags/scenes/items/resources, incl. reads in
+  endings/achievements/clues/quests) and scene→scene `edges` carrying their
+  guard conditions. `wgg inspect-pack --dataflow` / `--references <sym>`.
+- **Warm NDJSON session** — `dev/session_server.py` (`SessionServer` /
+  `run_session`); `wgg session` loads the pack once and streams the `run_script`
+  op vocabulary over stdin/stdout (control ops `__ping__`/`__inspect__`/
+  `__affordances__`/`__reset__`/`__quit__`). The language-agnostic fast path
+  with no per-call process spawn — the "faster than MCP" answer.
+- **Goal planner** — `dev/planner.py` (`Planner.find_path`): BFS over the
+  next/choose/move/start_scene action space using snapshot/restore to reach a
+  goal predicate; `wgg plan --goal '<json>'`.
+- **Coverage** — `dev/coverage.py` (`CoverageTracker`): scene/line/choice/ending
+  coverage of a run vs. the pack totals; `wgg coverage <pack> --script`.
+- **Player rollback** — `core/history.py` (`StateHistory`): a bounded
+  (snapshot, presentation) stack on the *same* `dev/diff` machinery the agent
+  uses for branch exploration. `DialogueScene` records each display and rewinds
+  on **Backspace** (`EngineConfig.rollback_enabled`, default on) without
+  re-running the engine. One mechanism, two audiences.
+- Also fixed: `inspect()` raised `AttributeError` when an NPC was present
+  (`present_npcs` yields id strings) — surfaced by the planner's state sweep.
 
 ### Phase 3 — Distribution, platforms, presentation, autonomy — In progress
 
@@ -221,6 +263,7 @@ vs `pyproject.toml`-pinned, and seek review.
 | 2026-05-24 | Phase 2.5: AI-Coding-Native contract — typed arg JSON-Schema (`--schema`), `run_script` trace/diff + apply/check/assert/affordances/snapshot/restore, determinism seed | done |
 | 2026-05-24 | Phase 5C: i18n translation extraction (`tools/i18n_extract.py`) — pack scenes → string table + `--check` coverage | done |
 | 2026-05-24 | Phase 5A: animated portraits — `@portrait_backend` (9th extension category), `PortraitSpec.backend`/`backend_args`, dialogue-scene seam, bundled `animated_portraits` (breath + sprite + layered blink/lip-sync/breathing rig) | done |
+| 2026-05-25 | Phase 6: AI-native world model — variable manifest, dataflow/conditioned graph, warm NDJSON session, goal planner, coverage (`wgg variables`/`inspect-pack --dataflow`/`session`/`plan`/`coverage`) + player rollback (`StateHistory`, Backspace) on the shared snapshot machinery | done |
 | — | Phase 5B: video / movie playback (OP/ED/過場) | open (Next PR #1) |
 | — | Phase 5A native rigs: Live2D / Spine as a desktop-only plugin | open (Next PR #1) |
 | — | Phase 3: LLM NPC, autonomous spec-to-pack, cross-pack plugins | deferred |
