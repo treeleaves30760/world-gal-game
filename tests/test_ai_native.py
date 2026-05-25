@@ -172,3 +172,38 @@ def test_diff_reports_leaf_changes():
     out = diff({"a": 1, "b": {"c": 2}}, {"a": 1, "b": {"c": 3}, "d": 4})
     assert out["b.c"] == {"from": 2, "to": 3}
     assert out["d"] == {"from": None, "to": 4}
+
+
+# ----- inspect robustness + variable manifest view ------------------------
+
+def test_inspect_does_not_raise_when_an_npc_is_present(sess):
+    """``present_npcs`` yields id strings; inspect() must use them as ids,
+    not as objects. Reaching town_square makes heroine_1 present — a state
+    the earlier unit tests never hit, which masked an AttributeError."""
+    sess.run_script([
+        {"op": "start_scene", "scene": "prologue"},
+        {"op": "next", "count": 8},
+        {"op": "move", "location": "town_square"},
+    ])
+    snap = sess.inspect()  # must not raise
+    present = snap["npcs_present"]
+    assert isinstance(present, list)
+    for entry in present:
+        assert isinstance(entry["id"], str)
+        assert "name" in entry
+
+
+def test_inspect_exposes_declared_variable_manifest(sess):
+    """inspect() surfaces the pack's declared variables (typed state schema)
+    joined with live values — not just an untyped flag dump."""
+    variables = sess.inspect()["variables"]
+    by_key = {v["key"]: v for v in variables}
+    assert "ending_lover" in by_key
+    assert by_key["ending_lover"]["type"] == "bool"
+    assert by_key["ending_lover"]["value"] is False
+    assert by_key["ending_lover"]["is_set"] is False
+    # After the flag is set, the live value tracks it.
+    sess.run_script([{"op": "set_flag", "key": "ending_lover", "value": True}])
+    by_key2 = {v["key"]: v for v in sess.inspect()["variables"]}
+    assert by_key2["ending_lover"]["value"] is True
+    assert by_key2["ending_lover"]["is_set"] is True

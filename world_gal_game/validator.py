@@ -1067,6 +1067,43 @@ def _check_refs_locations(data: Any, *, file: str, index: _RefIndex) -> list[Val
 
 
 # ---------------------------------------------------------------------------
+# Flag-manifest cross-check helpers
+# ---------------------------------------------------------------------------
+
+_FLAG_WRITE_KINDS = frozenset({"set_flag", "set_flag_if_unset", "increment_flag"})
+_FLAG_READ_KINDS = frozenset({"flag", "not_flag", "flag_eq"})
+
+
+def _collect_flag_usage(obj: Any, writes: set[str], reads: set[str]) -> None:
+    """Recursively collect flag writes / reads from parsed pack YAML.
+
+    Pure structural walk: any ``{kind, target}`` dict whose ``kind`` is a known
+    flag-writing / flag-reading effect or condition contributes its ``target``
+    to the respective set, at any nesting depth (line effects, choice
+    ``requires``, ``on_end``, scene hooks, ending ``requires`` …). A
+    ``requires_flags`` / ``forbids_flags`` list counts as reads. Raw-YAML only,
+    so the validator stays free of any engine load.
+    """
+    if isinstance(obj, dict):
+        kind = obj.get("kind")
+        target = obj.get("target")
+        if isinstance(kind, str) and isinstance(target, str) and target:
+            if kind in _FLAG_WRITE_KINDS:
+                writes.add(target)
+            elif kind in _FLAG_READ_KINDS:
+                reads.add(target)
+        for fld in ("requires_flags", "forbids_flags"):
+            lst = obj.get(fld)
+            if isinstance(lst, list):
+                reads.update(f for f in lst if isinstance(f, str) and f)
+        for value in obj.values():
+            _collect_flag_usage(value, writes, reads)
+    elif isinstance(obj, list):
+        for item in obj:
+            _collect_flag_usage(item, writes, reads)
+
+
+# ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
 
@@ -1185,6 +1222,47 @@ def validate_pack(pack_root: Path) -> list[ValidationIssue]:
                     message="meta.yaml 沒有 pack_format_version 欄位。",
                     hint='加上 `pack_format_version: "0.1"` 以鎖定 schema 版本。',
                 ))
+
+    # --- Step 4.6: variable-manifest cross-check ---
+    # Only runs when content/variables.yaml exists, so packs without a
+    # declared manifest are unaffected (backward compatible). Pure raw-YAML:
+    # a used-but-undeclared flag gets a "did you mean" warning (the typo guard
+    # that makes flag edits safe for an agent); a declared-but-unused variable
+    # gets an advisory warning.
+    variables_path = content_root / "variables.yaml"
+    if variables_path.is_file():
+        try:
+            from .core.variable_spec import VariableManifest
+            manifest = VariableManifest.load(variables_path)
+            declared = set(manifest.keys())
+            writes: set[str] = set()
+            reads: set[str] = set()
+            for data in parsed.values():
+                _collect_flag_usage(data, writes, reads)
+            used = writes | reads
+            rel_vars = _rel(pack_root, variables_path)
+            for flag in sorted(used - declared):
+                guess = _suggest(flag, sorted(declared))
+                issues.append(ValidationIssue(
+                    severity="warning", file=rel_vars,
+                    path=f"variables.{flag}",
+                    message=f"旗標 '{flag}' 在內容中被使用，但未在 variables.yaml 宣告。",
+                    hint=(f"你是指 '{guess}' 嗎？" if guess
+                          else "在 variables.yaml 補上宣告，或修正拼字。"),
+                ))
+            for flag in sorted(declared - used):
+                issues.append(ValidationIssue(
+                    severity="warning", file=rel_vars,
+                    path=f"variables.{flag}",
+                    message=f"變數 '{flag}' 已宣告，但內容中從未讀取或寫入。",
+                    hint="移除未使用的宣告，或確認是否漏接此旗標。",
+                ))
+        except Exception as exc:
+            issues.append(ValidationIssue(
+                severity="warning", file="(pack)", path="",
+                message=f"variable-manifest check failed: {exc}",
+                hint="best-effort；修正前面的錯誤後重跑。",
+            ))
 
     # --- Step 5: dead-end + reachability warnings via PackInspector. ---
     # Wrapped in try/except so a misformed pack that crashes the inspector

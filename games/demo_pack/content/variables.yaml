@@ -1,0 +1,68 @@
+# Variable manifest for demo_pack.
+#
+# Declares the narrative-state flags this pack reads and writes, so tools can
+# enumerate them with a type, default, description, and category. Every flag
+# here is a boolean that starts false; categories group them by narrative role
+# (progress, quest, relationship, ending). Adding a flag here does not change
+# runtime behaviour on its own; it documents and types existing story state.
+variables:
+  - key: prologue_done
+    type: bool
+    default: false
+    description: "Prologue scene finished."
+    category: "progress"
+  - key: met_heroine_1
+    type: bool
+    default: false
+    description: "Player has met heroine_1."
+    category: "progress"
+  - key: quest_started
+    type: bool
+    default: false
+    description: "The main investigation quest has begun."
+    category: "quest"
+  - key: quest_done
+    type: bool
+    default: false
+    description: "The main investigation quest is complete."
+    category: "quest"
+  - key: obj_alley_done
+    type: bool
+    default: false
+    description: "Investigation objective at the alley is complete."
+    category: "quest"
+  - key: obj_park_done
+    type: bool
+    default: false
+    description: "Investigation objective at the park is complete."
+    category: "quest"
+  - key: obj_square_done
+    type: bool
+    default: false
+    description: "Investigation objective at the square is complete."
+    category: "quest"
+  - key: heroine_1_friend
+    type: bool
+    default: false
+    description: "Route disposition toward heroine_1 is set to friend."
+    category: "relationship"
+  - key: heroine_1_lover
+    type: bool
+    default: false
+    description: "Route disposition toward heroine_1 is set to lover."
+    category: "relationship"
+  - key: ending_lover
+    type: bool
+    default: false
+    description: "The lover ending was reached."
+    category: "ending"
+  - key: ending_friend
+    type: bool
+    default: false
+    description: "The friend ending was reached."
+    category: "ending"
+  - key: ending_alone
+    type: bool
+    default: false
+    description: "The alone ending was reached."
+    category: "ending"

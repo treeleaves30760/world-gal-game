@@ -223,6 +223,22 @@ def load_clues(content_root: Path, state: GameState) -> None:
         state.clues.register(clue)
 
 
+def load_variables(content_root: Path, state: GameState) -> None:
+    """Load the declared variable manifest (``content/variables.yaml``).
+
+    The manifest is pack-static *schema* (a typed declaration of the
+    narrative-state flags a pack uses), not mutable player state, so it is
+    parked on the private ``state.meta["__variables__"]`` bridge that
+    :class:`SaveManager` strips from serialised saves — mirroring the
+    ``__npc_registry__`` / ``__plugin_manager__`` bridges. A pack with no
+    ``variables.yaml`` simply gets an empty manifest, so this is fully
+    backward compatible.
+    """
+    from .core.variable_spec import VariableManifest
+    state.meta["__variables__"] = VariableManifest.load(
+        content_root / "variables.yaml")
+
+
 def load_game_meta(content_root: Path) -> dict[str, Any]:
     meta = _read_yaml(content_root / "meta.yaml") or {}
     return meta
@@ -282,6 +298,7 @@ def load_pack(content_root: Path) -> tuple[GameState, NPCRegistry, dict]:
     load_endings(content_root, state)
     load_quests(content_root, state)
     load_clues(content_root, state)
+    load_variables(content_root, state)
     meta = load_game_meta(content_root)
     load_resources(content_root, state, meta)
     if "player" in meta:

@@ -336,6 +336,27 @@ class PackInspector:
             })
         return out
 
+    def variables(self) -> list[dict[str, Any]]:
+        """Declared narrative-state variables (``content/variables.yaml``).
+
+        Returns one row per declared variable (key/type/default/description/
+        category), or an empty list when the pack ships no manifest. Pure
+        YAML — parsed via :class:`VariableManifest`, no engine load.
+        """
+        from world_gal_game.core.variable_spec import VariableManifest
+        manifest = VariableManifest.load(self.content_root / "variables.yaml")
+        out = []
+        for key in manifest.keys():
+            spec = manifest.get(key)
+            out.append({
+                "key": key,
+                "type": spec.type,
+                "default": spec.coerced_default(),
+                "category": spec.category,
+                "description": spec.description,
+            })
+        return out
+
     # ------------------------------------------------------------------
     # Reachability
 

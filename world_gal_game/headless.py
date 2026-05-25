@@ -113,7 +113,7 @@ class HeadlessSession:
                 for l in self.state.map.locations.values()
             ],
             "npcs_present": [
-                {"id": n.id, "name": (self.npcs.get(n).name if self.npcs.get(n) else n)}
+                {"id": n, "name": (self.npcs.get(n).name if self.npcs.get(n) else n)}
                 for n in self.state.map.present_npcs(
                     self.state.time.time_of_day.value,
                     self.state.time.day_of_week.value,
@@ -149,8 +149,38 @@ class HeadlessSession:
                  "actors": e.actors, "location": e.location}
                 for e in self.state.events.recent(20)
             ],
+            "variables": self._variables_view(),
             "last_presentation": self.last_presentation,
         }
+
+    def _variables_view(self) -> list[dict]:
+        """Declared narrative-state variables joined with their live values.
+
+        Reads the pack's :class:`VariableManifest` from the ``__variables__``
+        meta bridge (empty if the pack declares none) and pairs each declared
+        variable with its current flag value, so an agent sees the *schema* of
+        the narrative state (key/type/default/description/category) alongside
+        what it currently holds — not just an untyped flag dump.
+        """
+        manifest = self.state.meta.get("__variables__")
+        variables = getattr(manifest, "variables", None)
+        if not variables:
+            return []
+        flags = self.state.events.flags
+        out: list[dict] = []
+        for key in sorted(variables):
+            spec = variables[key]
+            default = spec.coerced_default()
+            out.append({
+                "key": key,
+                "type": spec.type,
+                "category": spec.category,
+                "description": spec.description,
+                "default": default,
+                "value": flags.get(key, default),
+                "is_set": key in flags,
+            })
+        return out
 
     # ----- actions ------------------------------------------------------
 
