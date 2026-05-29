@@ -558,6 +558,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                    help="Force running tools/cutout.py after generation "
                         "(default ON for portrait / ui, since they are drawn "
                         "on a chroma-key green that must be removed).")
+    p.add_argument("--no-auto-defringe", action="store_true",
+                   help="Skip the post-cutout defringe step (which clears the "
+                        "magenta/red edge halo). Only relevant when cutout runs.")
     p.add_argument("--no-auto-cutout", action="store_true",
                    help="Skip the cutout step and leave the raw green-screen "
                         "image (e.g. to inspect or key it out yourself).")
@@ -719,6 +722,18 @@ def main(argv: list[str] | None = None) -> int:
         else:
             print(f"[imagegen-art] --auto-cutout: cutout.py not found at "
                   f"{cutout_py}", file=sys.stderr)
+
+        # --- defringe: clear the magenta/red edge halo cutout's green unmix
+        # leaves on dark-hair edges (cutout's despill is single-channel and
+        # misses the two-channel magenta cast). Cheap, idempotent, alpha-safe.
+        if not args.no_auto_defringe:
+            defringe_py = Path(__file__).resolve().parent / "defringe.py"
+            if defringe_py.exists():
+                print(f"[imagegen-art] auto-defringe -> {output_abs}", file=sys.stderr)
+                dfr = subprocess.run(["uv", "run", str(defringe_py), str(output_abs)])
+                if dfr.returncode != 0:
+                    print(f"[imagegen-art] defringe exited with {dfr.returncode}; "
+                          f"the cutout is still at {output_abs}", file=sys.stderr)
 
     print(str(output_abs))
     return 0
