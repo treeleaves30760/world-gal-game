@@ -1,0 +1,35 @@
+id: desktop_video
+name: Desktop Video
+version: 0.1.0
+description: |
+  Real video playback for movies (OP / ED / cutscenes) on desktop, via
+  pyvidplayer2 (.mp4 / .webm / ... with an audio track). Registers a "video"
+  movie player so play_movie / MoviePlayerScene can play video files in addition
+  to the built-in, web-safe image-sequence player.
+
+  This is a DESKTOP path: pyvidplayer2 needs ffmpeg and does not run under
+  pygbag/WASM. The plugin always loads (pyvidplayer2 is imported lazily, only
+  when a video actually plays); if the library is missing, a named "video"
+  player still registers but degrades to a brief placeholder rather than
+  crashing — so a pack authored with video stays playable everywhere (web /
+  no-ffmpeg installs fall back to the image-sequence player or the placeholder).
+
+  Install the dependency with:  pip install "world-gal-game[video]"
+author: World Gal-Game
+engine_version: ">=0.1.0"
+depends: []
+entry_module: plugin
+
+# Registers a movie player via the movie-player registry (not one of the ten
+# decorator categories), so no `extends:` declarations are needed.
+
+side_effects:
+  reads_filesystem: true
+  writes_filesystem: false
+  network: false
+  subprocess: true        # pyvidplayer2 shells out to ffmpeg
+
+tags:
+  - desktop
+  - video
+  - movie

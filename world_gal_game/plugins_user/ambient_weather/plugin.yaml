@@ -1,0 +1,48 @@
+id: ambient_weather
+name: Ambient Weather
+version: 0.1.0
+description: |
+  Built-in, web-safe ambient / weather overlays — the bundled examples of the
+  tenth extension category (@ambient_backend). Each draws a full-screen
+  atmospheric layer above the world and below the dialogue box, and is driven by
+  the set_weather / clear_weather effects.
+
+    - rain:      slanted falling streaks (wind-tunable).
+    - snow:      drifting flakes with gentle horizontal sway.
+    - petals:    sakura petals tumbling on the wind.
+    - sparkles:  twinkling motes that fade in and out in place.
+    - fireflies: soft glowing dots wandering and pulsing.
+
+  All are deterministic (seeded LCG, no global RNG — a save/replay reproduces
+  the same frame), pure pygame (identical on desktop and web/pygbag), and
+  defensive (bad params fall back to sane defaults, a draw error skips one
+  particle rather than crashing the frame).
+author: World Gal-Game
+engine_version: ">=0.1.0"
+depends: []
+entry_module: plugin
+
+extends:
+  ambient_backends:
+    - kind: rain
+      description: Slanted falling rain streaks (wind-tunable).
+    - kind: snow
+      description: Drifting snow flakes with horizontal sway.
+    - kind: petals
+      description: Sakura petals tumbling on the wind.
+    - kind: sparkles
+      description: Twinkling motes that fade in and out in place.
+    - kind: fireflies
+      description: Soft glowing dots that wander and pulse.
+
+side_effects:
+  reads_filesystem: false
+  writes_filesystem: false
+  network: false
+  subprocess: false
+
+tags:
+  - bundled
+  - ambient
+  - weather
+  - atmosphere

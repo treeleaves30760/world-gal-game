@@ -1,7 +1,9 @@
 """Builtin effect handlers.
 
-Every builtin effect kind that the engine ships (24 of
-them) is implemented here as a free function registered
+Every builtin effect kind that the engine ships (37 of
+them, including the presentation-layer effects: camera/screen FX, scene
+transitions, weather, portrait emotes, and movie playback) is implemented here
+as a free function registered
 with ``@effect("kind", plugin_id="builtin")``. The :meth:`GameState.apply`
 dispatcher looks them up in the global :data:`EFFECT_REGISTRY`.
 
@@ -28,7 +30,8 @@ from .effect_args import (
     SpendResourceArgs, SetResourceArgs, BuyItemArgs, SellItemArgs, GiftArgs,
     StartQuestArgs, CompleteObjectiveArgs, CompleteQuestArgs, FailQuestArgs,
     CameraPanArgs, CameraZoomArgs, ScreenShakeArgs, ScreenFlashArgs,
-    ScreenTintArgs,
+    ScreenTintArgs, SetBackgroundArgs, ShowCgArgs, HideCgArgs, TransitionArgs,
+    SetWeatherArgs, ClearWeatherArgs, PortraitEmoteArgs, PlayMovieArgs,
 )
 from ..core.inventory import evaluate_gift
 
@@ -536,6 +539,170 @@ def handle_screen_tint(state: "GameState", eff: "Effect") -> dict[str, Any]:
             "persist": persist}
 
 
+# ----------------------------------------------------------------------
+# Presentation: scene transitions + mid-scene background / CG control
+#
+# Same contract as the camera/screen FX above: the handler runs in pure Python,
+# records a directive on the visual-fx queue, and returns. The scene owns the
+# snapshot of the previous frame and the SceneTransition that reveals the new
+# one. ``set_background`` / ``show_cg`` / ``hide_cg`` carry both the *what*
+# (which image) and the *how* (an optional transition) in one directive so the
+# scene applies the state change and the animation together.
+
+def _coerce_transition(value: Any) -> dict[str, Any]:
+    """Normalise an effect's ``value`` into a transition directive subset.
+
+    Accepts the nested transition dict (``{style, duration, easing, color,
+    mask}``) authors write; missing keys fall back to a plain dissolve. Always
+    returns JSON-able scalars so the directive round-trips cleanly.
+    """
+    p = value if isinstance(value, dict) else {}
+    color = p.get("color", [0, 0, 0])
+    try:
+        color = [int(color[0]), int(color[1]), int(color[2])]
+    except Exception:
+        color = [0, 0, 0]
+    return {
+        "style": str(p.get("style", "dissolve")),
+        "duration": float(p.get("duration", 0.6)),
+        "easing": p.get("easing"),
+        "color": color,
+        "mask": p.get("mask"),
+    }
+
+
+@effect("set_background", plugin_id=BUILTIN, args=SetBackgroundArgs,
+        description="Change the background mid-scene, with an optional "
+                    "transition. target=image path; value={style,duration,"
+                    "easing,color,mask}. Queued for the scene.",
+        signature={"target": "image_path",
+                   "value": "dict {style:str?, duration:float?, easing:str?, "
+                            "color:[r,g,b]?, mask:str?}"})
+def handle_set_background(state: "GameState", eff: "Effect") -> dict[str, Any]:
+    tr = _coerce_transition(eff.value)
+    _queue_visual_fx(state, {"fx": "set_background", "path": eff.target,
+                             "transition": tr})
+    return {"kind": eff.kind, "path": eff.target, "transition": tr["style"]}
+
+
+@effect("show_cg", plugin_id=BUILTIN, args=ShowCgArgs,
+        description="Show a full-screen CG, with an optional transition. "
+                    "target=image path; value={style,duration,easing,color,"
+                    "mask}. Queued for the scene.",
+        signature={"target": "image_path",
+                   "value": "dict {style:str?, duration:float?, easing:str?, "
+                            "color:[r,g,b]?, mask:str?}"})
+def handle_show_cg(state: "GameState", eff: "Effect") -> dict[str, Any]:
+    tr = _coerce_transition(eff.value)
+    _queue_visual_fx(state, {"fx": "show_cg", "path": eff.target,
+                             "transition": tr})
+    return {"kind": eff.kind, "path": eff.target, "transition": tr["style"]}
+
+
+@effect("hide_cg", plugin_id=BUILTIN, args=HideCgArgs,
+        description="Hide the active CG, with an optional transition. "
+                    "value={style,duration,easing,color,mask}. Queued for the "
+                    "scene.",
+        signature={"value": "dict {style:str?, duration:float?, easing:str?, "
+                            "color:[r,g,b]?, mask:str?}"})
+def handle_hide_cg(state: "GameState", eff: "Effect") -> dict[str, Any]:
+    tr = _coerce_transition(eff.value)
+    _queue_visual_fx(state, {"fx": "hide_cg", "transition": tr})
+    return {"kind": eff.kind, "transition": tr["style"]}
+
+
+@effect("transition", plugin_id=BUILTIN, args=TransitionArgs,
+        description="Play a stand-alone transition beat over the current frame "
+                    "(e.g. fade to black and back) without changing the scene. "
+                    "value={style,duration,easing,color,mask}. Queued for the "
+                    "scene.",
+        signature={"value": "dict {style:str?, duration:float?, easing:str?, "
+                            "color:[r,g,b]?, mask:str?}"})
+def handle_transition(state: "GameState", eff: "Effect") -> dict[str, Any]:
+    tr = _coerce_transition(eff.value)
+    _queue_visual_fx(state, {"fx": "transition", "transition": tr})
+    return {"kind": eff.kind, "transition": tr["style"]}
+
+
+# ----------------------------------------------------------------------
+# Presentation: ambient / weather overlays
+#
+# Same queued-directive contract. ``set_weather`` names a registered
+# @ambient_backend and carries its params; the scene instantiates the backend
+# and draws it above the world layer, below the text box, persisting until a
+# ``clear_weather`` (or another ``set_weather``). The handler forwards the raw
+# params dict so backend-specific keys (not in WeatherValue) pass through.
+
+@effect("set_weather", plugin_id=BUILTIN, args=SetWeatherArgs,
+        description="Turn on an ambient overlay (rain/snow/petals/...). "
+                    "target=registered @ambient_backend name; value=its params "
+                    "(count, seed, alpha, color, fade, ...). Queued for the "
+                    "scene; does not touch the display.",
+        signature={"target": "ambient_backend_name",
+                   "value": "dict {count:int?, seed:int?, alpha:int?, "
+                            "color:[r,g,b]?, fade:float?, ...}"})
+def handle_set_weather(state: "GameState", eff: "Effect") -> dict[str, Any]:
+    params = dict(eff.value) if isinstance(eff.value, dict) else {}
+    fade = float(params.pop("fade", 0.0) or 0.0)
+    _queue_visual_fx(state, {"fx": "set_weather", "backend": eff.target,
+                             "params": params, "fade": fade})
+    return {"kind": eff.kind, "backend": eff.target}
+
+
+@effect("clear_weather", plugin_id=BUILTIN, args=ClearWeatherArgs,
+        description="Remove the active ambient overlay. Optional value.fade "
+                    "fades it out. Queued for the scene; does not touch the "
+                    "display.",
+        signature={"value": "dict {fade:float?}"})
+def handle_clear_weather(state: "GameState", eff: "Effect") -> dict[str, Any]:
+    params = dict(eff.value) if isinstance(eff.value, dict) else {}
+    fade = float(params.get("fade", 0.0) or 0.0)
+    _queue_visual_fx(state, {"fx": "clear_weather", "fade": fade})
+    return {"kind": eff.kind}
+
+
+@effect("portrait_emote", plugin_id=BUILTIN, args=PortraitEmoteArgs,
+        description="Play a one-shot in-place accent (jump/shake/nod/bounce) on "
+                    "a settled portrait. target=slot ('left'/'center'/'right') "
+                    "or character name; value={emote, duration, intensity}. "
+                    "Queued for the scene; does not touch the display.",
+        signature={"target": "slot_or_character",
+                   "value": "dict {emote:str, duration:float?, "
+                            "intensity:float?}"})
+def handle_portrait_emote(state: "GameState", eff: "Effect") -> dict[str, Any]:
+    p = eff.value if isinstance(eff.value, dict) else {}
+    emote = str(p.get("emote", "jump"))
+    duration = float(p.get("duration", 0.45))
+    intensity = p.get("intensity")
+    directive: dict[str, Any] = {"fx": "portrait_emote", "target": eff.target,
+                                 "emote": emote, "duration": duration}
+    if intensity is not None:
+        directive["intensity"] = float(intensity)
+    _queue_visual_fx(state, directive)
+    return {"kind": eff.kind, "target": eff.target, "emote": emote}
+
+
+@effect("play_movie", plugin_id=BUILTIN, args=PlayMovieArgs,
+        description="Push a full-screen movie overlay (OP/ED/cutscene). "
+                    "target=frame folder (image sequence) or video file; "
+                    "value={kind, fps, loop, skippable}. Queued for the scene; "
+                    "does not touch the display.",
+        signature={"target": "frame_folder_or_video_path",
+                   "value": "dict {kind:str?, fps:float?, loop:bool?, "
+                            "skippable:bool?}"})
+def handle_play_movie(state: "GameState", eff: "Effect") -> dict[str, Any]:
+    p = eff.value if isinstance(eff.value, dict) else {}
+    directive = {
+        "fx": "play_movie", "path": eff.target,
+        "kind": str(p.get("kind", "auto")),
+        "fps": float(p.get("fps", 24.0)),
+        "loop": bool(p.get("loop", False)),
+        "skippable": bool(p.get("skippable", True)),
+    }
+    _queue_visual_fx(state, directive)
+    return {"kind": eff.kind, "path": eff.target, "movie": directive["kind"]}
+
+
 # Names re-exported for tests that want to invoke handlers directly without
 # going through GameState.apply.
 __all__ = [
@@ -549,5 +716,8 @@ __all__ = [
     "handle_fail_quest",
     "handle_camera_pan", "handle_camera_zoom", "handle_screen_shake",
     "handle_screen_flash", "handle_screen_tint",
+    "handle_set_background", "handle_show_cg", "handle_hide_cg",
+    "handle_transition", "handle_set_weather", "handle_clear_weather",
+    "handle_portrait_emote", "handle_play_movie",
     "VISUAL_FX_QUEUE",
 ]

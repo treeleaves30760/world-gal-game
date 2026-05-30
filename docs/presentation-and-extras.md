@@ -306,6 +306,215 @@ uv run wgg capabilities --pack <pack>
 
 ---
 
+## 場景轉場：背景 / CG 切換與轉場（Scene Transitions）
+
+商業 VN 的「換景／換 CG」幾乎不會瞬切，而是 dissolve / 淡入黑 / wipe / 推格。引擎把
+這套做成**一級轉場系統**：和上面的 camera/screen FX 同一條接縫（handler 只排指令、
+不碰 pygame），由 DialogueScene 擷取「上一幀世界畫面」的快照，在新畫面之上把舊畫面
+依風格「退場」，逐步揭露新畫面。文字框始終穩定地畫在最上層、不受轉場影響。
+
+### 玩家
+
+無操作 —— 由劇情編排自動觸發。
+
+### Pack 作者
+
+四個 builtin effect，都接受一個選填的 `transition` 子 dict（沒寫就是 0.6 秒 dissolve）：
+
+| Effect kind | `target` / `value` | 說明 |
+|---|---|---|
+| `set_background` | `target`=背景圖路徑；`value`=轉場 dict | **場景中途換背景**（過去做不到：背景只能來自 scene.background）。會接管背景直到場景切換。 |
+| `show_cg` | `target`=CG 圖路徑；`value`=轉場 dict | 帶轉場顯示全螢幕 CG。接管 CG 層（蓋過 per-line `cg`）直到場景切換。 |
+| `hide_cg` | `value`=轉場 dict | 帶轉場移除目前 CG。 |
+| `transition` | `value`=轉場 dict | 在目前畫面上跑一個獨立轉場 beat（如淡入黑再淡出），不改變場景內容。 |
+
+轉場 `value` dict 的欄位：
+
+| 欄位 | 預設 | 說明 |
+|---|---|---|
+| `style` | `dissolve` | 見下方風格清單 |
+| `duration` | `0.6` | 秒 |
+| `easing` | （無） | 緩動曲線名（見 `ui/easing.py`） |
+| `color` | `[0,0,0]` | 僅 `fade` 風格用的幕色 |
+| `mask` | （無） | 僅 `mask` 風格用的灰階遮罩圖路徑 |
+
+轉場風格（`SCENE_TRANSITION_STYLES`）：
+
+`cut`（瞬切）、`dissolve`（淡溶，預設）、`fade`（淡入幕色再淡出，經典換景 beat）、
+`wipe_left/right/up/down`（硬邊掃過）、`slide_left/right/up/down`（舊畫面滑出露出新畫面）、
+`iris_in/iris_out`（圓形光圈收／放）、`blinds_h/blinds_v`（百葉）、`pixellate`（馬賽克化淡出）、
+`mask`（影像遮罩 dissolve，依灰階由暗到亮揭露）。
+
+```yaml
+- speaker: "林清雪"
+  text: "「我們走吧。」"
+  effects:
+    - kind: set_background
+      target: backgrounds/street_night.png
+      value: {style: fade, duration: 1.2, color: [0, 0, 0]}
+- text: "（畫面淡入新場景……）"
+  effects:
+    - kind: show_cg
+      target: cg/confession.png
+      value: {style: dissolve, duration: 0.8}
+```
+
+說明與注意事項：
+
+- 不用任何新 effect 時，行為**與過去逐位元相同**（背景仍走 scene.background 的隱式
+  0.6 秒淡溶、CG 仍走 per-line `cg` 瞬切）。轉場是**加分項、選擇性接管**。
+- `set_background` / `show_cg` / `hide_cg` 會**接管**對應的層，直到 story scene 切換才
+  交還給 scene 資料。所以同一場景請固定用 effect 或固定用 scene.background / line `cg`，
+  不要兩者交錯。
+- `cut` 與「沒有上一幀可轉」時直接瞬切（不動畫）。
+- `mask` 風格需要 **numpy**（桌面通常有；pygbag/WASM 與未安裝 numpy 的環境會**優雅降級
+  為 dissolve**）。要啟用：`pip install numpy`。
+- 轉場狀態會出現在 headless `describe()` / `inspect()` 的 `fx_active.transition`，以及
+  `background` / `cg` 兩個層欄位，供 AI 檢視。
+
+---
+
+## 環境 / 天氣（Ambient / Weather）
+
+雨、雪、花瓣、光點、螢火等**全螢幕氛圍層**，畫在世界層之上、文字框之下，跨行持續直到
+被替換或清除。它們是第 10 個擴充類別 `@ambient_backend`，引擎內建一個 `ambient_weather`
+插件提供五種 web-safe、**確定性**（存檔重播可重現）的天氣。
+
+### 玩家
+
+無操作 —— 由劇情編排自動觸發。
+
+### Pack 作者
+
+兩個 builtin effect：
+
+| Effect kind | `target` / `value` | 說明 |
+|---|---|---|
+| `set_weather` | `target`=後端名（rain/snow/petals/sparkles/fireflies）；`value`=參數 | 開啟天氣。`value.fade`=淡入秒數。其餘參數（count/seed/alpha/color + 各後端自有鍵）直接傳給後端。 |
+| `clear_weather` | `value`=`{fade?}` | 關閉目前天氣；`fade`=淡出秒數。 |
+
+```yaml
+- text: "（窗外下起了雨。）"
+  effects:
+    - kind: set_weather
+      target: rain
+      value: {count: 200, wind: -240, fade: 1.5}
+- text: "（雨停了。）"
+  effects:
+    - kind: clear_weather
+      value: {fade: 1.0}
+```
+
+五個內建天氣與常用參數（完整鍵見各後端 docstring / `wgg capabilities`）：
+
+| 後端 | 效果 | 常用參數 |
+|---|---|---|
+| `rain` | 斜向雨絲 | `count`、`speed`、`wind`、`length`、`color`、`alpha` |
+| `snow` | 飄雪 + 橫向擺動 | `count`、`speed`、`sway`、`size`、`color` |
+| `petals` | 櫻花瓣翻轉 | `count`、`speed`、`wind`、`size`、`color` |
+| `sparkles` | 原地閃爍光點 | `count`、`size`、`speed`（閃爍率）、`color` |
+| `fireflies` | 漫遊脈動的螢火 | `count`、`speed`、`size`、`color` |
+
+說明：
+
+- 共通參數：`count`（粒子數）、`seed`（RNG 種子，決定散佈）、`alpha`（0-255 整體不透明度）。
+- 天氣**跨行 / 跨場景持續**（不會自己消失），要靠 `clear_weather` 或另一個 `set_weather`
+  替換。新開的對話場景從無天氣開始。
+- 未註冊的後端名會優雅退回「無 overlay」（不崩、不報錯）。
+- 第三方可用 `@ambient_backend` 加自己的天氣（見 [plugins.md](plugins.md)）。
+- 目前天氣名會出現在 headless `describe()` 的 `fx_active.weather`，供 AI 檢視。
+
+---
+
+## 立繪定點 emote（Portrait Emotes）
+
+讓**已就位的立繪**做一個一次性的強調動作 —— 跳一下、搖頭、點頭、彈跳 —— 然後回到
+待機。它不改變立繪本身（只暫時位移 / 擠壓繪製框），所以和任何 portrait backend
+（breath / layered…）並存。
+
+### 玩家
+
+無操作 —— 由劇情編排自動觸發。
+
+### Pack 作者
+
+一個 builtin effect `portrait_emote`：
+
+```yaml
+- speaker: "林清雪"
+  text: "「才、才不是那樣呢！」"
+  portraits:
+    - character: qingxue
+      slot: center
+  effects:
+    - kind: portrait_emote
+      target: center            # slot（left/center/right）或角色名
+      value: {emote: shake, duration: 0.45}
+```
+
+| `value` 欄位 | 預設 | 說明 |
+|---|---|---|
+| `emote` | `jump` | `jump`（跳）/ `shake`（搖頭）/ `nod`（點頭）/ `bounce`（彈跳擠壓） |
+| `duration` | `0.45` | 秒 |
+| `intensity` | 各 emote 自有 | px 振幅 |
+
+說明：
+
+- `target` 可給 slot 名，或角色名（自動找到該角色所在的 slot；找不到則退回 center）。
+- emote 縮放以**底邊中心**為錨（腳不動）；動作結束自動回到待機。
+- 未知 target / emote 名安全退化（不崩）。
+- 適合搭配台詞情緒：害羞 `shake`、贊同 `nod`、驚訝 `jump`、活潑 `bounce`。
+
+---
+
+## 影片播放（Movies：OP / ED / 過場）
+
+全螢幕影片 overlay，播畢或被跳過後自動回到劇情。引擎內建一個 **web-safe 的 image-
+sequence 播放器**（一資料夾的連號影格,純 pygame、零外部依賴、桌面/web 一致;代價是
+檔案大、無內嵌音軌 —— 搭配 `bgm` 即可）。真 video（.mp4/.webm,含音軌）走**桌面插件**
+`desktop_video`（pyvidplayer2,需 ffmpeg）。
+
+### 玩家
+
+播放中點擊 / 空白鍵 / Esc 可跳過（若 `skippable`）。
+
+### Pack 作者
+
+一個 builtin effect `play_movie`：
+
+```yaml
+- text: "（片頭動畫播放……）"
+  effects:
+    - kind: play_movie
+      target: assets/movies/op        # image-sequence：影格資料夾
+      value: {kind: image_sequence, fps: 24, skippable: true}
+- text: "（END。）"
+  effects:
+    - kind: play_movie
+      target: assets/movies/ending.mp4  # 真 video：需 desktop_video 插件
+      value: {kind: video}
+```
+
+| `value` 欄位 | 預設 | 說明 |
+|---|---|---|
+| `kind` | `auto` | `auto`（依路徑判斷）/ `image_sequence` / `video` / 插件註冊的名字 |
+| `fps` | `24` | image-sequence 影格率 |
+| `loop` | `false` | 循環（靠跳過才結束） |
+| `skippable` | `true` | 是否可跳過 |
+
+說明：
+
+- **image-sequence**：`target` 指向一個資料夾,內含連號影格（`.png`/`.jpg`/…,依檔名
+  排序）。純 pygame、web-safe。
+- **真 video**：`kind: video`（或 `auto` + `.mp4`/`.webm` 副檔名）。需安裝
+  `desktop_video` 依賴：`pip install "world-gal-game[video]"`（需 ffmpeg）。缺依賴 /
+  缺檔案時**優雅降級**（瞬間跳過,不崩,不卡黑畫面）。
+- 第三方可用 `register_movie_player(name, factory)` 加自己的播放器後端（見
+  [plugins.md](plugins.md)）。`wgg capabilities` 的 `markup.movie_players` 列出已註冊
+  的播放器。
+
+---
+
 ## 角色語音音量（Per-Character Voice Volume）
 
 ### 玩家
@@ -390,5 +599,11 @@ uv run wgg capabilities --pack <pack>
 | 新增一個結局 | 在 `content/endings.yaml` 加一筆 + 在路線收尾 `set_flag` |
 | 結局依角色分組 | 結局寫 `route_id`，對應 NPC 標 `is_heroine` + `route_id` |
 | 鏡頭推近 / 抖動 / 染色 | 在 line 的 `effects:` 用 `camera_*` / `screen_*` |
+| 場景中途換背景 | 在 line 的 `effects:` 用 `set_background`（帶 `transition`） |
+| 帶轉場顯示 / 隱藏 CG | 用 `show_cg` / `hide_cg`（帶 `transition`） |
+| 淡入黑再淡出的換景 beat | 用 `transition` + `value: {style: fade}` |
+| 下雨 / 下雪 / 花瓣等氛圍 | 用 `set_weather` / `clear_weather`（帶 `fade`） |
+| 立繪跳動 / 搖頭 / 點頭 | 在 line 的 `effects:` 用 `portrait_emote` |
+| OP / ED / 過場影片 | 在 line 的 `effects:` 用 `play_movie`（影格資料夾或 .mp4） |
 | 角色語音可單獨調 | 在有配音的行掛 `voice:` 與正確 `speaker:` |
 | 場景可重溫 | 自動 —— 玩家讀過就會出現 |

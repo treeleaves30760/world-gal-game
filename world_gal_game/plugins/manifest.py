@@ -16,8 +16,8 @@ The manifest is intentionally narrow:
 - ``engine_version``                                   — semver range against engine's __version__
 - ``depends``                                          — other plugin ids
 - ``entry_module``                                     — Python module path relative to plugin dir
-- ``extends.{effects,conditions,hooks,inspect_fields,widgets,scenes,brains,dialogue_ops,portrait_backends}``
-      — declared extension points (all nine categories the decorators cover)
+- ``extends.{effects,conditions,hooks,inspect_fields,widgets,scenes,brains,dialogue_ops,portrait_backends,ambient_backends}``
+      — declared extension points (all ten categories the decorators cover)
 - ``side_effects.{reads_filesystem,network,subprocess}`` — boolean disclosure flags
 
 Declaring extension points is optional, but when a plugin *does* declare
@@ -91,7 +91,8 @@ class Extends(BaseModel):
     hooks: list[ExtensionDeclaration] = Field(default_factory=list)
     inspect_fields: list[ExtensionDeclaration] = Field(default_factory=list)
     # Class-based extension points registered in code via @widget / @scene /
-    # @brain / @dialogue_op / @portrait_backend. ``kind`` is the registered name
+    # @brain / @dialogue_op / @portrait_backend / @ambient_backend. ``kind`` is
+    # the registered name
     # (widget name / scene id / brain name / dialogue-op name / backend name).
     # Declaring them is optional; PluginManager warns when a declaration and the
     # code disagree.
@@ -100,6 +101,7 @@ class Extends(BaseModel):
     brains: list[ExtensionDeclaration] = Field(default_factory=list)
     dialogue_ops: list[ExtensionDeclaration] = Field(default_factory=list)
     portrait_backends: list[ExtensionDeclaration] = Field(default_factory=list)
+    ambient_backends: list[ExtensionDeclaration] = Field(default_factory=list)
 
 
 class PluginManifest(BaseModel):

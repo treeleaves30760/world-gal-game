@@ -21,6 +21,7 @@ state; the dialogue scene owns one per slot and ticks it each frame.
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 
 import pygame
@@ -31,6 +32,78 @@ from .layout import fit_rect
 
 def _lerp(a: float, b: float, t: float) -> float:
     return a + (b - a) * t
+
+
+#: In-place portrait emotes (Phase 6 presentation layer). Unlike SlotAnimation
+#: (which animates a portrait *into* / *out of* / *between* slots), an emote is a
+#: short one-shot accent played on a *settled* portrait — a jump, a shake, a
+#: nod, a squash-bounce — that returns the portrait to rest when it finishes.
+PORTRAIT_EMOTES: tuple[str, ...] = ("jump", "shake", "nod", "bounce")
+
+
+@dataclass
+class PortraitEmote:
+    """A one-shot in-place accent applied to a settled portrait.
+
+    Holds a clock over ``duration`` and, at any moment, yields a
+    ``(dx, dy, scale_x, scale_y)`` transform the scene applies to the slot's
+    draw rect (offsets in px, scales about the rect's bottom-centre so the feet
+    stay planted). The portrait itself is unchanged — the emote only nudges /
+    squashes the existing render — so it composes with any portrait backend.
+
+    Kinds (:data:`PORTRAIT_EMOTES`):
+
+    - ``jump``   — a quick hop up and back down (one arc).
+    - ``nod``    — a small bow: dip down and back up.
+    - ``shake``  — a decaying horizontal jitter (a "no" / fluster).
+    - ``bounce`` — a hop with an anticipatory squash on take-off and landing.
+
+    ``intensity`` scales the motion in px (``jump``/``nod``/``shake``) and is
+    clamped to something sane. Deterministic in ``t`` so a replay matches.
+    """
+
+    kind: str
+    duration: float = 0.45
+    intensity: float = 30.0
+    t: float = field(default=0.0, init=False)
+
+    def __post_init__(self) -> None:
+        self.kind = self.kind if self.kind in PORTRAIT_EMOTES else "jump"
+        self.duration = max(0.05, float(self.duration))
+        try:
+            self.intensity = float(self.intensity)
+        except Exception:
+            self.intensity = 30.0
+
+    def update(self, dt: float) -> None:
+        self.t = min(self.t + dt, self.duration)
+
+    @property
+    def done(self) -> bool:
+        return self.t >= self.duration
+
+    def transform(self) -> tuple[int, int, float, float]:
+        """Return ``(dx, dy, scale_x, scale_y)`` for the current moment."""
+        if self.done:
+            return (0, 0, 1.0, 1.0)
+        p = self.t / self.duration
+        amp = self.intensity
+        if self.kind == "jump":
+            # Single arc up (negative y is up) and back: sin(pi*p) in [0,1].
+            return (0, int(-amp * math.sin(math.pi * p)), 1.0, 1.0)
+        if self.kind == "nod":
+            # A gentle bow: dip down then return, at half the jump amplitude.
+            return (0, int(amp * 0.5 * math.sin(math.pi * p)), 1.0, 1.0)
+        if self.kind == "shake":
+            # Decaying horizontal jitter (a few oscillations that settle).
+            decay = 1.0 - p
+            return (int(amp * 0.5 * math.sin(p * math.pi * 6.0) * decay),
+                    0, 1.0, 1.0)
+        # bounce: squash on take-off / landing + a hop in the middle.
+        hop = math.sin(math.pi * p)
+        # Squash hardest at the ends (p≈0 and p≈1), least at apex.
+        squash = (1.0 - hop) * 0.12
+        return (0, int(-amp * hop), 1.0 + squash * 0.6, 1.0 - squash)
 
 
 def _lerp_rect(a: pygame.Rect, b: pygame.Rect, t: float) -> pygame.Rect:

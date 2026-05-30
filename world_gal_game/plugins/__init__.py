@@ -39,15 +39,17 @@ from __future__ import annotations
 # modules below depend on them.
 from .registry import (
     effect, condition, hook, inspect_field,
-    widget, scene, brain, dialogue_op, portrait_backend, save_migration,
+    widget, scene, brain, dialogue_op, portrait_backend, ambient_backend,
+    save_migration,
     EFFECT_REGISTRY, CONDITION_REGISTRY, HOOK_REGISTRY, INSPECT_FIELD_REGISTRY,
     WIDGET_REGISTRY, SCENE_REGISTRY, BRAIN_REGISTRY, DIALOGUE_OP_REGISTRY,
-    PORTRAIT_BACKEND_REGISTRY,
+    PORTRAIT_BACKEND_REGISTRY, AMBIENT_BACKEND_REGISTRY,
     EffectEntry, ConditionEntry, HookEntry, InspectFieldEntry,
     WidgetEntry, SceneEntry, BrainEntry, DialogueOpEntry, PortraitBackendEntry,
+    AmbientBackendEntry,
     EffectRegistry, ConditionRegistry, HookRegistry, InspectFieldRegistry,
     WidgetRegistry, SceneRegistry, BrainRegistry, DialogueOpRegistry,
-    PortraitBackendRegistry,
+    PortraitBackendRegistry, AmbientBackendRegistry,
     EffectHandler, ConditionHandler, HookHandler, InspectFieldProducer,
     loading, current_plugin_id, snapshot, restore,
 )
@@ -112,20 +114,21 @@ __all__ = [
     # decorators
     "effect", "condition", "hook", "inspect_field",
     "widget", "scene", "brain", "dialogue_op", "portrait_backend",
-    "save_migration",
+    "ambient_backend", "save_migration",
     # registries (singletons)
     "EFFECT_REGISTRY", "CONDITION_REGISTRY", "HOOK_REGISTRY",
     "INSPECT_FIELD_REGISTRY",
     "WIDGET_REGISTRY", "SCENE_REGISTRY", "BRAIN_REGISTRY",
     "DIALOGUE_OP_REGISTRY", "PORTRAIT_BACKEND_REGISTRY",
+    "AMBIENT_BACKEND_REGISTRY",
     # registry types + entry types
     "EffectRegistry", "ConditionRegistry", "HookRegistry",
     "InspectFieldRegistry",
     "WidgetRegistry", "SceneRegistry", "BrainRegistry",
-    "DialogueOpRegistry", "PortraitBackendRegistry",
+    "DialogueOpRegistry", "PortraitBackendRegistry", "AmbientBackendRegistry",
     "EffectEntry", "ConditionEntry", "HookEntry", "InspectFieldEntry",
     "WidgetEntry", "SceneEntry", "BrainEntry", "DialogueOpEntry",
-    "PortraitBackendEntry",
+    "PortraitBackendEntry", "AmbientBackendEntry",
     # handler protocol types
     "EffectHandler", "ConditionHandler", "HookHandler",
     "InspectFieldProducer",

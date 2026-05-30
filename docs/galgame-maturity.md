@@ -6,8 +6,11 @@ Phase 5 把引擎推向商業 VN 的「演出/製作」門檻。進度:
 - **5A 動態立繪 —— 已實作**:portrait backend 接縫 + 內建 `breath`/`sprite`
   後端(下方 5A 節)。唯一剩下的是原生骨架(Live2D/Spine)的桌面插件,需要函式庫/
   授權決策才開工。
-- **5B 影片播放 —— 待辦**:仍是設計 spike(下方 5B 節),牽涉外部解碼依賴與
-  桌面 vs web 取捨,需要你拍板。
+- **5B 影片播放 —— 已實作**:image-sequence 播放器(純 pygame、web-safe)+ `play_movie`
+  effect + `MoviePlayerScene` overlay 已落地;真 video 走桌面插件 `desktop_video`
+  (pyvidplayer2,`pip install "world-gal-game[video]"`),經 `register_movie_player`
+  播放器登錄表接上,缺依賴/缺檔案優雅降級。見
+  [presentation-and-extras.md](presentation-and-extras.md) 的「影片播放」節。
 
 ---
 

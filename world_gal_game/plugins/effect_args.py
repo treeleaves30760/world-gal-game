@@ -294,6 +294,136 @@ class ScreenTintArgs(ArgModel):
     value: ScreenTintValue | None = None
 
 
+# ----------------------------------------------------------------------
+# Presentation: scene transitions. A transition animates the hand-off from the
+# previous on-screen frame to the new one. The nested ``TransitionValue`` is
+# shared by every effect that changes what is on screen, so an agent learns one
+# vocabulary and reuses it for backgrounds, CGs, and stand-alone beats.
+
+class TransitionValue(ArgModel):
+    """How to animate a visual change (see ui.transitions.SceneTransition).
+
+    ``style`` is one of ui.transitions.SCENE_TRANSITION_STYLES (cut / dissolve /
+    fade / wipe_* / slide_* / iris_* / blinds_* / pixellate / mask). ``color``
+    is the curtain colour for ``fade``; ``mask`` is an image path for the
+    ``mask`` (image-dissolve) style; ``easing`` is an ui.easing curve name.
+    """
+
+    style: str = "dissolve"
+    duration: float = 0.6
+    easing: str | None = None
+    color: list[int] = Field(default_factory=lambda: [0, 0, 0])
+    mask: str | None = None        # image path, only used by style="mask"
+
+
+class SetBackgroundArgs(ArgModel):
+    """set_background: change the background mid-scene, with an optional
+    transition. ``target`` is the image path; ``value`` is a TransitionValue."""
+
+    target: ReqStr                 # background image path
+    value: TransitionValue | None = None
+
+
+class ShowCgArgs(ArgModel):
+    """show_cg: display a full-screen CG, with an optional transition.
+    ``target`` is the CG image path; ``value`` is a TransitionValue."""
+
+    target: ReqStr                 # CG image path
+    value: TransitionValue | None = None
+
+
+class HideCgArgs(ArgModel):
+    """hide_cg: remove the active CG, with an optional transition.
+    Takes no target; ``value`` is a TransitionValue."""
+
+    value: TransitionValue | None = None
+
+
+class TransitionArgs(ArgModel):
+    """transition: play a stand-alone transition beat over the current frame
+    (e.g. a fade to black and back) without otherwise changing the scene."""
+
+    value: TransitionValue | None = None
+
+
+# ----------------------------------------------------------------------
+# Presentation: ambient / weather overlays (the @ambient_backend category).
+
+class WeatherValue(ArgModel):
+    """Common ambient-overlay params (a backend may read further custom keys).
+
+    ``extra='ignore'`` (from ArgModel) means backend-specific keys an author
+    adds are accepted by the lint pass and still passed through verbatim at
+    runtime (the handler forwards the raw dict, not this model).
+    """
+
+    count: int | None = None       # particle quantity
+    seed: int | None = None        # deterministic RNG seed
+    alpha: int | None = None       # 0-255 overall overlay opacity
+    speed: float | None = None
+    wind: float | None = None
+    size: float | None = None
+    color: list[int] | None = None
+    fade: float | None = None      # fade-in seconds (0 = instant)
+
+
+class SetWeatherArgs(ArgModel):
+    """set_weather: turn on an ambient overlay. ``target`` is the registered
+    backend name (rain / snow / petals / ...); ``value`` is its params."""
+
+    target: ReqStr                 # ambient backend name
+    value: WeatherValue | None = None
+
+
+class ClearWeatherArgs(ArgModel):
+    """clear_weather: remove the active ambient overlay. Optional ``value``
+    carries a ``fade`` (fade-out seconds)."""
+
+    value: WeatherValue | None = None
+
+
+# ----------------------------------------------------------------------
+# Presentation: in-place portrait emotes (jump / shake / nod / bounce).
+
+class PortraitEmoteValue(ArgModel):
+    """How to play a one-shot in-place portrait accent."""
+
+    emote: str = "jump"            # jump / shake / nod / bounce
+    duration: float = 0.45         # seconds
+    intensity: float | None = None  # px amplitude (kind-specific default)
+
+
+class PortraitEmoteArgs(ArgModel):
+    """portrait_emote: play a one-shot accent on a settled portrait.
+
+    ``target`` is the slot ('left'/'center'/'right') or the character name whose
+    slot to animate; ``value`` selects the emote and its timing."""
+
+    target: ReqStr                 # slot name or character name
+    value: PortraitEmoteValue | None = None
+
+
+# ----------------------------------------------------------------------
+# Presentation: full-screen movie playback (OP / ED / cutscene).
+
+class PlayMovieValue(ArgModel):
+    """How to play a movie (see scenes.movie_scene.MoviePlayerScene)."""
+
+    kind: str = "auto"             # auto / image_sequence / video / <plugin>
+    fps: float = 24.0              # image-sequence frame rate
+    loop: bool = False
+    skippable: bool = True
+
+
+class PlayMovieArgs(ArgModel):
+    """play_movie: push a full-screen movie overlay. ``target`` is the movie
+    path — a frame folder (image sequence) or a video file (desktop video
+    plugin); ``value`` selects the player and playback options."""
+
+    target: ReqStr                 # frame folder or video file path
+    value: PlayMovieValue | None = None
+
+
 __all__ = [
     "ArgModel", "ReqStr",
     "AffectionArgs", "StatArgs",
@@ -309,4 +439,9 @@ __all__ = [
     "ScreenFlashArgs", "ScreenTintArgs",
     "CameraPanValue", "CameraZoomValue", "ScreenShakeValue",
     "ScreenFlashValue", "ScreenTintValue",
+    "TransitionValue", "SetBackgroundArgs", "ShowCgArgs", "HideCgArgs",
+    "TransitionArgs",
+    "WeatherValue", "SetWeatherArgs", "ClearWeatherArgs",
+    "PortraitEmoteValue", "PortraitEmoteArgs",
+    "PlayMovieValue", "PlayMovieArgs",
 ]

@@ -92,6 +92,18 @@ Zoom the camera to a scale (1.0 = neutral) over a duration. Queued for the scene
 - {kind: camera_zoom}
 ```
 
+### `clear_weather`
+
+Remove the active ambient overlay. Optional value.fade fades it out. Queued for the scene; does not touch the display.
+
+| 參數 | 型別 | 必填 | 預設 | 說明 |
+|---|---|---|---|---|
+| `value` | `WeatherValue` | — | `None` | dict {fade:float?} |
+
+```yaml
+- {kind: clear_weather}
+```
+
 ### `complete_objective`
 
 Mark one objective on a quest as done. Auto-completes the quest if all required objectives are now done.
@@ -177,6 +189,18 @@ Add an item to inventory.
 - {kind: give_item, target: <string>}
 ```
 
+### `hide_cg`
+
+Hide the active CG, with an optional transition. value={style,duration,easing,color,mask}. Queued for the scene.
+
+| 參數 | 型別 | 必填 | 預設 | 說明 |
+|---|---|---|---|---|
+| `value` | `TransitionValue` | — | `None` | dict {style:str?, duration:float?, easing:str?, color:[r,g,b]?, mask:str?} |
+
+```yaml
+- {kind: hide_cg}
+```
+
 ### `increment_flag`
 
 Add value (default 1) to a numeric flag.
@@ -215,6 +239,19 @@ Move player to a location id.
 - {kind: move_to, target: <string>}
 ```
 
+### `play_movie`
+
+Push a full-screen movie overlay (OP/ED/cutscene). target=frame folder (image sequence) or video file; value={kind, fps, loop, skippable}. Queued for the scene; does not touch the display.
+
+| 參數 | 型別 | 必填 | 預設 | 說明 |
+|---|---|---|---|---|
+| `target` | `string` | 是 |  | frame_folder_or_video_path |
+| `value` | `PlayMovieValue` | — | `None` | dict {kind:str?, fps:float?, loop:bool?, skippable:bool?} |
+
+```yaml
+- {kind: play_movie, target: <string>}
+```
+
 ### `play_scene`
 
 Trigger transition to another scene (interpreted by DialogueEngine).
@@ -225,6 +262,19 @@ Trigger transition to another scene (interpreted by DialogueEngine).
 
 ```yaml
 - {kind: play_scene, target: <string>}
+```
+
+### `portrait_emote`
+
+Play a one-shot in-place accent (jump/shake/nod/bounce) on a settled portrait. target=slot ('left'/'center'/'right') or character name; value={emote, duration, intensity}. Queued for the scene; does not touch the display.
+
+| 參數 | 型別 | 必填 | 預設 | 說明 |
+|---|---|---|---|---|
+| `target` | `string` | 是 |  | slot_or_character |
+| `value` | `PortraitEmoteValue` | — | `None` | dict {emote:str, duration:float?, intensity:float?} |
+
+```yaml
+- {kind: portrait_emote, target: <string>}
 ```
 
 ### `screen_flash`
@@ -277,6 +327,19 @@ Remove one item, gain currency.
 - {kind: sell_item, target: <string>}
 ```
 
+### `set_background`
+
+Change the background mid-scene, with an optional transition. target=image path; value={style,duration,easing,color,mask}. Queued for the scene.
+
+| 參數 | 型別 | 必填 | 預設 | 說明 |
+|---|---|---|---|---|
+| `target` | `string` | 是 |  | image_path |
+| `value` | `TransitionValue` | — | `None` | dict {style:str?, duration:float?, easing:str?, color:[r,g,b]?, mask:str?} |
+
+```yaml
+- {kind: set_background, target: <string>}
+```
+
 ### `set_flag`
 
 Set a flag to value (defaults to True).
@@ -314,6 +377,32 @@ Set a resource to an absolute value.
 
 ```yaml
 - {kind: set_resource, target: <string>}
+```
+
+### `set_weather`
+
+Turn on an ambient overlay (rain/snow/petals/...). target=registered @ambient_backend name; value=its params (count, seed, alpha, color, fade, ...). Queued for the scene; does not touch the display.
+
+| 參數 | 型別 | 必填 | 預設 | 說明 |
+|---|---|---|---|---|
+| `target` | `string` | 是 |  | ambient_backend_name |
+| `value` | `WeatherValue` | — | `None` | dict {count:int?, seed:int?, alpha:int?, color:[r,g,b]?, fade:float?, ...} |
+
+```yaml
+- {kind: set_weather, target: <string>}
+```
+
+### `show_cg`
+
+Show a full-screen CG, with an optional transition. target=image path; value={style,duration,easing,color,mask}. Queued for the scene.
+
+| 參數 | 型別 | 必填 | 預設 | 說明 |
+|---|---|---|---|---|
+| `target` | `string` | 是 |  | image_path |
+| `value` | `TransitionValue` | — | `None` | dict {style:str?, duration:float?, easing:str?, color:[r,g,b]?, mask:str?} |
+
+```yaml
+- {kind: show_cg, target: <string>}
 ```
 
 ### `spend_resource`
@@ -366,6 +455,18 @@ Remove an item from inventory.
 
 ```yaml
 - {kind: take_item, target: <string>}
+```
+
+### `transition`
+
+Play a stand-alone transition beat over the current frame (e.g. fade to black and back) without changing the scene. value={style,duration,easing,color,mask}. Queued for the scene.
+
+| 參數 | 型別 | 必填 | 預設 | 說明 |
+|---|---|---|---|---|
+| `value` | `TransitionValue` | — | `None` | dict {style:str?, duration:float?, easing:str?, color:[r,g,b]?, mask:str?} |
+
+```yaml
+- {kind: transition}
 ```
 
 ### `unlock_location`

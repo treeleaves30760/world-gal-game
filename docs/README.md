@@ -60,7 +60,11 @@ AI 協作者進場速查 [../CLAUDE.md](../CLAUDE.md)。
 
 | 文件 | 用途 |
 |---|---|
+| [../AGENTS.md](../AGENTS.md) | **agent-中立進場速查**（任何 AI 工具）；機器地圖見 [../llms.txt](../llms.txt) |
 | [ai-developer-guide.md](ai-developer-guide.md) | **AI 協作者入門**：所有可用 API + CLI |
+| [ai-native-contract.md](ai-native-contract.md) | 動詞 / 參數 schema / trace / diff / 決定性 |
+| [ai-native-world-model.md](ai-native-world-model.md) | variables / dataflow / planner / coverage / rollback；`context` / `impact` 聚合端點 |
+| [session-protocol.md](session-protocol.md) | 暖 NDJSON session：行框、訊息形狀、batch 原子性、錯誤格式 |
 | [headless.md](headless.md) | `HeadlessSession`：無視窗跑遊戲、抓玩家狀態 |
 | [ai-debug.md](ai-debug.md) | `wgg debug`：注入點擊、截圖、widget 查找 |
 

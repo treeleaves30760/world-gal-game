@@ -195,6 +195,28 @@ class PortraitBackendEntry:
     description: str = ""
 
 
+@dataclass(frozen=True)
+class AmbientBackendEntry:
+    """A plugin-registered ambient / weather overlay backend.
+
+    An ambient backend draws a full-screen atmospheric overlay (rain, snow,
+    falling petals, drifting sparkles, fireflies ...) above the world layer and
+    below the text box, persisting across lines until changed or cleared. It is
+    the tenth extension category and mirrors :class:`PortraitBackendEntry`: the
+    engine core owns no specific particle system, so themes ship their own.
+
+    ``cls`` is instantiated by the dialogue scene as
+    ``cls(params, screen_size)`` and is expected to expose ``update(dt)`` and
+    ``draw(surface)`` (see :mod:`world_gal_game.ui.ambient_backend`). It must be
+    deterministic (no global RNG) so a save/replay reproduces the same frame.
+    """
+
+    name: str
+    cls: type
+    plugin_id: str
+    description: str = ""
+
+
 # ----------------------------------------------------------------------
 # Registries
 
@@ -527,6 +549,19 @@ class PortraitBackendRegistry(_NamedClassRegistry):
         return entry.cls(*args, **kwargs)
 
 
+class AmbientBackendRegistry(_NamedClassRegistry):
+    """name → AmbientBackendEntry. ``spawn`` returns an overlay instance."""
+
+    def __init__(self) -> None:
+        super().__init__(category="ambient_backend")
+
+    def spawn(self, name: str, *args: Any, **kwargs: Any) -> Any:
+        entry = self._entries.get(name)
+        if entry is None:
+            raise UnknownKindError(name, category="ambient_backend")
+        return entry.cls(*args, **kwargs)
+
+
 class DialogueOpRegistry:
     """name → DialogueOpEntry. Used by parsed ``[[name:arg]]`` directives."""
 
@@ -586,6 +621,7 @@ SCENE_REGISTRY = SceneRegistry()
 BRAIN_REGISTRY = BrainRegistry()
 DIALOGUE_OP_REGISTRY = DialogueOpRegistry()
 PORTRAIT_BACKEND_REGISTRY = PortraitBackendRegistry()
+AMBIENT_BACKEND_REGISTRY = AmbientBackendRegistry()
 
 
 # ----------------------------------------------------------------------
@@ -835,6 +871,39 @@ def portrait_backend(name: str,
     return deco
 
 
+def ambient_backend(name: str,
+                    *, plugin_id: str | None = None,
+                    description: str = "") -> Callable:
+    """Class decorator: register an ambient / weather overlay backend.
+
+    The class becomes the full-screen atmospheric overlay the dialogue scene
+    instantiates as ``cls(params, screen_size)``; it should expose
+    ``update(dt)`` and ``draw(surface)`` (see
+    :mod:`world_gal_game.ui.ambient_backend`). A ``set_weather`` effect naming
+    this backend routes the scene's ambient layer through it; ``clear_weather``
+    (or an unknown name) removes it, so a missing plugin never breaks rendering.
+
+    Usage::
+
+        from world_gal_game.plugins import ambient_backend
+
+        @ambient_backend("rain", description="Falling rain streaks.")
+        class RainBackend:
+            def __init__(self, params, screen_size): ...
+            def update(self, dt): ...
+            def draw(self, surface): ...
+    """
+    def deco(cls: type) -> type:
+        pid = plugin_id or current_plugin_id()
+        AMBIENT_BACKEND_REGISTRY.register(AmbientBackendEntry(
+            name=name, cls=cls, plugin_id=pid, description=description,
+        ))
+        cls.__wgg_ambient_backend__ = name    # type: ignore[attr-defined]
+        cls.__wgg_plugin_id__ = pid           # type: ignore[attr-defined]
+        return cls
+    return deco
+
+
 def dialogue_op(name: str,
                 *, plugin_id: str | None = None,
                 description: str = "") -> Callable:
@@ -927,6 +996,7 @@ class _RegistrySnapshot:
     brains: dict[str, BrainEntry]
     dialogue_ops: dict[str, DialogueOpEntry]
     portrait_backends: dict[str, PortraitBackendEntry]
+    ambient_backends: dict[str, AmbientBackendEntry]
 
 
 def snapshot() -> _RegistrySnapshot:
@@ -941,6 +1011,7 @@ def snapshot() -> _RegistrySnapshot:
         brains=dict(BRAIN_REGISTRY._entries),
         dialogue_ops=dict(DIALOGUE_OP_REGISTRY._entries),
         portrait_backends=dict(PORTRAIT_BACKEND_REGISTRY._entries),
+        ambient_backends=dict(AMBIENT_BACKEND_REGISTRY._entries),
     )
 
 
@@ -964,3 +1035,5 @@ def restore(snap: _RegistrySnapshot) -> None:
     DIALOGUE_OP_REGISTRY._entries.update(snap.dialogue_ops)
     PORTRAIT_BACKEND_REGISTRY._entries.clear()
     PORTRAIT_BACKEND_REGISTRY._entries.update(snap.portrait_backends)
+    AMBIENT_BACKEND_REGISTRY._entries.clear()
+    AMBIENT_BACKEND_REGISTRY._entries.update(snap.ambient_backends)

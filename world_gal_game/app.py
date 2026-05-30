@@ -676,7 +676,26 @@ class GalGameApp:
                           on_config=self._open_settings,
                           on_menu=self._open_menu,
                           on_qsave=self._quicksave,
-                          on_qload=self._quickload)
+                          on_qload=self._quickload,
+                          on_movie=self._open_movie)
+
+    def _open_movie(self, directive: dict) -> None:
+        """Push a full-screen movie overlay (from a play_movie effect).
+
+        ``directive`` is the queued play_movie payload ({path, kind, fps, loop,
+        skippable}). The overlay pops itself when the movie finishes / is
+        skipped, returning to the dialogue beneath.
+        """
+        from .scenes.movie_scene import MoviePlayerScene
+        self.manager.push(
+            MoviePlayerScene(self.ctx),
+            path=directive.get("path", ""),
+            kind=directive.get("kind", "auto"),
+            fps=directive.get("fps", 24.0),
+            loop=directive.get("loop", False),
+            skippable=directive.get("skippable", True),
+            on_done=self.manager.pop,
+        )
 
     def _check_ambient_hooks(self) -> bool:
         """Fire the first eligible enter/auto hook at the current location.

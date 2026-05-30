@@ -9,9 +9,9 @@ from .base import Scene, SceneContext
 from ..core.history import StateHistory
 from ..ui.widgets import DialogueBox, ChoiceMenu, PortraitView, QuickMenuBar
 from ..ui.nvl_box import NVLBox
-from ..ui.transitions import PortraitCrossfade, BackgroundFade
+from ..ui.transitions import PortraitCrossfade, BackgroundFade, SceneTransition
 from ..ui.camera import Camera, ScreenShake, ScreenFlash, ColorTint
-from ..ui.portrait_anim import SlotAnimation
+from ..ui.portrait_anim import SlotAnimation, PortraitEmote
 from ..ui.layout import fit_rect
 from ..core.portrait_spec import PortraitSpec
 from ..plugins.builtin_effects import VISUAL_FX_QUEUE
@@ -35,6 +35,7 @@ class DialogueScene(Scene):
         self.background_path: str | None = None
         self.scene_id: str | None = None
         self.on_done: Callable[[], None] | None = None
+        self.on_movie: Callable[[dict], None] | None = None
         self._current_line = None
         self._scene_started = False
         self._pending_choices = False
@@ -74,6 +75,11 @@ class DialogueScene(Scene):
         self._slot_specs: dict[str, PortraitSpec | None] = {
             "left": None, "center": None, "right": None,
         }
+        # One-shot in-place emote (jump/shake/nod/bounce) per slot, played on
+        # the settled portrait by the portrait_emote effect. None = at rest.
+        self._slot_emotes: dict[str, PortraitEmote | None] = {
+            "left": None, "center": None, "right": None,
+        }
         # Active portrait backend instance per slot (procedural breathing,
         # sprite frames, Live2D ...). None means the slot uses the plain static
         # blit. Backends own the *resting* animation; enter/exit/crossfade
@@ -99,6 +105,32 @@ class DialogueScene(Scene):
         self._flashes: list[ScreenFlash] = []
         self._tint: ColorTint | None = None
 
+        # Scene transitions (set_background / show_cg / hide_cg / transition).
+        # A SceneTransition snapshots the previous composed world frame and
+        # reveals the freshly-composed one beneath it. ``_last_world_frame`` is
+        # that snapshot, captured each draw just before the text box so the box
+        # stays stable on top. The two _overridden flags record that an effect
+        # (not the per-line scene data) now owns the background / CG, so
+        # _render_presentation stops re-applying pres.background / line.cg and
+        # clobbering an author's mid-scene change. They reset on a scene change.
+        self._scene_transition: SceneTransition | None = None
+        self._last_world_frame: pygame.Surface | None = None
+        self._bg_overridden: bool = False
+        self._cg_overridden: bool = False
+        self._fx_scene_id: str | None = None
+
+        # Ambient / weather overlay (the @ambient_backend category). A single
+        # active backend instance drawn above the world layer and below the text
+        # box, persisting across lines until a clear_weather / another
+        # set_weather. ``_ambient_base_alpha`` is its intended opacity; a fade
+        # in/out scales the backend's live alpha toward / away from it.
+        self._ambient: object | None = None
+        self._ambient_name: str | None = None
+        self._ambient_base_alpha: int = 255
+        self._ambient_fade_dir: int = 0      # +1 fading in, -1 out, 0 steady
+        self._ambient_fade_t: float = 0.0
+        self._ambient_fade_dur: float = 0.0
+
     def enter(self, *, scene_id: str | None = None,
               on_done: Callable[[], None] | None = None,
               on_scrollback: Callable[[], None] | None = None,
@@ -108,10 +140,12 @@ class DialogueScene(Scene):
               on_menu: Callable[[], None] | None = None,
               on_qsave: Callable[[], None] | None = None,
               on_qload: Callable[[], None] | None = None,
+              on_movie: Callable[[dict], None] | None = None,
               **_) -> None:
         self.scene_id = scene_id
         self.on_done = on_done
         self.on_scrollback = on_scrollback
+        self.on_movie = on_movie
         # Fresh rollback history per scene (rewind stays within this scene).
         self._history = (StateHistory()
                          if getattr(self.ctx.config, "rollback_enabled", True)
@@ -382,7 +416,16 @@ class DialogueScene(Scene):
     def _render_presentation(self, pres) -> None:
         if pres is None:
             return
-        if pres.background:
+        # A change of story scene clears any mid-scene background / CG override
+        # so the new scene's own background and per-line CG apply normally.
+        cur_sid = getattr(self.ctx.state.story, "current_scene", None)
+        if cur_sid != self._fx_scene_id:
+            self._fx_scene_id = cur_sid
+            self._bg_overridden = False
+            self._cg_overridden = False
+        # Apply the scene-level background unless a set_background effect has
+        # taken over the background for this scene (then it owns the swap).
+        if pres.background and not self._bg_overridden:
             self._update_background(pres.background)
         if pres.kind == "line":
             line = pres.line
@@ -409,8 +452,10 @@ class DialogueScene(Scene):
                 vol = self.ctx.config.per_character_voice_volume.get(
                     line.speaker, self.ctx.config.voice_volume)
                 self.ctx.assets.play_voice(line.voice, volume=vol)
-            # CG
-            self.cg_surface_path = line.cg
+            # CG: per-line CG, unless a show_cg/hide_cg effect has taken over
+            # the CG layer for this scene (then it owns what is displayed).
+            if not self._cg_overridden:
+                self.cg_surface_path = line.cg
             # Portrait (multi-slot or single)
             self._update_portraits(line)
             # Legacy single PortraitView still used for NPC fallback display
@@ -572,6 +617,170 @@ class DialogueScene(Scene):
                     duration=d.get("duration", 0.5),
                     max_alpha=d.get("max_alpha", 120),
                     easing=d.get("easing"))
+        elif fx == "set_background":
+            self._apply_set_background(d)
+        elif fx == "show_cg":
+            self.cg_surface_path = d.get("path")
+            self._cg_overridden = True
+            self._begin_scene_transition(d.get("transition"))
+        elif fx == "hide_cg":
+            self.cg_surface_path = None
+            self._cg_overridden = True
+            self._begin_scene_transition(d.get("transition"))
+        elif fx == "transition":
+            # A stand-alone beat over the current frame (no state change).
+            self._begin_scene_transition(d.get("transition"))
+        elif fx == "set_weather":
+            self._apply_set_weather(d)
+        elif fx == "clear_weather":
+            self._apply_clear_weather(d)
+        elif fx == "portrait_emote":
+            self._apply_portrait_emote(d)
+        elif fx == "play_movie":
+            # Push a full-screen movie overlay via the app callback (the scene
+            # has no manager backref). No callback wired → silently ignored.
+            if self.on_movie is not None:
+                self.on_movie(d)
+
+    def _resolve_emote_slot(self, target: str) -> str | None:
+        """Map an emote ``target`` to a slot: a slot name as-is, else the slot
+        whose settled spec's character matches ``target`` (else center if it
+        holds a portrait, else None)."""
+        if target in ("left", "center", "right"):
+            return target
+        for slot in ("left", "center", "right"):
+            spec = self._slot_specs.get(slot)
+            if spec is not None and getattr(spec, "character", None) == target:
+                return slot
+        if self._slot_surfaces.get("center") is not None:
+            return "center"
+        return None
+
+    def _apply_portrait_emote(self, d: dict) -> None:
+        slot = self._resolve_emote_slot(str(d.get("target", "")))
+        if slot is None:
+            return
+        kwargs = {"kind": str(d.get("emote", "jump")),
+                  "duration": float(d.get("duration", 0.45))}
+        if d.get("intensity") is not None:
+            kwargs["intensity"] = float(d["intensity"])
+        self._slot_emotes[slot] = PortraitEmote(**kwargs)
+
+    def _apply_set_weather(self, d: dict) -> None:
+        """Instantiate the named ambient backend and (optionally) fade it in.
+
+        An unknown / broken backend degrades to no overlay (isolated like the
+        portrait backends), so a missing weather plugin never breaks the frame.
+        """
+        name = d.get("backend")
+        params = d.get("params") if isinstance(d.get("params"), dict) else {}
+        backend = None
+        try:
+            from ..plugins.registry import AMBIENT_BACKEND_REGISTRY
+            if name and AMBIENT_BACKEND_REGISTRY.has(name):
+                backend = AMBIENT_BACKEND_REGISTRY.spawn(
+                    name, dict(params), self.ctx.screen_size)
+        except Exception:
+            backend = None
+        if backend is None:
+            self._ambient = None
+            self._ambient_name = None
+            return
+        self._ambient = backend
+        self._ambient_name = name
+        self._ambient_base_alpha = int(getattr(backend, "alpha", 255))
+        fade = float(d.get("fade", 0.0) or 0.0)
+        if fade > 0.0:
+            self._ambient_fade_dir = 1
+            self._ambient_fade_t = 0.0
+            self._ambient_fade_dur = fade
+            try:
+                backend.alpha = 0           # start invisible, ramp up
+            except Exception:
+                pass
+        else:
+            self._ambient_fade_dir = 0
+
+    def _apply_clear_weather(self, d: dict) -> None:
+        fade = float(d.get("fade", 0.0) or 0.0)
+        if fade > 0.0 and self._ambient is not None:
+            self._ambient_fade_dir = -1     # fade out, then drop in update()
+            self._ambient_fade_t = 0.0
+            self._ambient_fade_dur = fade
+        else:
+            self._ambient = None
+            self._ambient_name = None
+            self._ambient_fade_dir = 0
+
+    def _advance_ambient(self, dt: float) -> None:
+        if self._ambient is None:
+            return
+        try:
+            self._ambient.update(dt)
+        except Exception:
+            self._ambient = None            # a broken backend is dropped
+            self._ambient_name = None
+            return
+        if self._ambient_fade_dir != 0 and self._ambient_fade_dur > 0.0:
+            self._ambient_fade_t = min(self._ambient_fade_t + dt,
+                                       self._ambient_fade_dur)
+            frac = self._ambient_fade_t / self._ambient_fade_dur
+            if self._ambient_fade_dir > 0:
+                live = int(self._ambient_base_alpha * frac)
+            else:
+                live = int(self._ambient_base_alpha * (1.0 - frac))
+            try:
+                self._ambient.alpha = max(0, min(255, live))
+            except Exception:
+                pass
+            if self._ambient_fade_t >= self._ambient_fade_dur:
+                if self._ambient_fade_dir < 0:
+                    self._ambient = None    # fade-out finished → remove
+                    self._ambient_name = None
+                self._ambient_fade_dir = 0
+
+    def _apply_set_background(self, d: dict) -> None:
+        """Swap the background immediately and reveal it via a transition.
+
+        Unlike :meth:`_update_background` (the implicit per-line crossfade), the
+        change is authoritative: ``_bg_overridden`` keeps a later line's
+        scene-level background from reverting it until the scene changes.
+        """
+        path = d.get("path")
+        sw, sh = self.ctx.screen_size
+        self._bg_surface = self.ctx.assets.scaled(path, (sw, sh), fit="cover")
+        self.background_path = path
+        self._bg_fade = None   # the scene transition supersedes the plain fade
+        self._bg_overridden = True
+        self._begin_scene_transition(d.get("transition"))
+
+    def _begin_scene_transition(self, tr: dict | None) -> None:
+        """Spawn a :class:`SceneTransition` from the last composed world frame.
+
+        ``tr`` is the transition sub-dict authored on the effect; a missing /
+        malformed value falls back to a plain dissolve. A mask-style transition
+        resolves its image path to a surface here (the scene owns asset access).
+        """
+        tr = tr if isinstance(tr, dict) else {}
+        style = str(tr.get("style", "dissolve"))
+        if style == "cut" or self._last_world_frame is None:
+            # Nothing to animate from (or an explicit hard cut): just snap.
+            self._scene_transition = None
+            return
+        mask_surf = None
+        mask_path = tr.get("mask")
+        if mask_path:
+            try:
+                sw, sh = self.ctx.screen_size
+                mask_surf = self.ctx.assets.scaled(mask_path, (sw, sh),
+                                                   fit="cover")
+            except Exception:
+                mask_surf = None
+        self._scene_transition = SceneTransition(
+            self._last_world_frame, style=style,
+            duration=float(tr.get("duration", 0.6)),
+            color=tr.get("color", (0, 0, 0)),
+            mask=mask_surf, easing=tr.get("easing"))
 
     def _advance_visual_fx(self, dt: float) -> None:
         self._camera.update(dt)
@@ -583,6 +792,11 @@ class DialogueScene(Scene):
         self._flashes = [f for f in self._flashes if not f.done]
         if self._tint is not None:
             self._tint.update(dt)   # fades in then persists; never auto-removed
+        if self._scene_transition is not None:
+            self._scene_transition.update(dt)
+            if self._scene_transition.done:
+                self._scene_transition = None
+        self._advance_ambient(dt)
 
     def _active_shake_offset(self) -> tuple[int, int]:
         ox = oy = 0
@@ -611,6 +825,11 @@ class DialogueScene(Scene):
                 fade.update(dt)
                 if fade.done:
                     self._slot_fades[slot] = None
+            emote = self._slot_emotes.get(slot)
+            if emote is not None:
+                emote.update(dt)
+                if emote.done:
+                    self._slot_emotes[slot] = None
             # Advance the resting animation backend (breathing / sprite / rig).
             # The speaker's slot is "talking" while their line is still typing,
             # which a layered rig uses to drive lip-sync. Isolated: a backend
@@ -740,6 +959,25 @@ class DialogueScene(Scene):
                         self._auto_play_timer = 0.0
                         self._advance()
 
+    @staticmethod
+    def _emote_rect(rect: pygame.Rect, emote: PortraitEmote | None) -> pygame.Rect:
+        """Apply an active emote's transform to a settled slot rect.
+
+        Scales about the rect's bottom-centre (feet stay planted) and offsets by
+        the emote's ``(dx, dy)``. A finished / absent emote returns the rect
+        unchanged so the resting path is identical.
+        """
+        if emote is None or emote.done:
+            return rect
+        dx, dy, sx, sy = emote.transform()
+        if sx == 1.0 and sy == 1.0 and dx == 0 and dy == 0:
+            return rect
+        new_w = max(1, int(rect.width * sx))
+        new_h = max(1, int(rect.height * sy))
+        out = pygame.Rect(0, 0, new_w, new_h)
+        out.midbottom = (rect.centerx + dx, rect.bottom + dy)
+        return out
+
     def _slot_rect(self, slot: str, sw: int, sh: int,
                    spec: PortraitSpec | None = None) -> pygame.Rect:
         """Return the bounding rect for a portrait slot, anchored at bottom.
@@ -854,6 +1092,9 @@ class DialogueScene(Scene):
                         # backend owns its resting animation. Isolated: a backend
                         # that raises is dropped and the static still drawn, so a
                         # bad backend degrades instead of crashing the frame.
+                        # A one-shot emote (jump/shake/nod/bounce) nudges/squashes
+                        # the settled draw rect this frame without altering art.
+                        rect = self._emote_rect(rect, self._slot_emotes.get(slot))
                         backend = self._slot_backends.get(slot)
                         drawn = False
                         if backend is not None:
@@ -875,6 +1116,26 @@ class DialogueScene(Scene):
             elif self.portrait:
                 # Legacy fallback: no slot surfaces active, use PortraitView.
                 self.portrait.draw(surface)
+
+        # Ambient / weather overlay: above the world layer, below the text box.
+        # Drawn before the snapshot so a transition carries the weather too.
+        # Isolated: a backend that raises is dropped rather than crashing.
+        if self._ambient is not None:
+            try:
+                self._ambient.draw(surface)
+            except Exception:
+                self._ambient = None
+                self._ambient_name = None
+
+        # Scene transition: ``surface`` now holds the freshly-composed world
+        # layer (background + CG + portraits). Overlay the retreating snapshot
+        # of the previous world frame so the new one is revealed beneath it,
+        # then snapshot the current world layer for the *next* transition. Both
+        # happen before the text box so the box stays stable on top. The capture
+        # is taken after the overlay so it always reflects what is on screen.
+        if self._scene_transition is not None and not self._scene_transition.done:
+            self._scene_transition.draw(surface)
+        self._last_world_frame = surface.copy()
 
         if self.box and not self._ui_hidden:
             self.box.draw(surface)
@@ -972,5 +1233,10 @@ class DialogueScene(Scene):
                 "shakes": len(self._shakes),
                 "flashes": len(self._flashes),
                 "tint": self._tint is not None,
+                "transition": (self._scene_transition.style
+                               if self._scene_transition is not None else None),
+                "weather": self._ambient_name,
             },
+            "background": self.background_path,
+            "cg": self.cg_surface_path,
         }

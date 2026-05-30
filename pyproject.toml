@@ -45,6 +45,11 @@ web = ["pygbag>=0.9.2"]
 # `steam_api` redistributable, which the developer supplies from their Steam
 # depot and is never vendored here. The group exists as a documented marker.
 steam = []
+# Desktop real-video playback for the bundled `desktop_video` plugin
+# (.mp4/.webm with audio). OPTIONAL: pyvidplayer2 is imported lazily only when a
+# video actually plays; without it, movies fall back to the built-in web-safe
+# image-sequence player (or a skip placeholder). Needs ffmpeg on PATH.
+video = ["pyvidplayer2>=0.9.26"]
 
 [project.scripts]
 # The console entry point installed when this package is pip / uv installed.

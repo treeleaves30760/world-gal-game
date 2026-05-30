@@ -1,0 +1,76 @@
+# World Gal-Game Engine
+
+> A pygame Gal-Game **engine** (not a game). Games are independent *packs* (a
+> directory with a `content/` YAML tree). The engine carries zero game-specific
+> logic — themes are added via plugins, never core edits. AI is a first-class
+> developer: every play / inspect / reason / edit / verify path is headless,
+> deterministic, and machine-readable.
+
+Console script: `world-gal-game` (source checkout: `uv run python -m
+world_gal_game.cli <subcommand>`). Pack args take a name (`demo_pack`) or path.
+Pass `--seed N` for determinism. For pip-installed use without a repo checkout,
+regenerate onboarding from code: `world-gal-game agent-guide`,
+`world-gal-game docs export <dir>`, `world-gal-game capabilities --schema`.
+
+## Start here
+
+- [AGENTS.md](AGENTS.md): agent-neutral onboarding — interfaces, principles, key files
+- [CLAUDE.md](CLAUDE.md): the same, with Claude Code specifics
+- [ROADMAP.md](ROADMAP.md): strategy and phase roadmap
+- [docs/README.md](docs/README.md): documentation index
+
+## Core concepts
+
+- [docs/architecture.md](docs/architecture.md): module layering, data flow, templates
+- [docs/pack-format.md](docs/pack-format.md): pack directory + YAML schema
+- [docs/getting-started.md](docs/getting-started.md): write your first pack
+- [docs/tutorial-build-a-game.md](docs/tutorial-build-a-game.md): step-by-step tutorial
+
+## AI-native contract (verbs, schema, determinism)
+
+- [docs/ai-native-contract.md](docs/ai-native-contract.md): typed effect/condition args, run_script ops, trace, diff, seed
+- [docs/headless.md](docs/headless.md): HeadlessSession — play / inspect / apply / check / snapshot / restore
+- [docs/ai-debug.md](docs/ai-debug.md): GameDriver — pixel-level UI debugging
+- [docs/ai-developer-guide.md](docs/ai-developer-guide.md): full AI developer guide
+
+## AI-native world model (reasoning)
+
+- [docs/ai-native-world-model.md](docs/ai-native-world-model.md): variables, dataflow, planner, coverage, session, rollback
+- [docs/session-protocol.md](docs/session-protocol.md): warm NDJSON control session — line framing, message shapes, batch atomicity, errors
+
+## Capability endpoints (machine-readable, one call each)
+
+- `capabilities --pack <pack> [--schema]`: effect/condition/hook/... kinds + JSON-Schema bundle
+- `variables <pack> [--check]`: typed declared narrative state
+- `inspect-pack <pack> [--dataflow | --references <sym>]`: structure, reachability, dead-ends, graph, writers/readers
+- `context <pack>`: ONE JSON — variables + reachability + scene graph + dataflow digest + coverage totals + gaps
+- `impact <pack> --symbol <id>`: change pre-flight — readers, at-risk endings/scenes, planner baseline
+- `plan --pack <pack> --goal '<json>'`: goal-directed BFS → replayable op path
+- `coverage <pack> --script <s>`: scene/line/choice/ending coverage
+- `session --pack <pack>`: warm NDJSON op stream (faster than process-spawn / RPC)
+- `docs export <dir|->`: self-contained onboarding bundle (works pip-installed)
+
+## Authoring & extension
+
+- [docs/scenes.md](docs/scenes.md), [docs/locations.md](docs/locations.md), [docs/characters.md](docs/characters.md): content model
+- [docs/effects-reference.md](docs/effects-reference.md), [docs/conditions-reference.md](docs/conditions-reference.md): verb references
+- [docs/items.md](docs/items.md), [docs/resources.md](docs/resources.md), [docs/shops.md](docs/shops.md), [docs/achievements.md](docs/achievements.md), [docs/affection.md](docs/affection.md), [docs/quests.md](docs/quests.md): subsystems
+- [docs/plugins.md](docs/plugins.md): nine extension categories, 16 lifecycle hooks
+- [docs/cookbook.md](docs/cookbook.md): common patterns
+
+## Distribution & presentation
+
+- [docs/distribution.md](docs/distribution.md), [docs/distribution-web.md](docs/distribution-web.md), [docs/distribution-mobile.md](docs/distribution-mobile.md), [docs/distribution-steam.md](docs/distribution-steam.md)
+- [docs/presentation-and-extras.md](docs/presentation-and-extras.md), [docs/theme-and-locale.md](docs/theme-and-locale.md), [docs/galgame-maturity.md](docs/galgame-maturity.md)
+
+## Key source files
+
+- `world_gal_game/core/game_state.py`: central `apply` / `evaluate` dispatch
+- `world_gal_game/content_loader.py`: pack loading entry point
+- `world_gal_game/dev/capability_manifest.py`: machine-readable capability list
+- `world_gal_game/dev/dataflow.py`: writers/readers + conditioned scene edges
+- `world_gal_game/dev/session_server.py`: warm NDJSON session
+- `world_gal_game/dev/planner.py`: goal-directed BFS
+- `world_gal_game/dev/coverage.py`: coverage tracker
+- `world_gal_game/dev/agent_endpoints.py`: context + impact aggregate endpoints
+- `world_gal_game/dev/agent_bundle.py`: agent-guide + docs-export onboarding bundle
