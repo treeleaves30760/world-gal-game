@@ -462,6 +462,58 @@ def variables_main(argv: list[str]) -> int:
     return 0
 
 
+def chapters_main(argv: list[str]) -> int:
+    """Entry point for ``wgg chapters <pack>`` — declared narrative structure."""
+    import argparse
+    import json as _json
+    p = argparse.ArgumentParser(
+        prog="world-gal-game chapters",
+        description="List a pack's declared chapter/act/route structure "
+                    "(content/chapters.yaml). With --check, cross-checks chapter "
+                    "scene references against the pack's real scenes.")
+    p.add_argument("pack", help="path to the pack directory")
+    p.add_argument("--format", choices=["text", "json"], default="text")
+    p.add_argument("--check", action="store_true",
+                   help="report unknown scene refs and scenes covered by no "
+                        "chapter.")
+    args = p.parse_args(argv)
+
+    pack_path = Path(args.pack).resolve()
+    if not pack_path.exists():
+        print(f"[error] pack 目錄不存在：{pack_path}", file=sys.stderr)
+        return 1
+
+    from world_gal_game.dev.pack_inspector import PackInspector
+    inspector = PackInspector(pack_path)
+    chapters = inspector.chapters()
+    out: dict = {"chapters": chapters}
+    if args.check:
+        out["issues"] = inspector.chapter_issues()
+
+    if args.format == "json":
+        print(_json.dumps(out, ensure_ascii=False, indent=2))
+        return 0
+
+    if not chapters:
+        print("(this pack declares no chapters; add content/chapters.yaml)")
+    else:
+        print(f"declared chapters ({len(chapters)}):")
+        for c in chapters:
+            route = f" route={c['route']}" if c["route"] else ""
+            act = f" act={c['act']}" if c["act"] else ""
+            print(f"  [{c['order']:>3}] {c['id']}{route}{act}  "
+                  f"({len(c['scenes'])} scenes)"
+                  + (f" — {c['title']}" if c["title"] else ""))
+    if args.check:
+        issues = out["issues"]
+        print()
+        print("unknown scene refs: "
+              + (", ".join(issues["unknown_scenes"]) if issues["unknown_scenes"] else "none"))
+        print("scenes in no chapter: "
+              + (", ".join(issues["uncovered_scenes"]) if issues["uncovered_scenes"] else "none"))
+    return 0
+
+
 def session_main(argv: list[str]) -> int:
     """Entry point for ``wgg session`` — a warm NDJSON control session."""
     import argparse
@@ -568,6 +620,245 @@ def coverage_main(argv: list[str]) -> int:
             line += f"  missing: {', '.join(b.missing)}"
         print(line)
     return 0
+
+
+def agent_guide_main(argv: list[str]) -> int:
+    """Entry point for ``wgg agent-guide`` — print the agent onboarding guide."""
+    import argparse
+    p = argparse.ArgumentParser(
+        prog="world-gal-game agent-guide",
+        description="Print the agent-neutral onboarding guide (the importable "
+                    "twin of AGENTS.md). Works even when pip-installed — the "
+                    "guide is generated from code, not read from docs/.")
+    p.parse_args(argv)
+    from world_gal_game.dev.agent_bundle import agent_guide_text
+    print(agent_guide_text(), end="")
+    return 0
+
+
+def docs_main(argv: list[str]) -> int:
+    """Entry point for ``wgg docs export <dir>`` — write the onboarding bundle."""
+    import argparse
+    p = argparse.ArgumentParser(
+        prog="world-gal-game docs",
+        description="Export a self-contained agent onboarding bundle (guide + "
+                    "capability JSON-Schema + session-protocol schema + recipes) "
+                    "to a directory or stdout. Works when pip-installed.")
+    p.add_argument("action", choices=["export"], help="bundle action")
+    p.add_argument("dest", nargs="?", default="-",
+                   help="output directory, or '-' for one JSON object on stdout "
+                        "(default: stdout)")
+    p.add_argument("--pack", default=None,
+                   help="load a pack first so its plugins show up in the "
+                        "capability manifest")
+    args = p.parse_args(argv)
+
+    manager = None
+    if args.pack:
+        from world_gal_game.config import EngineConfig
+        from world_gal_game.headless import HeadlessSession
+        sess = HeadlessSession.open(EngineConfig(), pack=args.pack)
+        manager = sess.state.meta.get("__plugin_manager__")
+
+    from world_gal_game.dev.agent_bundle import export_bundle
+    written = export_bundle(args.dest, manager=manager)
+    if args.dest != "-":
+        for path in written:
+            print(f"[ok] wrote {path}", file=sys.stderr)
+    return 0
+
+
+def context_main(argv: list[str]) -> int:
+    """Entry point for ``wgg context <pack>`` — one aggregate JSON view."""
+    import argparse
+    import json as _json
+    p = argparse.ArgumentParser(
+        prog="world-gal-game context",
+        description="Aggregate a pack's variables + reachability + scene graph "
+                    "+ dataflow digest + coverage totals + structural gaps into "
+                    "a single JSON object — the lowest-token way to orient an "
+                    "agent before editing.")
+    p.add_argument("pack", help="path to the pack directory")
+    p.add_argument("--script", default=None,
+                   help="JSON script (a list of ops or {commands:[...]}) to run "
+                        "for real coverage; omitted = totals only.")
+    p.add_argument("--full-dataflow", action="store_true",
+                   help="emit the full writers/readers report instead of the "
+                        "per-symbol count digest.")
+    p.add_argument("--seed", type=int, default=None)
+    p.add_argument("--format", choices=["json", "text"], default="json")
+    args = p.parse_args(argv)
+
+    pack_path = Path(args.pack).resolve()
+    if not pack_path.exists():
+        print(f"[error] pack 目錄不存在：{pack_path}", file=sys.stderr)
+        return 1
+
+    script = None
+    if args.script:
+        data = _json.loads(Path(args.script).read_text(encoding="utf-8"))
+        script = data if isinstance(data, list) else data.get("commands", [])
+
+    from world_gal_game.dev.agent_endpoints import build_context
+    ctx = build_context(pack_path, script=script, seed=args.seed,
+                        full_dataflow=args.full_dataflow)
+
+    if args.format == "json":
+        print(_json.dumps(ctx, ensure_ascii=False, indent=2))
+        return 0
+
+    # Compact human summary.
+    s = ctx["pack"]
+    print(f"pack: {s['title']}  ({', '.join(f'{k}={v}' for k, v in s['counts'].items())})")
+    r = ctx["reachability"]
+    print(f"reachable: {len(r['reachable'])}/"
+          f"{len(r['reachable']) + len(r['unreachable'])} scenes; "
+          f"endings unreachable={r['endings']['unreachable']}")
+    g = ctx["gaps"]
+    print(f"gaps: dead_ends={len(g['dead_ends'])} "
+          f"undeclared_flags={len(g['undeclared_flags'])} "
+          f"unused_declared_flags={len(g['unused_declared_flags'])}")
+    return 0
+
+
+def impact_main(argv: list[str]) -> int:
+    """Entry point for ``wgg impact <pack> --symbol <id>`` — change pre-flight."""
+    import argparse
+    import json as _json
+    p = argparse.ArgumentParser(
+        prog="world-gal-game impact",
+        description="Pre-flight a change to a symbol: what reads it, which "
+                    "endings/scenes are gated on it (and may become unreachable "
+                    "if its writers change), and a planner baseline of which "
+                    "at-risk endings are reachable today.")
+    p.add_argument("pack", help="path to the pack directory")
+    p.add_argument("--symbol", required=True,
+                   help="the flag/scene/item/resource id to analyze")
+    p.add_argument("--type", dest="symbol_type", default=None,
+                   choices=["flags", "scenes", "items", "resources"],
+                   help="restrict to one symbol type (default: auto-detect)")
+    p.add_argument("--no-probe", action="store_true",
+                   help="skip the planner reachability baseline (faster)")
+    p.add_argument("--seed", type=int, default=42)
+    p.add_argument("--format", choices=["json", "text"], default="json")
+    args = p.parse_args(argv)
+
+    pack_path = Path(args.pack).resolve()
+    if not pack_path.exists():
+        print(f"[error] pack 目錄不存在：{pack_path}", file=sys.stderr)
+        return 1
+
+    from world_gal_game.dev.agent_endpoints import analyze_impact
+    result = analyze_impact(
+        pack_path, args.symbol, symbol_type=args.symbol_type,
+        probe_reachability=not args.no_probe, seed=args.seed)
+
+    if args.format == "json":
+        print(_json.dumps(result, ensure_ascii=False, indent=2))
+        return 0
+
+    print(f"symbol: {result['symbol']}  (type={result['symbol_type']})")
+    print(f"  writers: {len(result['writers'])}  readers: {len(result['readers'])}")
+    print(f"  at-risk endings: {result['at_risk_endings'] or 'none'}")
+    print(f"  at-risk scenes:  {result['at_risk_scenes'] or 'none'}")
+    print(f"  edges referencing: {len(result['edges_referencing'])}")
+    if result["reachable_today"] is not None:
+        for eid, info in result["reachable_today"].items():
+            mark = "reachable" if info.get("found") else "NOT reached"
+            print(f"    {eid}: {mark} (depth={info.get('depth')})")
+    return 0
+
+
+def brief_main(argv: list[str]) -> int:
+    """Entry point for ``wgg brief <pack>`` — the token-frugal orientation."""
+    import argparse
+    import json as _json
+    p = argparse.ArgumentParser(
+        prog="world-gal-game brief",
+        description="A minimal pack digest (compact scene adjacency + ending "
+                    "reachability + key:type variables + gaps) — the cheapest "
+                    "read before editing. `--format text` is the tersest form.")
+    p.add_argument("pack", help="path to the pack directory")
+    p.add_argument("--format", choices=["json", "text"], default="json")
+    args = p.parse_args(argv)
+
+    pack_path = Path(args.pack).resolve()
+    if not pack_path.exists():
+        print(f"[error] pack 目錄不存在：{pack_path}", file=sys.stderr)
+        return 1
+
+    from world_gal_game.dev.agent_endpoints import pack_brief
+    if args.format == "text":
+        print(pack_brief(pack_path, as_text=True))
+    else:
+        print(_json.dumps(pack_brief(pack_path), ensure_ascii=False, indent=2))
+    return 0
+
+
+def card_main(argv: list[str]) -> int:
+    """Entry point for ``wgg card <pack> --symbol <id>`` — one-symbol view."""
+    import argparse
+    import json as _json
+    p = argparse.ArgumentParser(
+        prog="world-gal-game card",
+        description="A focused, compact view of one symbol (scene / flag / item "
+                    "/ resource / npc / location): edges + guard logic for a "
+                    "scene, writers/readers + gated endings for a flag.")
+    p.add_argument("pack", help="path to the pack directory")
+    p.add_argument("--symbol", required=True, help="the symbol id to describe")
+    args = p.parse_args(argv)
+
+    pack_path = Path(args.pack).resolve()
+    if not pack_path.exists():
+        print(f"[error] pack 目錄不存在：{pack_path}", file=sys.stderr)
+        return 1
+
+    from world_gal_game.dev.agent_endpoints import symbol_card
+    print(_json.dumps(symbol_card(pack_path, args.symbol),
+                      ensure_ascii=False, indent=2))
+    return 0
+
+
+def contract_main(argv: list[str]) -> int:
+    """Entry point for ``wgg contract <pack>`` — behavioural regression check."""
+    import argparse
+    import json as _json
+    p = argparse.ArgumentParser(
+        prog="world-gal-game contract",
+        description="Check a pack's narrative contract (contracts.yaml): named "
+                    "reachable / unreachable / holds / path_reaches expectations "
+                    "verified in one call. Exit non-zero if any fail — a "
+                    "behavioural regression gate to pair with structural impact.")
+    p.add_argument("pack", help="path to the pack directory")
+    p.add_argument("--contract", default=None,
+                   help="path to the contract file (default: <pack>/contracts.yaml)")
+    p.add_argument("--seed", type=int, default=42)
+    p.add_argument("--format", choices=["json", "text"], default="text")
+    args = p.parse_args(argv)
+
+    pack_path = Path(args.pack).resolve()
+    if not pack_path.exists():
+        print(f"[error] pack 目錄不存在：{pack_path}", file=sys.stderr)
+        return 1
+
+    from world_gal_game.dev.contract import check_contract
+    report = check_contract(str(pack_path), contract_path=args.contract,
+                            seed=args.seed)
+
+    if args.format == "json":
+        print(_json.dumps(report, ensure_ascii=False, indent=2))
+        return 0 if report["ok"] else 1
+
+    if report.get("no_contract"):
+        print(f"contract: none found for {pack_path} (nothing to check)")
+        return 0
+    print(f"contract: {report.get('contract')}  "
+          f"(passed {report['passed']}/{report['total']})")
+    for r in report["results"]:
+        mark = "ok  " if r["ok"] else "FAIL"
+        extra = "" if r["ok"] else f"  {r.get('error') or r.get('detail')}"
+        print(f"  [{mark}] {r['name']} ({r['kind']}){extra}")
+    return 0 if report["ok"] else 1
 
 
 def smoke_main(argv: list[str]) -> int:
@@ -725,12 +1016,28 @@ def main(argv: list[str] | None = None) -> int:
         return capabilities_main(_args[1:])
     if _args[:1] == ["variables"]:
         return variables_main(_args[1:])
+    if _args[:1] == ["chapters"]:
+        return chapters_main(_args[1:])
     if _args[:1] == ["session"]:
         return session_main(_args[1:])
     if _args[:1] == ["plan"]:
         return plan_main(_args[1:])
     if _args[:1] == ["coverage"]:
         return coverage_main(_args[1:])
+    if _args[:1] == ["agent-guide"]:
+        return agent_guide_main(_args[1:])
+    if _args[:1] == ["docs"]:
+        return docs_main(_args[1:])
+    if _args[:1] == ["context"]:
+        return context_main(_args[1:])
+    if _args[:1] == ["impact"]:
+        return impact_main(_args[1:])
+    if _args[:1] == ["brief"]:
+        return brief_main(_args[1:])
+    if _args[:1] == ["card"]:
+        return card_main(_args[1:])
+    if _args[:1] == ["contract"]:
+        return contract_main(_args[1:])
     if _args[:1] == ["smoke"]:
         return smoke_main(_args[1:])
     if _args[:1] == ["visual-check"]:

@@ -57,6 +57,33 @@ def test_impossible_goal_terminates_bounded() -> None:
     assert result.nodes_explored <= 400
 
 
+def test_state_key_distinguishes_runtime_dimensions() -> None:
+    """The visited key must separate states that differ only in inventory /
+    resources / affection / time — the dimensions the old key ignored."""
+    from world_gal_game.core.affection import CharacterAffection
+
+    sess = HeadlessSession.open(EngineConfig(seed=42), pack="demo_pack")
+    keys = [Planner._state_key(sess)]
+
+    sess.state.inventory.counts["qa_coin"] = 1
+    keys.append(Planner._state_key(sess))
+
+    sess.state.resources.values["qa_mana"] = 7
+    keys.append(Planner._state_key(sess))
+
+    sess.state.affection.characters["qa_npc"] = CharacterAffection(
+        character_id="qa_npc", stats={"affection": 10})
+    keys.append(Planner._state_key(sess))
+
+    sess.state.time.day += 1
+    keys.append(Planner._state_key(sess))
+
+    # Each mutation produced a distinct key (no collapsing).
+    assert len(set(keys)) == len(keys)
+    # And re-reading an unchanged state is stable (loops still collapse).
+    assert Planner._state_key(sess) == keys[-1]
+
+
 def test_plan_result_forbids_extra_fields() -> None:
     """PlanResult is a strict pydantic v2 model (extra='forbid')."""
     import pytest

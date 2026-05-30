@@ -284,6 +284,7 @@ class PackInspector:
                 "resources": len(self.resources_by_id),
                 "endings": sum(1 for s in self.scenes_by_id.values()
                                if s.is_ending),
+                "chapters": len(self.chapters()),
             },
         }
 
@@ -356,6 +357,44 @@ class PackInspector:
                 "description": spec.description,
             })
         return out
+
+    def chapters(self) -> list[dict[str, Any]]:
+        """Declared chapter/act/route structure (``content/chapters.yaml``).
+
+        One row per chapter in narrative order (``order`` then ``id``), or an
+        empty list when the pack ships no manifest. Pure YAML — parsed via
+        :class:`ChapterManifest`, no engine load.
+        """
+        from world_gal_game.core.chapter_spec import ChapterManifest
+        manifest = ChapterManifest.load(self.content_root / "chapters.yaml")
+        return [
+            {"id": c.id, "title": c.title, "route": c.route, "act": c.act,
+             "order": c.order, "entry_scene": c.entry_scene,
+             "scenes": list(c.scenes), "endings": list(c.endings),
+             "description": c.description}
+            for c in manifest.ordered()
+        ]
+
+    def chapter_issues(self) -> dict[str, list[str]]:
+        """Cross-check the chapter manifest against real scenes (``--check``).
+
+        - ``unknown_scenes`` — chapter ``scenes`` / ``entry_scene`` that name a
+          scene the pack does not define.
+        - ``uncovered_scenes`` — defined scenes listed in no chapter (only
+          reported when a manifest exists; an empty manifest covers nothing by
+          design, so it is not flagged).
+        """
+        from world_gal_game.core.chapter_spec import ChapterManifest
+        manifest = ChapterManifest.load(self.content_root / "chapters.yaml")
+        if not manifest.chapters:
+            return {"unknown_scenes": [], "uncovered_scenes": []}
+        known = set(self.scenes_by_id)
+        referenced = manifest.referenced_scenes()
+        covered = set(manifest.scene_to_chapter())
+        return {
+            "unknown_scenes": sorted(referenced - known),
+            "uncovered_scenes": sorted(known - covered),
+        }
 
     # ------------------------------------------------------------------
     # Reachability

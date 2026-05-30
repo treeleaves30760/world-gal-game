@@ -1,0 +1,43 @@
+# Declared chapter/act/route structure for demo_pack (optional overlay).
+# Pure static metadata for authors / inspection / agents — the runtime never
+# reads it. Surfaced via `wgg chapters games/demo_pack [--check]`, in the pack
+# brief, and on state.meta["__chapters__"]. See core/chapter_spec.py.
+chapters:
+  - id: ch1_arrival
+    title: "第一章 · 搬家當天"
+    route: common
+    act: act1
+    order: 10
+    entry_scene: prologue
+    scenes: [prologue, meet_heroine]
+
+  - id: ch2_investigation
+    title: "第二章 · 尋找速寫本"
+    route: common
+    act: act2
+    order: 20
+    scenes: [find_sketchbook_square, find_sketchbook_park, find_sketchbook_alley, return_to_heroine]
+
+  - id: ch3_lover
+    title: "第三章 · 湖畔的承諾"
+    route: lover
+    act: act3
+    order: 30
+    scenes: [lover_event, ending_lover]
+    endings: [ending_lover]
+
+  - id: ch3_friend
+    title: "第三章 · 朋友的距離"
+    route: friend
+    act: act3
+    order: 31
+    scenes: [friend_event, ending_friend]
+    endings: [ending_friend]
+
+  - id: ch3_alone
+    title: "第三章 · 獨自的結局"
+    route: alone
+    act: act3
+    order: 32
+    scenes: [ending_alone]
+    endings: [ending_alone]

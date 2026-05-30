@@ -51,6 +51,17 @@ class HeadlessSession:
     _snapshots: dict[str, dict] = field(default_factory=dict)
     # Execution-trace recorder; created lazily and active only during run_script.
     _trace: Any = None
+    # ----- warm structural-edit loop (op: edit.* / begin / commit / rollback) -
+    # A PackEditor in dry_run (staging) mode; created lazily, discarded on
+    # commit/rollback so the next edit starts clean.
+    _editor: Any = None
+    # True between `begin` and `commit`/`rollback`: edit.* ops stage only.
+    _in_tx: bool = False
+    # World-model snapshot captured at `begin`, diffed at `commit`.
+    _tx_baseline: dict | None = None
+    # Cached post-edit world snapshot; the "before" of the next autocommit edit,
+    # so a run of single edits costs one analysis each, not two.
+    _world_baseline: dict | None = None
 
     @classmethod
     def open(cls, config: EngineConfig, *, pack: str | None = None,
@@ -464,9 +475,204 @@ class HeadlessSession:
             "applicable_conditions": all_condition_kinds(),
         }
 
+    # ----- warm structural editing --------------------------------------
+
+    def _pack_dir(self) -> Path:
+        """The pack root (dir containing ``content/``) for editor + analysis."""
+        return self.config.pack_root(self.pack)
+
+    def _editor_handle(self):
+        """Lazily build a dry-run :class:`PackEditor` that stages edits."""
+        from .dev.pack_editor import PackEditor
+        if self._editor is None:
+            self._editor = PackEditor(self._pack_dir(), dry_run=True)
+        return self._editor
+
+    def _stage_edit(self, editor, name: str, cmd: dict) -> None:
+        """Route one ``edit.<name>`` op to the matching PackEditor mutator.
+
+        Raises :class:`PackEditError` (structured) on a bad payload and
+        ``KeyError`` on a missing required field — both caught by :meth:`edit`.
+        """
+        from .dev.pack_editor import PackEditError
+        if name == "add_scene":
+            editor.add_scene(cmd["scene"], into_file=cmd.get("file"))
+        elif name == "update_scene":
+            editor.update_scene(cmd["scene_id"], cmd["updates"])
+        elif name == "remove_scene":
+            editor.remove_scene(cmd["scene_id"])
+        elif name == "add_choice":
+            editor.add_choice(cmd["scene_id"], cmd["choice"])
+        elif name == "update_line":
+            editor.update_line(cmd["scene_id"], int(cmd["line_index"]), cmd["updates"])
+        elif name == "add_npc":
+            editor.add_npc(cmd["npc"], into_file=cmd.get("file"))
+        elif name == "update_npc":
+            editor.update_npc(cmd["npc_id"], cmd["updates"])
+        elif name == "remove_npc":
+            editor.remove_npc(cmd["npc_id"])
+        elif name == "add_location":
+            editor.add_location(cmd["location"], into_file=cmd.get("file"))
+        elif name == "update_location":
+            editor.update_location(cmd["loc_id"], cmd["updates"])
+        elif name == "remove_location":
+            editor.remove_location(cmd["loc_id"])
+        elif name == "add_item":
+            editor.add_item(cmd["item"], into_file=cmd.get("file"))
+        elif name == "add_quest":
+            editor.add_quest(cmd["quest"], into_file=cmd.get("file"))
+        elif name == "add_clue":
+            editor.add_clue(cmd["clue"], into_file=cmd.get("file"))
+        elif name == "add_achievement":
+            editor.add_achievement(cmd["achievement"], into_file=cmd.get("file"))
+        elif name == "add_resource":
+            editor.add_resource(cmd["resource"], into_file=cmd.get("file"))
+        else:
+            raise PackEditError(
+                op=name, path="", message=f"unknown edit op: edit.{name}",
+                hint="known: add_scene/update_scene/remove_scene/add_choice/"
+                     "update_line/add_npc/update_npc/remove_npc/add_location/"
+                     "update_location/remove_location/add_item/add_quest/"
+                     "add_clue/add_achievement/add_resource")
+
+    def edit(self, op: str, cmd: dict) -> dict:
+        """Stage one structural edit; autocommit + report impact unless in a tx.
+
+        Outside a transaction each edit is its own atomic unit: the change is
+        validated + staged, written to disk, the pack's static world model is
+        re-derived, and the response carries the YAML ``diff`` *and* the
+        ``impact`` delta (new dead-ends / unreachable endings / undeclared
+        flags) — the whole understand-edit-verify loop in one round-trip.
+        Inside a ``begin``/``commit`` transaction the edit only stages
+        (``staged: true``); the impact is reported once at ``commit``.
+        """
+        from .dev.pack_editor import PackEditError
+        editor = self._editor_handle()
+        name = op.split(".", 1)[1] if "." in op else op
+        try:
+            self._stage_edit(editor, name, cmd)
+        except PackEditError as exc:
+            return {"op": op, "ok": False, "changed": False, "error": exc.to_dict()}
+        except KeyError as exc:
+            return {"op": op, "ok": False, "changed": False,
+                    "error": {"op": name, "message": f"missing required field: {exc}"}}
+        diff = editor.diff()
+        if self._in_tx:
+            return {"op": op, "ok": True, "changed": editor.has_pending(),
+                    "staged": True, "diff": diff, "files": editor.pending_files()}
+        return self._commit_edits(op, diff)
+
+    def _commit_edits(self, op_label: str, diff: str) -> dict:
+        """Write staged edits, re-derive the world model, return the impact."""
+        from .dev.world_model import world_delta, world_snapshot
+        editor = self._editor
+        if editor is None or not editor.has_pending():
+            return {"op": op_label, "ok": True, "changed": False, "diff": ""}
+        root = self._pack_dir()
+        # Disk still holds the pre-edit pack (edits are staged in memory), so a
+        # snapshot now is the true "before". Reuse the cached baseline when we
+        # have one to avoid recomputing it.
+        before = self._world_baseline if self._world_baseline is not None \
+            else world_snapshot(root)
+        changes = editor.list_changes()
+        info = editor.commit()
+        self._editor = None
+        after = world_snapshot(root)
+        self._world_baseline = after
+        return {"op": op_label, "ok": True, "changed": True, "diff": diff,
+                "files": info.get("files_written", []), "changes": changes,
+                "impact": world_delta(before, after)}
+
+    def begin_edit(self) -> dict:
+        """Open a structural-edit transaction (subsequent edits stage only)."""
+        from .dev.world_model import world_snapshot
+        if self._in_tx:
+            return {"op": "begin", "ok": True, "tx": "begin", "note": "already open"}
+        self._in_tx = True
+        self._editor_handle()
+        self._tx_baseline = self._world_baseline if self._world_baseline is not None \
+            else world_snapshot(self._pack_dir())
+        return {"op": "begin", "ok": True, "tx": "begin"}
+
+    def commit_edit(self) -> dict:
+        """Write every staged edit and report the aggregate impact delta."""
+        from .dev.world_model import world_delta, world_snapshot
+        if not self._in_tx:
+            return {"op": "commit", "ok": False, "error": "no transaction open"}
+        editor = self._editor
+        diff = editor.diff() if editor else ""
+        if editor is None or not editor.has_pending():
+            self._in_tx = False
+            self._tx_baseline = None
+            return {"op": "commit", "ok": True, "tx": "commit", "changed": False}
+        changes = editor.list_changes()
+        info = editor.commit()
+        self._editor = None
+        after = world_snapshot(self._pack_dir())
+        impact = world_delta(self._tx_baseline or {}, after)
+        self._world_baseline = after
+        self._in_tx = False
+        self._tx_baseline = None
+        return {"op": "commit", "ok": True, "tx": "commit", "changed": True,
+                "diff": diff, "files": info.get("files_written", []),
+                "changes": changes, "impact": impact}
+
+    def rollback_edit(self) -> dict:
+        """Discard all staged edits and close any open transaction."""
+        had_pending = self._editor is not None and self._editor.has_pending()
+        if self._editor is not None:
+            self._editor.rollback()
+            self._editor = None
+        was_open = self._in_tx
+        self._in_tx = False
+        self._tx_baseline = None
+        return {"op": "rollback", "ok": True, "tx": "rollback",
+                "discarded": had_pending, "tx_was_open": was_open}
+
+    def reload_content(self) -> dict:
+        """Rebuild the in-memory pack from disk so runtime ops see edits.
+
+        Edits never auto-reload (they touch disk, not the live state); call
+        this when ready to *play* the edited pack. Resets the runtime position
+        — a scene you just rewrote cannot keep its cursor — and clears named
+        snapshots, which referred to the old content. ``load_pack`` runs first,
+        so a pack broken by an edit raises here and leaves the live session
+        untouched.
+        """
+        content_root = self.config.pack_content(self.pack)
+        state, npcs, meta = load_pack(content_root)
+        localization = Localization.from_meta(meta)
+        bind_time_localization(localization)
+        state.affection.bind_localization(localization)
+        if self.config.seed is not None:
+            state.meta["__seed__"] = self.config.seed
+        self.state = state
+        self.npcs = npcs
+        self.meta = meta
+        self.dialogue = DialogueEngine(state, llm_provider=None)
+        self._snapshots.clear()
+        self.last_presentation = None
+        return {"op": "reload", "ok": True, "reloaded": True,
+                "scenes": len(state.story.scenes)}
+
     # ----- scripted run -------------------------------------------------
 
+    # Ops that act on the pack/session rather than the live GameState; their
+    # per-step runtime diff would be empty (or, for `reload`, a misleading
+    # full-state swap), so run_script skips diffing them.
+    _META_OPS = frozenset({"begin", "commit", "rollback", "reload"})
+
     def _dispatch_op(self, op: str, cmd: dict) -> dict:
+        if isinstance(op, str) and op.startswith("edit."):
+            return self.edit(op, cmd)
+        if op == "begin":
+            return self.begin_edit()
+        if op == "commit":
+            return self.commit_edit()
+        if op == "rollback":
+            return self.rollback_edit()
+        if op == "reload":
+            return self.reload_content()
         if op == "move":
             return self.move_to(cmd["location"])
         if op == "start_scene":
@@ -507,10 +713,17 @@ class HeadlessSession:
         state changed — a structured ``diff`` of that step. The full ordered
         execution trace (effects fired with results, lines/choices shown,
         moves, time) is collected into ``self.transcript`` so the whole run is
-        understandable from a single call (the anti-MCP "rich batch"). Ops:
-        move, start_scene, next, choose, chat, advance_time, set_flag,
-        adjust_affection, inspect, apply, check, assert, affordances, snapshot,
-        restore.
+        understandable from a single call (the anti-MCP "rich batch").
+
+        Runtime ops: move, start_scene, next, choose, chat, advance_time,
+        set_flag, adjust_affection, inspect, apply, check, assert, affordances,
+        snapshot, restore. Structural-edit ops (warm authoring loop): edit.*
+        (add_scene/update_scene/remove_scene/add_choice/update_line/add_npc/
+        update_npc/remove_npc/add_location/update_location/remove_location/
+        add_item), and the transaction controls begin / commit / rollback /
+        reload. An edit op autocommits and returns its YAML ``diff`` plus an
+        ``impact`` delta; wrap several in begin ... commit to stage them and get
+        one aggregate impact.
         """
         from .dev.diff import diff as _diff, snapshot as _snapshot
         if self._trace is None:
@@ -522,15 +735,24 @@ class HeadlessSession:
         try:
             for cmd in commands:
                 op = cmd.get("op")
-                before = _snapshot(self.state)
+                # edit.* / begin / commit / rollback / reload act on the pack
+                # or session, not the live state; they carry their own diff +
+                # impact, so skip the runtime state-diff for them.
+                is_meta = isinstance(op, str) and (
+                    op.startswith("edit.") or op in self._META_OPS)
+                before = None if is_meta else _snapshot(self.state)
                 try:
                     r = self._dispatch_op(op, cmd)
                 except Exception as e:
                     r = {"ok": False, "error": str(e)}
                 r["op"] = op
-                step_diff = _diff(before, _snapshot(self.state))
-                if step_diff:
-                    r["diff"] = step_diff
+                if not is_meta:
+                    step_diff = _diff(before, _snapshot(self.state))
+                    if step_diff:
+                        r["diff"] = step_diff
+                    # Uniform envelope: every runtime op result reports whether
+                    # it changed live state (edit ops set their own `changed`).
+                    r["changed"] = bool(step_diff)
                 out.append(r)
         finally:
             # Detach so trace hooks never leak across sessions / tests.

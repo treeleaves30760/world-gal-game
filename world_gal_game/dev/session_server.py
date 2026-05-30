@@ -34,10 +34,21 @@ A line is dispatched as one of three shapes:
   below. These manage the session itself rather than game state.
 - **Batch** — ``{"ops": [ ... ]}`` runs the whole list through
   :meth:`HeadlessSession.run_script` in one shot and returns ``"results"``
-  (one per op) plus the run's ``"transcript"``.
+  (one per op) plus the run's ``"transcript"``. Add ``"atomic": true`` to make
+  the batch all-or-nothing across *both* live state and pack edits: a runtime
+  snapshot + edit transaction are taken up front, and on any failing op the
+  staged edits are discarded and the state restored (``"atomic":
+  "rolled_back"``); on success the edits commit and the commit ``"impact"`` is
+  folded in (``"atomic": "committed"``).
 - **Single op** — any other dict is treated as one op, run as a one-element
   batch, and returned as ``"result"`` (the single result dict) plus the
   ``"transcript"``.
+
+The op vocabulary includes the warm structural-edit loop: ``edit.*`` ops
+(add_scene / add_choice / update_line / add_npc / add_location / ...) autocommit
+and return a YAML ``diff`` plus an ``impact`` delta (new dead-ends / unreachable
+endings / undeclared flags), so an agent can *understand, edit, and verify* a
+pack without leaving the warm process.
 
 Control ops
 -----------
@@ -52,6 +63,11 @@ Control ops
 - ``{"op": "__quit__"}`` -> ``{..., "bye": true}`` and sets
   :attr:`SessionServer.should_quit`, which ends :meth:`SessionServer.serve`
   after the response is written.
+- ``{"op": "__begin__"}`` / ``{"op": "__commit__"}`` / ``{"op": "__rollback__"}``
+  -> manage a structural-edit transaction (stage many ``edit.*`` ops, then
+  commit once for one aggregate ``impact`` or roll them all back).
+- ``{"op": "__reload__"}`` -> rebuild the in-memory pack from disk so runtime
+  ops (play / plan) see committed edits; resets the runtime position.
 """
 from __future__ import annotations
 
@@ -113,7 +129,8 @@ class SessionServer:
             if isinstance(op, str) and op.startswith("__") and op.endswith("__"):
                 return self._control(op, seq)
             if "ops" in obj:
-                return self._batch(obj["ops"], seq)
+                return self._batch(obj["ops"], seq,
+                                   atomic=bool(obj.get("atomic", False)))
             return self._single(obj, seq)
         # A bare scalar / list with no recognizable shape is an error, not a crash.
         return {"ok": False, "seq": seq, "error": f"unhandled message: {obj!r}"}
@@ -133,13 +150,59 @@ class SessionServer:
         if op == "__quit__":
             self.should_quit = True
             return {"ok": True, "seq": seq, "bye": True}
+        # Structural-edit transaction controls — thin aliases over the session's
+        # warm-edit API, so an agent can manage a transaction without wrapping
+        # each control in a one-op batch.
+        if op == "__begin__":
+            return {"seq": seq, **self.session.begin_edit()}
+        if op == "__commit__":
+            return {"seq": seq, **self.session.commit_edit()}
+        if op == "__rollback__":
+            return {"seq": seq, **self.session.rollback_edit()}
+        if op == "__reload__":
+            return {"seq": seq, **self.session.reload_content()}
         return {"ok": False, "seq": seq, "error": f"unknown control op: {op}"}
 
-    def _batch(self, ops: Any, seq: int) -> dict:
+    def _batch(self, ops: Any, seq: int, *, atomic: bool = False) -> dict:
+        if atomic:
+            return self._atomic_batch(list(ops), seq)
         results = self.session.run_script(list(ops))
         ok = all(r.get("ok", True) for r in results)
         return {"ok": ok, "seq": seq, "results": results,
                 "transcript": self.session.transcript}
+
+    def _atomic_batch(self, ops: list, seq: int) -> dict:
+        """Run a batch all-or-nothing across *both* state and pack edits.
+
+        A runtime snapshot is taken and a structural-edit transaction opened up
+        front; staged edits are only written on success. If any op reports
+        ``ok: false`` the staged edits are discarded and the live state is
+        restored, so the batch leaves no half-applied change behind. On success
+        the edits are committed and the commit's aggregate ``impact`` is folded
+        into the response.
+        """
+        sess = self.session
+        guard = "__atomic__"
+        sess.take_snapshot(guard)
+        sess.begin_edit()
+        results = sess.run_script(ops)
+        ok = all(r.get("ok", True) for r in results)
+        resp: dict = {"seq": seq, "results": results}
+        if ok:
+            commit = sess.commit_edit()
+            resp["atomic"] = "committed"
+            if commit.get("impact") is not None:
+                resp["impact"] = commit["impact"]
+            if commit.get("files"):
+                resp["files"] = commit["files"]
+        else:
+            sess.rollback_edit()
+            sess.restore_snapshot(guard)
+            resp["atomic"] = "rolled_back"
+        sess._snapshots.pop(guard, None)
+        resp["ok"] = ok
+        resp["transcript"] = sess.transcript
+        return resp
 
     def _single(self, obj: dict, seq: int) -> dict:
         results = self.session.run_script([obj])

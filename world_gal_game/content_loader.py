@@ -239,6 +239,21 @@ def load_variables(content_root: Path, state: GameState) -> None:
         content_root / "variables.yaml")
 
 
+def load_chapters(content_root: Path, state: GameState) -> None:
+    """Load the declared chapter/act/route manifest (``content/chapters.yaml``).
+
+    Like :func:`load_variables`, this is pack-static structural metadata, not
+    mutable player state, so it is parked on the private
+    ``state.meta["__chapters__"]`` bridge that :class:`SaveManager` strips from
+    serialised saves. A pack with no ``chapters.yaml`` gets an empty manifest —
+    fully backward compatible, and the runtime never reads it (it is for
+    authors / inspection / agents).
+    """
+    from .core.chapter_spec import ChapterManifest
+    state.meta["__chapters__"] = ChapterManifest.load(
+        content_root / "chapters.yaml")
+
+
 def load_game_meta(content_root: Path) -> dict[str, Any]:
     meta = _read_yaml(content_root / "meta.yaml") or {}
     return meta
@@ -299,6 +314,7 @@ def load_pack(content_root: Path) -> tuple[GameState, NPCRegistry, dict]:
     load_quests(content_root, state)
     load_clues(content_root, state)
     load_variables(content_root, state)
+    load_chapters(content_root, state)
     meta = load_game_meta(content_root)
     load_resources(content_root, state, meta)
     if "player" in meta:

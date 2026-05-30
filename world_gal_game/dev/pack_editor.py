@@ -48,8 +48,12 @@ from pydantic import BaseModel, ValidationError
 from ruamel.yaml import YAML
 from ruamel.yaml.comments import CommentedMap, CommentedSeq
 
+from ..core.achievements import Achievement
+from ..core.clue import Clue
 from ..core.inventory import Item
 from ..core.map_system import Location, NPCPresence, SceneHook, Exit
+from ..core.quest import Quest
+from ..core.resources import Resource
 from ..core.story_graph import Choice, Effect, Line, Scene
 from ..npc.npc_base import NPC
 
@@ -162,6 +166,10 @@ class PackEditor:
     DEFAULT_NEW_CHARACTERS = "characters.yaml"
     DEFAULT_NEW_LOCATIONS = "locations.yaml"
     DEFAULT_NEW_ITEMS = "items.yaml"
+    DEFAULT_NEW_QUESTS = "quests.yaml"
+    DEFAULT_NEW_CLUES = "clues.yaml"
+    DEFAULT_NEW_ACHIEVEMENTS = "achievements.yaml"
+    DEFAULT_NEW_RESOURCES = "resources.yaml"
 
     def __init__(self, pack_root: Path | str, *,
                  dry_run: bool = False) -> None:
@@ -735,6 +743,74 @@ class PackEditor:
         if not self.dry_run:
             self._flush()
         return validated
+
+    # ------------------------------------------------------------------
+    # Quest / clue / achievement / resource operations
+    #
+    # Each mirrors add_location: validate (which also walks requires/forbids
+    # for a "did you mean" on a typo'd condition kind), reject a duplicate id,
+    # append to the collection's file (bare-list or {key: [...]} wrapper),
+    # record the change. These close the PackEditor gap so an agent can script
+    # edits to every pack-level collection, not just scene/choice/npc/loc/item.
+
+    def _add_collection_entry(self, *, model: type[BaseModel], op: str,
+                              raw: dict[str, Any], key: str, rel: str) -> Any:
+        """Shared body for the pack-level collection mutators."""
+        validated = self._validate(model, op, raw)
+        doc = self._load_doc(rel, create_if_missing=True, root_kind="map")
+        seq = self._list_in_doc(doc, key=key)
+        if self._find_in_seq(seq, "id", validated.id) is not None:
+            raise PackEditError(
+                op=op, path=f"{key}[id={validated.id}]",
+                message=f"{key[:-1]} id '{validated.id}' already exists",
+                field="id", got=validated.id,
+                hint=f"pick a unique id or update the existing {key[:-1]}")
+        seq.append(self._to_commented(raw))
+        self.changes.append(_ChangeRecord(
+            op=op, target_id=validated.id, file=rel,
+            summary=f"added {key[:-1]} '{validated.id}'"))
+        if not self.dry_run:
+            self._flush()
+        return validated
+
+    def add_quest(self, quest: dict | Quest,
+                  *, into_file: str | Path | None = None) -> Quest:
+        """Append a quest (with its objectives) to a quests file."""
+        raw = quest.model_dump(exclude_unset=True) if isinstance(quest, Quest) else dict(quest)
+        return self._add_collection_entry(
+            model=Quest, op="add_quest", raw=raw, key="quests",
+            rel=str(into_file or self.DEFAULT_NEW_QUESTS))
+
+    def add_clue(self, clue: dict | Clue,
+                 *, into_file: str | Path | None = None) -> Clue:
+        """Append a journal clue (requires/forbids gated) to a clues file."""
+        raw = clue.model_dump(exclude_unset=True) if isinstance(clue, Clue) else dict(clue)
+        return self._add_collection_entry(
+            model=Clue, op="add_clue", raw=raw, key="clues",
+            rel=str(into_file or self.DEFAULT_NEW_CLUES))
+
+    def add_achievement(self, achievement: dict | Achievement,
+                        *, into_file: str | Path | None = None) -> Achievement:
+        """Append an achievement (requires/forbids gated) to a file."""
+        raw = (achievement.model_dump(exclude_unset=True)
+               if isinstance(achievement, Achievement) else dict(achievement))
+        return self._add_collection_entry(
+            model=Achievement, op="add_achievement", raw=raw, key="achievements",
+            rel=str(into_file or self.DEFAULT_NEW_ACHIEVEMENTS))
+
+    def add_resource(self, resource: dict | Resource,
+                     *, into_file: str | Path | None = None) -> Resource:
+        """Append a resource definition to a resources file.
+
+        Resources declared in ``content/resources.yaml`` take precedence over a
+        ``meta.yaml`` ``resources:`` block of the same id (the loader merges
+        them file-wins), so this is the canonical place to add one.
+        """
+        raw = (resource.model_dump(exclude_unset=True)
+               if isinstance(resource, Resource) else dict(resource))
+        return self._add_collection_entry(
+            model=Resource, op="add_resource", raw=raw, key="resources",
+            rel=str(into_file or self.DEFAULT_NEW_RESOURCES))
 
     # ------------------------------------------------------------------
     # Save migration scaffolding

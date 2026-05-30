@@ -220,9 +220,10 @@ vs `pyproject.toml`-pinned, and seek review.
 
 ## Known gaps
 
-- **`PackEditor` lacks `add_clue` / `add_quest` / `add_achievement`** (Pillar B)
-  — it covers scene / choice / npc / location / item / save-migration only;
-  other pack-level collections have no dedicated mutator yet.
+- ~~**`PackEditor` lacks `add_clue` / `add_quest` / `add_achievement`**~~ —
+  **closed 2026-05-30** (Phase 7 P2): `add_quest` / `add_clue` /
+  `add_achievement` / `add_resource` added and wired into the warm-session
+  `edit.*` ops. `add_item` still has no update/remove twin.
 - **No autonomous spec-to-pack example** (Pillar B) — the loop exists piecewise.
 - **No `@field` decorator** for public plugin state — plugins use
   `state.meta["__plugin:<id>__"]` for private state and `@inspect_field` for the
@@ -264,6 +265,9 @@ vs `pyproject.toml`-pinned, and seek review.
 | 2026-05-24 | Phase 5C: i18n translation extraction (`tools/i18n_extract.py`) — pack scenes → string table + `--check` coverage | done |
 | 2026-05-24 | Phase 5A: animated portraits — `@portrait_backend` (9th extension category), `PortraitSpec.backend`/`backend_args`, dialogue-scene seam, bundled `animated_portraits` (breath + sprite + layered blink/lip-sync/breathing rig) | done |
 | 2026-05-25 | Phase 6: AI-native world model — variable manifest, dataflow/conditioned graph, warm NDJSON session, goal planner, coverage (`wgg variables`/`inspect-pack --dataflow`/`session`/`plan`/`coverage`) + player rollback (`StateHistory`, Backspace) on the shared snapshot machinery | done |
+| 2026-05-30 | Phase 7 (P0): warm structural-edit loop — `edit.*` ops in `HeadlessSession`/`SessionServer` (autocommit), `begin`/`commit`/`rollback` transactions, `"atomic": true` batches, `reload`, a uniform `changed` envelope, and a post-edit `impact` delta (`dev/world_model.py`: new dead-ends / unreachable endings / undeclared flags) — understand → edit → verify in one warm process | done |
+| 2026-05-30 | Phase 7 (P1): planner state-key now includes inventory/affection/resources/time (correct reachability); dataflow edges gained structured `guard_logic` ({all,none}); token-frugal `wgg brief` / `wgg card` (~7x smaller than `context`); narrative contracts (`dev/contract.py`, `wgg contract`: reachable/unreachable/holds/path_reaches) | done |
+| 2026-05-30 | Phase 7 (P2): `PackEditor` add_quest/add_clue/add_achievement/add_resource (+ warm `edit.*`); first-class chapter/act/route overlay (`core/chapter_spec.py`, optional `content/chapters.yaml`, `wgg chapters [--check]`, surfaced in inspect/brief) | done |
 | — | Phase 5B: video / movie playback (OP/ED/過場) | open (Next PR #1) |
 | — | Phase 5A native rigs: Live2D / Spine as a desktop-only plugin | open (Next PR #1) |
 | — | Phase 3: LLM NPC, autonomous spec-to-pack, cross-pack plugins | deferred |

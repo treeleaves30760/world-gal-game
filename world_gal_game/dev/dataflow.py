@@ -106,13 +106,18 @@ class Edge(BaseModel):
 
     ``via`` is how the transition is reached: ``"choice"`` (a choice's
     ``next_scene``), ``"on_end"`` (a ``play_scene`` effect in the scene's
-    ``on_end``), or ``"line"`` (a ``play_scene`` effect on a line). ``guard``
-    is the list of gating conditions: for a choice edge it carries the
-    choice's ``requires`` (as ``{"requires": kind, "target": ..., "value":
-    ...}``) and ``forbids`` (as ``{"forbids": kind, ...}``); for an ``on_end``
-    / ``line`` edge it carries the owning line's / scene's ``requires`` under
-    the same ``{"requires": ...}`` shape. An empty guard means the edge is
-    always taken once its scene plays.
+    ``on_end``), or ``"line"`` (a ``play_scene`` effect on a line).
+
+    The edge carries its gating in two forms. ``guard`` is the legacy flat list
+    — one ``{"requires"|"forbids": kind, "target": ..., "value": ...}`` dict per
+    condition (the role lives in the *key name*, so the condition ``kind`` is
+    awkward to read generically). ``guard_logic`` is the canonical, unambiguous
+    boolean form: ``{"all": [cond, ...], "none": [cond, ...]}`` where each
+    ``cond`` is a uniform ``{"kind", "target", "value"}`` — the edge is taken
+    iff **all** of ``all`` hold and **none** of ``none`` hold. (The engine has
+    no OR *within* a guard; the OR in "when can scene Y be reached" is the union
+    over every edge with ``dst == Y``.) Both empty ⇒ unconditional once the
+    source scene plays.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -121,6 +126,8 @@ class Edge(BaseModel):
     dst: str
     via: str
     guard: list[dict] = Field(default_factory=list)
+    guard_logic: dict[str, list[dict]] = Field(
+        default_factory=lambda: {"all": [], "none": []})
 
 
 class DataflowReport(BaseModel):
@@ -345,6 +352,7 @@ class DataflowAnalyzer:
                             dst=dst,
                             via="line",
                             guard=self._guard_from_requires(line_requires),
+                            guard_logic=self._logic_from_requires(line_requires),
                         )
                     )
 
@@ -356,14 +364,14 @@ class DataflowAnalyzer:
             )
             dst = self._scene_target(eff)
             if dst is not None:
+                scene_requires = getattr(scene, "requires", None) or []
                 edges.append(
                     Edge(
                         src=sid,
                         dst=dst,
                         via="on_end",
-                        guard=self._guard_from_requires(
-                            getattr(scene, "requires", None) or []
-                        ),
+                        guard=self._guard_from_requires(scene_requires),
+                        guard_logic=self._logic_from_requires(scene_requires),
                     )
                 )
 
@@ -394,6 +402,7 @@ class DataflowAnalyzer:
                             dst=dst,
                             via="choice",
                             guard=self._guard_from_choice(requires, forbids),
+                            guard_logic=self._logic_from_choice(requires, forbids),
                         )
                     )
             next_scene = getattr(choice, "next_scene", None)
@@ -406,6 +415,7 @@ class DataflowAnalyzer:
                         dst=next_scene,
                         via="choice",
                         guard=self._guard_from_choice(requires, forbids),
+                        guard_logic=self._logic_from_choice(requires, forbids),
                     )
                 )
 
@@ -565,6 +575,15 @@ class DataflowAnalyzer:
             "value": getattr(cond, "value", None),
         }
 
+    @staticmethod
+    def _cond_entry(cond: Any) -> dict:
+        """Render a condition role-free, as ``{kind, target, value}``."""
+        return {
+            "kind": getattr(cond, "kind", "") or "",
+            "target": getattr(cond, "target", "") or "",
+            "value": getattr(cond, "value", None),
+        }
+
     @classmethod
     def _guard_from_choice(
         cls, requires: Iterable[Any], forbids: Iterable[Any]
@@ -576,6 +595,20 @@ class DataflowAnalyzer:
     @classmethod
     def _guard_from_requires(cls, requires: Iterable[Any]) -> list[dict]:
         return [cls._cond_dict(c, "requires") for c in requires]
+
+    @classmethod
+    def _logic_from_choice(
+        cls, requires: Iterable[Any], forbids: Iterable[Any]
+    ) -> dict[str, list[dict]]:
+        """Canonical boolean form: all `requires` true AND none of `forbids`."""
+        return {
+            "all": [cls._cond_entry(c) for c in requires],
+            "none": [cls._cond_entry(c) for c in forbids],
+        }
+
+    @classmethod
+    def _logic_from_requires(cls, requires: Iterable[Any]) -> dict[str, list[dict]]:
+        return {"all": [cls._cond_entry(c) for c in requires], "none": []}
 
     # ------------------------------------------------------------------
     # Deterministic ordering

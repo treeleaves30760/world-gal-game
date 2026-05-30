@@ -12,8 +12,10 @@ action space (so the returned ``path`` is a shortest op sequence), restoring a
 snapshot at every node, expanding the affordances into candidate ops
 (``choose`` / ``move`` / ``start_scene`` / ``next``), and testing the goal with
 ``HeadlessSession.assert_expect`` at each node. A visited-set keyed on the
-state (location, scene, line index, flags, played scenes) collapses the
-``move``/``next`` loops that would otherwise make the space infinite.
+state (location, scene, line index, flags, played scenes, inventory, resources,
+affection, and the clock) collapses the ``move``/``next`` loops that would
+otherwise make the space infinite — while still distinguishing states that
+differ in any goal-readable dimension.
 
 The result is the "find me a path that sets flag ``ending_lover``" primitive: an
 agent states a goal and gets back a replayable op script instead of hand-writing
@@ -74,18 +76,40 @@ class Planner:
         """A hashable fingerprint of the search-relevant state.
 
         Read straight off ``sess.state`` — cheaper than a full ``inspect()``
-        for a key computed on every visited node. Two states with the same
-        location, current scene, line index, flag set, and played-scene set are
-        treated as identical so ``move``/``next`` cycles collapse instead of
-        fanning out forever.
+        for a key computed on every visited node. Two states are treated as
+        identical only when *every* dimension a goal can read matches:
+        location, current scene, line index, flags, played scenes, **plus
+        inventory counts, resource values, per-character affection stats, and
+        the clock**. Folding those last four in is the correctness fix for the
+        earlier key: a goal like "affection >= 50" or "has 3 coins" lives in a
+        dimension the old key ignored, so the search could collapse a genuinely
+        new state onto a visited one and wrongly report the goal unreachable.
+        ``move``/``next`` cycles still collapse because they leave all of these
+        unchanged; only ops that actually move a tracked dimension fan out.
         """
         st = sess.state
+        flags = tuple(sorted(
+            (str(k), _hashable(v)) for k, v in st.events.flags.items()))
+        played = tuple(sorted(str(s) for s in st.story.played))
+        inventory = tuple(sorted(
+            (str(k), int(v)) for k, v in st.inventory.counts.items() if v))
+        resources = tuple(sorted(
+            (str(k), int(v)) for k, v in st.resources.values.items()))
+        affection = tuple(
+            (cid, tuple(sorted((str(s), int(val)) for s, val in ca.stats.items())))
+            for cid, ca in sorted(st.affection.characters.items())
+        )
+        clock = (st.time.day, st.time.phase_index, st.time.weekday_index)
         return (
             st.map.current_location_id,
             st.story.current_scene,
             st.story.current_line_index,
-            tuple(sorted((str(k), _hashable(v)) for k, v in st.events.flags.items())),
-            tuple(sorted(str(s) for s in st.story.played)),
+            flags,
+            played,
+            inventory,
+            resources,
+            affection,
+            clock,
         )
 
     @staticmethod

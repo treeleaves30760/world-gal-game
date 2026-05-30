@@ -119,3 +119,21 @@ def test_declared_flags_detects_undeclared_and_unused():
     report = analyzer.analyze(declared_flags={"only_this"})
     assert report.undeclared_flags  # real flags are not declared
     assert report.unused_declared_flags == ["only_this"]
+
+
+def test_edge_guard_logic_is_structured() -> None:
+    """Every edge exposes the canonical {all, none} boolean form, and it
+    mirrors the legacy flat guard's targets (no information lost)."""
+    report = DataflowAnalyzer(Path("games/demo_pack")).analyze()
+    for e in report.edges:
+        assert set(e.guard_logic) == {"all", "none"}
+        for entry in e.guard_logic["all"] + e.guard_logic["none"]:
+            assert set(entry) == {"kind", "target", "value"}
+            assert entry["kind"], "a guard condition must carry its kind"
+    gated = [e for e in report.edges if e.guard]
+    assert gated, "demo_pack should have at least one gated edge"
+    for e in gated:
+        flat_targets = {g.get("target") for g in e.guard}
+        logic_targets = {c["target"]
+                         for c in e.guard_logic["all"] + e.guard_logic["none"]}
+        assert flat_targets == logic_targets

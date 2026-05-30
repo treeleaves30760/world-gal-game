@@ -2,7 +2,11 @@
 
 Onboarding notes for AI collaborators (Claude Code, Codex, etc.).
 Strategy and roadmap: [ROADMAP.md](ROADMAP.md). Engine internals:
-[docs/architecture.md](docs/architecture.md).
+[docs/architecture.md](docs/architecture.md). The agent-neutral twin of this
+file is [AGENTS.md](AGENTS.md); the machine map is [llms.txt](llms.txt). When
+running pip-installed (no repo checkout), regenerate the essentials from code:
+`world-gal-game agent-guide`, `world-gal-game docs export <dir>`,
+`world-gal-game capabilities --schema`.
 
 ---
 
@@ -90,8 +94,15 @@ See [ROADMAP.md](ROADMAP.md) for the full picture.
   `apply` (any effect), `check` / `assert` (conditions / expectations),
   `snapshot` / `restore` (branch exploration), `affordances` (action space).
   `run_script` returns per-op `diff`s and collects an execution `transcript`.
-  Pure Python, no pygame display. See `docs/headless.md` and
-  `docs/ai-native-contract.md`.
+  **Plus a warm structural-edit loop**: `edit.*` ops (add_scene / add_choice /
+  update_line / add_npc / add_location / …) stage a comment-preserving edit and
+  autocommit, returning the YAML `diff` *and* a world-model `impact` delta (new
+  dead-ends / unreachable endings / undeclared flags) in one response;
+  `begin` / `commit` / `rollback` group edits, a batch with `"atomic": true` is
+  all-or-nothing across state + edits, and `reload` makes edits playable —
+  understand → edit → verify in one warm process (`dev/world_model.py`). Pure
+  Python, no pygame display. See `docs/headless.md`, `docs/session-protocol.md`,
+  and `docs/ai-native-contract.md`.
 - `world_gal_game.dev.driver.GameDriver` — low-level pygame events + screenshot +
   widget queries, for pixel-level UI debugging. See `docs/ai-debug.md`.
 - CLI: `wgg --headless --inspect`, `wgg --headless --script <json>`,
@@ -127,9 +138,39 @@ Beyond the contract's verbs, a static/searchable world model — see
   coverage of a run vs. pack totals.
 - `world_gal_game.dev.session_server` — warm NDJSON session (load once, stream
   ops over stdin/stdout); the language-agnostic fast path, not MCP.
-- CLI: `wgg variables <pack> [--check]`, `wgg inspect-pack <pack> --dataflow`,
-  `wgg inspect-pack <pack> --references <sym>`, `wgg session --pack <pack>`,
-  `wgg plan --pack <pack> --goal '<json>'`, `wgg coverage <pack> --script <s>`.
+- CLI: `wgg variables <pack> [--check]`, `wgg chapters <pack> [--check]`,
+  `wgg inspect-pack <pack> --dataflow` (edges now carry structured
+  `guard_logic`), `wgg inspect-pack <pack> --references <sym>`,
+  `wgg session --pack <pack>`, `wgg plan --pack <pack> --goal '<json>'`
+  (state-key includes inventory/affection/resources/time), `wgg coverage <pack>
+  --script <s>`, `wgg contract <pack>` (narrative-invariant gate).
+
+### Aggregate agent endpoints (lowest-token orientation)
+
+These endpoints load the pack once and answer the common pre-edit questions in a
+single JSON object — `world_gal_game.dev.agent_endpoints`:
+
+- `wgg brief <pack> [--format text]` — the **lowest-token** orientation: compact
+  scene adjacency + ending reachability + `key:type` variables + routes + gaps
+  (~7x smaller than `context`) (`pack_brief`). `wgg card <pack> --symbol <id>`
+  zooms to one symbol — a scene's edges + `guard_logic`, or a flag's
+  writers/readers/gated-endings (`symbol_card`).
+- `wgg context <pack>` — variables + reachability + scene graph + dataflow
+  digest + coverage totals + structural gaps in one blob (`build_context`).
+- `wgg impact <pack> --symbol <id>` — change pre-flight: writers/readers,
+  endings/scenes gated on the symbol, conditioned edges referencing it, and a
+  planner baseline of which at-risk endings are reachable today
+  (`analyze_impact`).
+
+### Self-contained onboarding bundle (works pip-installed)
+
+`world_gal_game.dev.agent_bundle` generates the agent-facing artifacts from
+code (not from `docs/`, which is not packaged in the wheel):
+
+- `wgg agent-guide` — the agent-neutral quickstart (`agent_guide_text`).
+- `wgg docs export <dir|->` — guide + capability JSON-Schema + NDJSON
+  session-protocol schema + recipes catalogue (`export_bundle`). The NDJSON
+  protocol is fully specified in [docs/session-protocol.md](docs/session-protocol.md).
 
 ### Edit packs structurally
 
@@ -245,6 +286,10 @@ uv run python main.py
 | Engine internals | `docs/architecture.md` |
 | AI-Coding-Native contract (schema / ops / trace / determinism) | `docs/ai-native-contract.md` |
 | AI-native world model (variables / dataflow / session / planner / coverage / rollback) | `docs/ai-native-world-model.md` |
+| Agent-neutral onboarding (any AI tool) + machine map | `AGENTS.md`, `llms.txt` |
+| NDJSON session protocol (framing / shapes / atomicity / errors) | `docs/session-protocol.md` |
+| Aggregate endpoints (context / impact) | `world_gal_game/dev/agent_endpoints.py` |
+| Onboarding bundle (agent-guide / docs export) | `world_gal_game/dev/agent_bundle.py` |
 | Full AI developer guide | `docs/ai-developer-guide.md` |
 | AI plays the game | `docs/headless.md` |
 | AI debugs the UI | `docs/ai-debug.md` |
@@ -262,8 +307,12 @@ uv run python main.py
 | Effect / condition arg models (JSON Schema) | `world_gal_game/plugins/{effect_args,condition_args}.py` |
 | Execution trace / state diff (headless) | `world_gal_game/dev/{trace,diff}.py` |
 | Variable manifest (typed narrative-state schema) | `world_gal_game/core/variable_spec.py` |
+| Chapter/act/route manifest (optional structural overlay) | `world_gal_game/core/chapter_spec.py` |
+| Token-frugal orientation (brief / per-symbol card) | `world_gal_game/dev/agent_endpoints.py` (`pack_brief`/`symbol_card`) |
+| Narrative-contract checker (behavioural regression gate) | `world_gal_game/dev/contract.py` |
 | Dataflow / cross-reference + conditioned graph | `world_gal_game/dev/dataflow.py` |
 | Warm NDJSON control session (faster-than-MCP) | `world_gal_game/dev/session_server.py` |
+| Warm structural-edit loop + post-edit impact delta | `world_gal_game/dev/world_model.py` (+ `edit.*` ops in `headless.py`) |
 | Goal-directed planner | `world_gal_game/dev/planner.py` |
 | Coverage tracker (scene/line/choice/ending) | `world_gal_game/dev/coverage.py` |
 | Player rollback buffer (shared snapshot machinery) | `world_gal_game/core/history.py` |

@@ -1,0 +1,31 @@
+# Narrative contract for demo_pack — behavioural invariants checked in one call
+# with `wgg contract games/demo_pack`. Pairs with the warm edit loop's
+# structural `impact`: after an edit, impact says what broke structurally and
+# this says what broke behaviourally. See docs/session-protocol.md +
+# world_gal_game/dev/contract.py.
+expectations:
+  # `reachable` runs the planner (BFS) from the setup to the goal predicate.
+  - name: the quest can be started from the prologue
+    kind: reachable
+    setup: [{op: start_scene, scene: prologue}]
+    goal: {flag: quest_started}
+    max_steps: 20
+
+  - name: the alone ending is reachable
+    kind: reachable
+    setup: [{op: start_scene, scene: prologue}]
+    goal: {flag: ending_alone}
+    max_steps: 40
+
+  # `unreachable` asserts the planner does NOT reach the goal within its caps.
+  - name: a nonexistent ending stays unreachable
+    kind: unreachable
+    setup: [{op: start_scene, scene: prologue}]
+    goal: {flag: ending_zzz_nonexistent}
+    max_nodes: 600
+
+  # `holds` runs `setup` then asserts the predicate; `expect: false` flips it.
+  - name: prologue is not marked done at game start
+    kind: holds
+    goal: {flag: prologue_done}
+    expect: false
