@@ -38,6 +38,7 @@ class MenuScene(Scene):
         self.on_music_room = None
         self.on_endings = None
         self.on_scene_replay = None
+        self.on_flowchart = None
         self.on_quest_log = None
         self.on_clues = None
         self.on_save = None
@@ -49,8 +50,8 @@ class MenuScene(Scene):
     def enter(self, *, on_close=None, on_map=None, on_affection=None,
               on_log=None, on_achievements=None, on_inventory=None,
               on_cg_gallery=None, on_music_room=None, on_endings=None,
-              on_scene_replay=None, on_quest_log=None, on_clues=None,
-              on_save=None, on_load=None, on_settings=None,
+              on_scene_replay=None, on_flowchart=None, on_quest_log=None,
+              on_clues=None, on_save=None, on_load=None, on_settings=None,
               on_quit_to_title=None, on_quit_app=None, **_) -> None:
         self.on_close = on_close
         self.on_map = on_map
@@ -62,6 +63,7 @@ class MenuScene(Scene):
         self.on_music_room = on_music_room
         self.on_endings = on_endings
         self.on_scene_replay = on_scene_replay
+        self.on_flowchart = on_flowchart
         self.on_quest_log = on_quest_log
         self.on_clues = on_clues
         self.on_save = on_save
@@ -114,6 +116,7 @@ class MenuScene(Scene):
                 ("任務記錄", self.on_quest_log, "primary"),
             ]),
             ("鑑賞", [
+                (self.ctx.t("flowchart", "流程圖"), self.on_flowchart, "primary"),
                 (self.ctx.t("cg_gallery", "CG鑑賞"), self.on_cg_gallery, "primary"),
                 (self.ctx.t("music_room", "音樂室"), self.on_music_room, "primary"),
                 (self.ctx.t("endings", "結局"), self.on_endings, "primary"),

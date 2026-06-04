@@ -40,6 +40,7 @@ from .scenes.achievements_scene import AchievementsScene
 from .scenes.inventory_scene import InventoryScene
 from .scenes.scrollback_scene import ScrollbackScene
 from .scenes.menu_scene import MenuScene
+from .scenes.flowchart_scene import FlowchartScene
 from .scenes.quest_log_scene import QuestLogScene
 from .scenes.clues_scene import CluesScene
 from .scenes.shop_scene import ShopScene
@@ -407,6 +408,7 @@ class GalGameApp:
             on_music_room=from_menu(self._open_music_room),
             on_endings=from_menu(self._open_endings),
             on_scene_replay=from_menu(self._open_scene_replay),
+            on_flowchart=from_menu(self._open_flowchart),
             on_quest_log=from_menu(self._open_quest_log),
             on_clues=from_menu(self._open_clues),
             on_save=from_menu(self._open_save_menu),
@@ -451,6 +453,15 @@ class GalGameApp:
     def _open_scene_replay(self) -> None:
         self.manager.push(SceneReplayScene(self.ctx),
                           on_close=self.manager.pop)
+
+    def _open_flowchart(self) -> None:
+        """Open the chapter flowchart (チャート). Clicking a read chapter closes
+        the chart and jumps to (replays) that scene."""
+        def jump(scene_id: str) -> None:
+            self.manager.pop()           # close the flowchart overlay
+            self._start_dialogue(scene_id)
+        self.manager.push(FlowchartScene(self.ctx),
+                          on_close=self.manager.pop, on_jump=jump)
 
     def _open_shop(self, npc_id: str) -> None:
         self.manager.push(ShopScene(self.ctx),
