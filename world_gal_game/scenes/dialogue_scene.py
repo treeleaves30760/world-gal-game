@@ -97,6 +97,9 @@ class DialogueScene(Scene):
         # Cached readability scrim (light global veil + bottom gradient band),
         # rebuilt only on a resolution change.
         self._scrim_surf: pygame.Surface | None = None
+        # Cached cinematic CG backdrop (blurred cover-fit of the current CG),
+        # keyed by (path, w, h).
+        self._cg_fill_cache: tuple | None = None
         # Last (character, expression) settled in each slot, for emotion-change
         # auto-emote. None until a slot is first populated.
         self._slot_expr: dict[str, tuple[str, str] | None] = {
@@ -1210,6 +1213,22 @@ class DialogueScene(Scene):
         self._bg_blur_cache = (key, out)
         return out
 
+    def _cg_backdrop(self, sw: int, sh: int) -> pygame.Surface:
+        """A blurred, slightly-darkened cover-fit copy of the current CG to sit
+        behind the contain-fit CG (cinematic framing). Cached per (path, size)."""
+        key = (self.cg_surface_path, sw, sh)
+        cache = self._cg_fill_cache
+        if cache is not None and cache[0] == key:
+            return cache[1]
+        cover = self.ctx.assets.scaled(self.cg_surface_path, (sw, sh),
+                                       fit="cover")
+        fill = self._box_blur(cover, 24).copy()
+        dark = pygame.Surface(fill.get_size(), pygame.SRCALPHA)
+        dark.fill((0, 0, 0, 95))
+        fill.blit(dark, (0, 0))   # darken so the sharp CG on top pops
+        self._cg_fill_cache = (key, fill)
+        return fill
+
     @staticmethod
     def _box_blur(src: pygame.Surface, radius: int) -> pygame.Surface:
         """Cheap, web-safe blur fallback: downscale then upscale (soft box)."""
@@ -1326,8 +1345,12 @@ class DialogueScene(Scene):
         # should stay vivid; only the text band needs darkening).
         surface.blit(self._readability_scrim(sw, sh), (0, 0))
 
-        # CG (full-screen) takes over the background; also rides the camera.
+        # CG takes over the background; rides the camera. Cinematic framing:
+        # a blurred cover-fit copy fills the frame behind the contain-fit CG, so
+        # any pillar/letterbox margin is a soft echo of the art instead of flat
+        # deep-bg.
         if self.cg_surface_path:
+            self._draw_with_camera(surface, self._cg_backdrop(sw, sh))
             cg = self.ctx.assets.scaled(self.cg_surface_path, (sw, sh), fit="contain")
             self._draw_with_camera(surface, cg)
 
@@ -1385,8 +1408,14 @@ class DialogueScene(Scene):
                                 surf = pygame.transform.flip(surf, True, False)
                             target.blit(surf, dest.topleft)
                         if scratch is not None:
-                            d = max(0, min(255, int(255 * dim)))
-                            scratch.fill((d, d, d, 255),
+                            # Cool-biased multiply: a non-speaker doesn't just
+                            # darken, it cools (recedes) — closer to the
+                            # commercial desaturate-and-push-back look than a
+                            # flat grey.
+                            r = max(0, min(255, int(255 * dim * 0.92)))
+                            g = max(0, min(255, int(255 * dim * 0.97)))
+                            b = max(0, min(255, int(255 * dim * 1.08)))
+                            scratch.fill((r, g, b, 255),
                                          special_flags=pygame.BLEND_RGB_MULT)
                             surface.blit(scratch, (0, 0))
             elif self.portrait:

@@ -71,6 +71,12 @@ class DialogueBox(Widget):
         if not self.visible:
             return
         self.panel.draw(surface)
+        # Speaker-coloured accent bar along the left inner edge — a VN textbox
+        # motif that ties the box to the active speaker's colour.
+        accent = self.speaker_color or self.theme.accent
+        bar = pygame.Surface((4, max(1, self.rect.height - 28)), pygame.SRCALPHA)
+        bar.fill((*accent[:3], 175))
+        surface.blit(bar, (self.rect.x + 16, self.rect.y + 14))
         pad = self.theme.pad_l
         if self.speaker:
             # Name-plate: a filled accent tab straddling the box's top edge —
