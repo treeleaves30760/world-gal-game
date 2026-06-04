@@ -97,10 +97,11 @@ class GalGameApp:
         if not headless:
             try:
                 pygame.mixer.init()
-                # Reserve channel 0 for per-line voice so auto-allocated SFX
-                # never steal it; 8 total mixing channels is plenty for a VN.
+                # Reserve channel 0 for per-line voice and channels 1-2 for the
+                # two-stream BGM crossfade, so auto-allocated SFX never steal
+                # them; 8 total mixing channels is plenty for a VN.
                 pygame.mixer.set_num_channels(8)
-                pygame.mixer.set_reserved(1)
+                pygame.mixer.set_reserved(3)
             except pygame.error:
                 # Fine in CI / no-audio environments.
                 pass
@@ -223,7 +224,9 @@ class GalGameApp:
         self.manager.replace(TitleScene(self.ctx),
                              title=self.config.title,
                              subtitle=self.config.subtitle,
+                             version=self.meta.get("version"),
                              bg=self.meta.get("title_bg"),
+                             bgm=self.meta.get("title_bgm"),
                              on_continue=(self._continue_game
                                           if self._has_saves() else None),
                              on_new_game=self._start_new_game,
@@ -231,7 +234,8 @@ class GalGameApp:
                              on_quit=self._quit_app,
                              on_cg_gallery=self._open_cg_gallery,
                              on_music_room=self._open_music_room,
-                             on_endings=self._open_endings)
+                             on_endings=self._open_endings,
+                             on_settings=self._open_settings)
         self._running = True
         self._screenshot_pending: str | None = None
         self._inspect_pending = False
@@ -470,7 +474,9 @@ class GalGameApp:
         self.manager.clear_to(TitleScene(self.ctx),
                               title=self.config.title,
                               subtitle=self.config.subtitle,
+                              version=self.meta.get("version"),
                               bg=self.meta.get("title_bg"),
+                              bgm=self.meta.get("title_bgm"),
                               on_continue=(self._continue_game
                                            if self._has_saves() else None),
                               on_new_game=self._start_new_game,
@@ -478,7 +484,8 @@ class GalGameApp:
                               on_quit=self._quit_app,
                               on_cg_gallery=self._open_cg_gallery,
                               on_music_room=self._open_music_room,
-                              on_endings=self._open_endings)
+                              on_endings=self._open_endings,
+                              on_settings=self._open_settings)
 
     def _open_map(self) -> None:
         # The card-based destination picker is the primary travel surface.

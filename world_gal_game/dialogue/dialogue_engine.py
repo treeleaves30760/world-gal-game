@@ -305,6 +305,7 @@ class DialogueEngine:
         self.state.dialogue_history.push(
             speaker=speaker_rendered, text=plain,
             scene_id=scene.id, portrait=line.portrait,
+            voice=line.voice,
         )
         return LinePresentation(
             speaker=speaker_rendered,

@@ -17,14 +17,24 @@ class TitleScene(Scene):
         self.bg_path: str | None = None
         self.title_text: str = ctx.config.title
         self.subtitle_text: str = ctx.config.subtitle
+        self.version_text: str | None = None
+        self.on_settings = None
 
     def enter(self, *, bg: str | None = None, title: str | None = None,
-              subtitle: str | None = None, on_continue=None, on_new_game=None,
+              subtitle: str | None = None, version: str | None = None,
+              bgm: str | None = None, on_continue=None, on_new_game=None,
               on_load=None, on_quit=None, on_cg_gallery=None,
-              on_music_room=None, on_endings=None, **_) -> None:
+              on_music_room=None, on_endings=None, on_settings=None,
+              **_) -> None:
         self.bg_path = bg
         self.title_text = title or self.title_text
         self.subtitle_text = subtitle or self.subtitle_text
+        self.version_text = version
+        # Title BGM: play the pack's title track if one is set. A missing file
+        # or an uninitialised mixer (headless) degrades to silence inside
+        # play_music, so this is always safe to call.
+        if bgm:
+            self.ctx.assets.play_music(bgm, volume=self.ctx.config.bgm_volume)
         sw, sh = self.ctx.screen_size
         panel_w, panel_h = 420, 240
         cx = sw // 2
@@ -44,6 +54,7 @@ class TitleScene(Scene):
         self.on_cg_gallery = on_cg_gallery
         self.on_music_room = on_music_room
         self.on_endings = on_endings
+        self.on_settings = on_settings
         self._menu_origin = (cx - panel_w // 2, sh // 2 + 90, panel_w)
         self._extras_mode = False
         self._build_menu()
@@ -79,6 +90,9 @@ class TitleScene(Scene):
             if any((self.on_cg_gallery, self.on_music_room, self.on_endings)):
                 items.append(MenuItem(self.ctx.t("extras", "鑑賞模式"),
                                       self._open_extras))
+            if self.on_settings:
+                items.append(MenuItem(self.ctx.t("settings", "設定"),
+                                      lambda: self.on_settings()))
             items.append(MenuItem("離開遊戲",
                                   lambda: self.on_quit and self.on_quit()))
         h = len(items) * row_h + 12
@@ -143,6 +157,13 @@ class TitleScene(Scene):
                                        self.ctx.config.font_size_small,
                                        (*self.ctx.theme.text_dim, 200))
         surface.blit(byline, ((sw - byline.get_width()) // 2, sh - 40))
+        # Version, bottom-right corner (the build/release a player is on).
+        if self.version_text:
+            ver = self.ctx.fonts.render(f"v{self.version_text}",
+                                        self.ctx.config.font_size_small,
+                                        (*self.ctx.theme.text_dim, 200))
+            surface.blit(ver, (sw - ver.get_width() - 16,
+                               sh - ver.get_height() - 14))
 
         # Name prompt
         prompt = self.ctx.fonts.render("姓名",

@@ -294,6 +294,20 @@ class ScreenTintArgs(ArgModel):
     value: ScreenTintValue | None = None
 
 
+class ScreenBlurValue(ArgModel):
+    radius: float = 8.0
+    duration: float = 0.5
+    clear: bool = False
+    easing: str | None = None
+
+
+class ScreenBlurArgs(ArgModel):
+    """screen_blur: persistent depth-of-field blur on the background layer
+    (portraits / CG stay sharp); ``clear=true`` (or ``radius=0``) removes it."""
+
+    value: ScreenBlurValue | None = None
+
+
 # ----------------------------------------------------------------------
 # Presentation: scene transitions. A transition animates the hand-off from the
 # previous on-screen frame to the new one. The nested ``TransitionValue`` is

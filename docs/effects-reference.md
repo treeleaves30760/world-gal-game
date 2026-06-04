@@ -277,6 +277,18 @@ Play a one-shot in-place accent (jump/shake/nod/bounce) on a settled portrait. t
 - {kind: portrait_emote, target: <string>}
 ```
 
+### `screen_blur`
+
+Apply a persistent depth-of-field blur to the background layer (portraits / CG stay sharp); fades in over duration. Pass clear=true (or radius<=0) to remove it. Queued for the scene; does not touch the display.
+
+| 參數 | 型別 | 必填 | 預設 | 說明 |
+|---|---|---|---|---|
+| `value` | `ScreenBlurValue` | — | `None` | dict {radius:float?, duration:float?, clear:bool?, easing:str?} |
+
+```yaml
+- {kind: screen_blur}
+```
+
 ### `screen_flash`
 
 Flash a colour overlay that fades out over a duration. Queued for the scene; does not touch the display.

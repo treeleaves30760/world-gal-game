@@ -119,6 +119,16 @@ class SettingsScene(Scene):
                           font_size=20)
         self._buttons.append((v_minus, 200, cy))
         self._buttons.append((v_plus, 250, cy))
+        cy += 52
+        # SFX row
+        self._labels.append(("音效", 16, False, theme.text, 4, cy + 8))
+        self._values.append((self._sfx_pct_str, 16, theme.text_mute, 96, cy + 8))
+        se_minus = self._mk(40, 40, "-", lambda: self._adjust_sfx_volume(-0.1),
+                            font_size=20)
+        se_plus = self._mk(40, 40, "+", lambda: self._adjust_sfx_volume(0.1),
+                           font_size=20)
+        self._buttons.append((se_minus, 200, cy))
+        self._buttons.append((se_plus, 250, cy))
         cy += 52 + 14
 
         # --- playback toggles ---------------------------------------------
@@ -126,6 +136,8 @@ class SettingsScene(Scene):
         for label, attr, handler in [
             ("等待語音", "auto_play_wait_voice", self._toggle_wait_voice),
             ("僅快進已讀", "skip_unread_only", self._toggle_skip_unread),
+            ("立繪壓暗非說話者", "dim_inactive_speakers",
+             self._toggle_dim_speakers),
             ("NVL 模式", "nvl_mode", self._toggle_nvl),
         ]:
             on = bool(getattr(cfg, attr))
@@ -187,13 +199,13 @@ class SettingsScene(Scene):
     # ---- value formatters ----------------------------------------------------
 
     def _bgm_pct_str(self) -> str:
-        try:
-            return f"{int(pygame.mixer.music.get_volume() * 100)}%"
-        except pygame.error:
-            return "0%"
+        return f"{int(self.ctx.config.bgm_volume * 100)}%"
 
     def _voice_pct_str(self) -> str:
         return f"{int(self.ctx.config.voice_volume * 100)}%"
+
+    def _sfx_pct_str(self) -> str:
+        return f"{int(self.ctx.config.sfx_volume * 100)}%"
 
     # ---- handlers ------------------------------------------------------------
 
@@ -209,14 +221,10 @@ class SettingsScene(Scene):
         self._rebuild()
 
     def _adjust_volume(self, delta: float) -> None:
-        try:
-            cur = pygame.mixer.music.get_volume()
-            new_v = max(0.0, min(1.0, cur + delta))
-            pygame.mixer.music.set_volume(new_v)
-            self.ctx.config.bgm_volume = new_v
-            self.ctx.config.save_to_disk()
-        except pygame.error:
-            pass
+        new_v = max(0.0, min(1.0, round(self.ctx.config.bgm_volume + delta, 3)))
+        self.ctx.config.bgm_volume = new_v
+        self.ctx.assets.set_music_volume(new_v)
+        self.ctx.config.save_to_disk()
 
     def _adjust_voice_volume(self, delta: float) -> None:
         new_v = max(0.0, min(1.0, round(self.ctx.config.voice_volume + delta, 3)))
@@ -228,6 +236,11 @@ class SettingsScene(Scene):
         """Effective per-character voice volume (falls back to the global)."""
         return self.ctx.config.per_character_voice_volume.get(
             npc_id, self.ctx.config.voice_volume)
+
+    def _adjust_sfx_volume(self, delta: float) -> None:
+        new_v = max(0.0, min(1.0, round(self.ctx.config.sfx_volume + delta, 3)))
+        self.ctx.config.sfx_volume = new_v
+        self.ctx.config.save_to_disk()
 
     def _adjust_char_voice(self, npc_id: str, delta: float) -> None:
         cur = self._char_voice_volume(npc_id)
@@ -253,6 +266,12 @@ class SettingsScene(Scene):
     def _toggle_skip_unread(self) -> None:
         cfg = self.ctx.config
         cfg.skip_unread_only = not cfg.skip_unread_only
+        cfg.save_to_disk()
+        self._rebuild()
+
+    def _toggle_dim_speakers(self) -> None:
+        cfg = self.ctx.config
+        cfg.dim_inactive_speakers = not cfg.dim_inactive_speakers
         cfg.save_to_disk()
         self._rebuild()
 

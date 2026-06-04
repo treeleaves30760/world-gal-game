@@ -75,11 +75,14 @@ class NVLBox(Widget):
     # DialogueBox-compatible API
     # ------------------------------------------------------------------
 
-    def set_line(self, speaker: str | None, text: str) -> None:
+    def set_line(self, speaker: str | None, text: str,
+                 *, speaker_color: tuple | None = None) -> None:
         """Append a new line to the transcript and start typing it.
 
         Any previous newest entry is snapped to full reveal first so the
-        transcript above the active line is always complete.
+        transcript above the active line is always complete. ``speaker_color``
+        is accepted for call-site parity with the ADV dialogue box; the NVL
+        transcript keeps a uniform speaker style, so it is currently unused.
         """
         if self._entries:
             self._entries[-1].body.force_reveal()

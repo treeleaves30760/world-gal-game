@@ -39,6 +39,11 @@ class PortraitSpec(BaseModel):
     pose: str = "stand"
     outfit: str = "default"
     slot: Slot = "center"
+    # Optional explicit image path. When set it is tried *first*, before the
+    # naming convention below — so a portrait whose file doesn't follow the
+    # convention (e.g. a character's default ``normal.png``) can still feed a
+    # render backend (breath / layered). None keeps pure convention resolution.
+    image: str | None = None
     # Optional staging fields. All default to neutral so legacy specs render
     # exactly as before (no offset, full size, no flip, no enter/exit anim).
     offset: tuple[int, int] = (0, 0)   # pixel nudge from the slot anchor
@@ -65,9 +70,12 @@ class PortraitSpec(BaseModel):
         p = self.pose
         o = self.outfit
         base = f"assets/characters/{c}"
-        return [
+        convention = [
             f"{base}/{e}_{p}_{o}.png",
             f"{base}/{e}_{p}.png",
             f"{base}/{e}.png",
             f"{base}/{c}.png",
         ]
+        if self.image:
+            return [self.image, *convention]
+        return convention

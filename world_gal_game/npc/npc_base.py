@@ -37,10 +37,22 @@ class NPC(BaseModel):
 
     id: str
     name: str
+    # Optional speaker-name-plate colour (the per-character name colouring
+    # commercial VNs use). A "#rgb" / "#rrggbb" / named-colour string parsed by
+    # the rich-text colour parser; None keeps the theme accent. Purely cosmetic.
+    name_color: str | None = None
     role: str = ""
     age: int | None = None
     portrait: str | None = None
     portrait_set: dict[str, str] = Field(default_factory=dict)  # expression -> path
+    # Resting-animation backend applied to *this character's* portraits even
+    # when a scene line only names an expression (no explicit PortraitSpec).
+    # "static" = the unchanged still blit. "breath" makes the existing flat
+    # portrait gently breathe with no extra art; "layered" needs eye/mouth
+    # layer PNGs declared in portrait_backend_args. Routed through the same
+    # @portrait_backend registry, so an unregistered name degrades to static.
+    portrait_backend: str = "static"
+    portrait_backend_args: dict[str, Any] = Field(default_factory=dict)
     description: str = ""
     persona: str = ""              # how they speak / behave
     voice: str = ""                # tone, speech style
@@ -118,6 +130,18 @@ class NPCRegistry(BaseModel):
 
     def get(self, npc_id: str) -> NPC | None:
         return self.npcs.get(npc_id)
+
+    def by_name(self, name: str) -> NPC | None:
+        """Resolve a dialogue ``speaker`` (a display name like "林青衣") back to
+        its NPC. The registry is keyed by id, but lines carry the display name,
+        so match on ``.name`` first and fall back to an id lookup (a pack may
+        use the id as the speaker)."""
+        if not name:
+            return None
+        for npc in self.npcs.values():
+            if npc.name == name:
+                return npc
+        return self.npcs.get(name)
 
     def all(self) -> list[NPC]:
         return list(self.npcs.values())

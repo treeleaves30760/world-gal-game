@@ -33,6 +33,15 @@ class AssetManager:
         self._sounds: dict[str, pygame.mixer.Sound] = {}
         self._music_paths: dict[str, str] = {}
         self._current_music: str | None = None
+        # Two-stream BGM crossfade: BGM plays as a Sound on one of two reserved
+        # channels (1 / 2); switching tracks fades the new one in on the idle
+        # channel while fading the old one out on the other, so they overlap
+        # (a true crossfade, unlike the single ``mixer.music`` stream which can
+        # only cut). Lazily bound; falls back to ``mixer.music`` if unavailable.
+        self._bgm_channels: list = []
+        self._bgm_active: int = 0
+        self._bgm_volume: float = 0.6
+        self._bgm_uses_stream: bool = False   # True when on the legacy fallback
         self._placeholder_cache: dict[tuple[int, int, tuple], pygame.Surface] = {}
         self._pack_root: Path | None = Path(pack_root) if pack_root else None
         # Reserved voice channel (mixer Channel 0). The app reserves one
@@ -233,26 +242,97 @@ class AssetManager:
         s.set_volume(volume)
         s.play()
 
+    def _ensure_bgm_channels(self) -> bool:
+        """Bind the two reserved BGM channels (1 / 2). Returns False when the
+        mixer has no such channels (uninitialised / too few) so the caller can
+        fall back to the single ``mixer.music`` stream."""
+        if self._bgm_channels:
+            return True
+        try:
+            self._bgm_channels = [pygame.mixer.Channel(1),
+                                  pygame.mixer.Channel(2)]
+            return True
+        except pygame.error:
+            self._bgm_channels = []
+            return False
+
     def play_music(self, path: str | None, *, volume: float = 0.6,
                    loops: int = -1, fade_ms: int = 800) -> None:
-        if path is None:
-            if self._current_music is not None:
-                pygame.mixer.music.fadeout(fade_ms)
-                self._current_music = None
-            return
+        """Play looping BGM, crossfading from any current track.
+
+        Two reserved channels let the outgoing and incoming tracks overlap (a
+        real crossfade, not a cut). Degrades to the single ``mixer.music`` stream
+        if those channels aren't available, and to a silent no-op on any mixer
+        error or missing file — so packs without audio just stay quiet.
+        """
         if path == self._current_music:
+            return
+        if path is None:
+            self.stop_music(fade_ms=fade_ms)
             return
         abs_path = self._resolve(path)
         if abs_path is None or not Path(abs_path).exists():
             return
+        self._bgm_volume = volume
+        if self._ensure_bgm_channels():
+            snd = self.sound(path)
+            if snd is None:
+                return
+            out_idx = self._bgm_active
+            new_idx = 1 - out_idx
+            try:
+                out_ch = self._bgm_channels[out_idx]
+                if out_ch.get_busy():
+                    out_ch.fadeout(fade_ms)          # fade the old track out...
+                new_ch = self._bgm_channels[new_idx]
+                new_ch.set_volume(volume)
+                new_ch.play(snd, loops=loops, fade_ms=fade_ms)  # ...new one in
+                self._bgm_active = new_idx
+                self._bgm_uses_stream = False
+                self._current_music = path
+            except pygame.error:
+                self._current_music = None
+            return
+        # Fallback: single-stream music (a cut, not an overlap, but still plays).
         try:
             pygame.mixer.music.fadeout(fade_ms)
             pygame.mixer.music.load(str(abs_path))
             pygame.mixer.music.set_volume(volume)
             pygame.mixer.music.play(loops=loops, fade_ms=fade_ms)
+            self._bgm_uses_stream = True
             self._current_music = path
         except pygame.error:
             self._current_music = None
+
+    def stop_music(self, *, fade_ms: int = 800) -> None:
+        """Fade out whatever BGM is playing (crossfade channels or the stream)."""
+        for ch in self._bgm_channels:
+            try:
+                if ch.get_busy():
+                    ch.fadeout(fade_ms)
+            except pygame.error:
+                pass
+        if self._bgm_uses_stream:
+            try:
+                pygame.mixer.music.fadeout(fade_ms)
+            except pygame.error:
+                pass
+        self._current_music = None
+
+    def set_music_volume(self, volume: float) -> None:
+        """Set the live BGM volume (active crossfade channel or fallback stream);
+        stored so the next track starts at this level."""
+        self._bgm_volume = max(0.0, min(1.0, volume))
+        try:
+            if self._bgm_channels and not self._bgm_uses_stream:
+                self._bgm_channels[self._bgm_active].set_volume(self._bgm_volume)
+            else:
+                pygame.mixer.music.set_volume(self._bgm_volume)
+        except pygame.error:
+            pass
+
+    def get_music_volume(self) -> float:
+        return self._bgm_volume
 
     # ---------- voice --------------------------------------------------------
 

@@ -39,10 +39,14 @@ class DialogueBox(Widget):
                              color=theme.text, line_spacing=10,
                              text_speed=text_speed)
         self.speaker: str | None = None
+        # Optional per-speaker name-plate colour (RGB tuple); None = theme accent.
+        self.speaker_color: tuple | None = None
         self._hint_t = 0.0
 
-    def set_line(self, speaker: str | None, text: str) -> None:
+    def set_line(self, speaker: str | None, text: str,
+                 *, speaker_color: tuple | None = None) -> None:
         self.speaker = speaker
+        self.speaker_color = speaker_color
         # Reveal timing now flows through RichText.update(dt): the body drives
         # its own cursor honouring per-span speed and inline waits.
         self.body.text_speed = self.text_speed
@@ -77,7 +81,8 @@ class DialogueBox(Widget):
             px = self.rect.x + 30
             py = self.rect.y - plate_h // 2
             plate = pygame.Surface((plate_w, plate_h), pygame.SRCALPHA)
-            pygame.draw.rect(plate, (*self.theme.accent[:3], 240),
+            plate_col = self.speaker_color or self.theme.accent
+            pygame.draw.rect(plate, (*plate_col[:3], 240),
                              plate.get_rect(),
                              border_radius=self.theme.radius_m)
             pygame.draw.rect(plate, (*self.theme.text[:3], 50),

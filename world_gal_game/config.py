@@ -30,6 +30,7 @@ _PERSISTED_SETTING_FIELDS: tuple[str, ...] = (
     "skip_unread_only",
     "nvl_mode",
     "rollback_enabled",
+    "dim_inactive_speakers",
     "per_character_voice_volume",
     "autosave_enabled",
     "autosave_slot_count",
@@ -165,6 +166,11 @@ class EngineConfig:
     bgm_volume: float = 0.6
     sfx_volume: float = 1.0
     voice_volume: float = 1.0
+
+    # Dim non-speaking portrait slots so the active speaker stands out (the
+    # commercial-VN convention). When False, every on-screen portrait draws at
+    # full brightness — byte-identical to the historical render path.
+    dim_inactive_speakers: bool = True
 
     # text speed (chars/sec); 0 = instant
     text_speed: float = 45.0

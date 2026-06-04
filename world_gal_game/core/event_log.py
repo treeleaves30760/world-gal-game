@@ -93,10 +93,15 @@ class DialogueHistory(BaseModel):
 
     def push(self, *, speaker: str | None, text: str,
              scene_id: str | None = None,
-             portrait: str | None = None) -> None:
+             portrait: str | None = None,
+             voice: str | None = None) -> None:
         self.lines.append({
             "speaker": speaker, "text": text,
             "scene_id": scene_id, "portrait": portrait,
+            # Voice clip path (if the line was voiced) so the scrollback can
+            # replay it. None for unvoiced lines; absent in pre-existing saves
+            # (read with .get so old history stays valid).
+            "voice": voice,
         })
         if len(self.lines) > self.max_lines:
             # Drop the oldest 10% so we don't churn on every push.

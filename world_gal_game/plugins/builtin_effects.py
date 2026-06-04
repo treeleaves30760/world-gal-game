@@ -30,7 +30,8 @@ from .effect_args import (
     SpendResourceArgs, SetResourceArgs, BuyItemArgs, SellItemArgs, GiftArgs,
     StartQuestArgs, CompleteObjectiveArgs, CompleteQuestArgs, FailQuestArgs,
     CameraPanArgs, CameraZoomArgs, ScreenShakeArgs, ScreenFlashArgs,
-    ScreenTintArgs, SetBackgroundArgs, ShowCgArgs, HideCgArgs, TransitionArgs,
+    ScreenTintArgs, ScreenBlurArgs,
+    SetBackgroundArgs, ShowCgArgs, HideCgArgs, TransitionArgs,
     SetWeatherArgs, ClearWeatherArgs, PortraitEmoteArgs, PlayMovieArgs,
 )
 from ..core.inventory import evaluate_gift
@@ -537,6 +538,28 @@ def handle_screen_tint(state: "GameState", eff: "Effect") -> dict[str, Any]:
                              "persist": persist, "easing": easing})
     return {"kind": eff.kind, "color": color, "duration": duration,
             "persist": persist}
+
+
+@effect("screen_blur", plugin_id=BUILTIN, args=ScreenBlurArgs,
+        description="Apply a persistent depth-of-field blur to the background "
+                    "layer (portraits / CG stay sharp); fades in over duration. "
+                    "Pass clear=true (or radius<=0) to remove it. Queued for the "
+                    "scene; does not touch the display.",
+        signature={"value": "dict {radius:float?, duration:float?, "
+                            "clear:bool?, easing:str?}"})
+def handle_screen_blur(state: "GameState", eff: "Effect") -> dict[str, Any]:
+    p = eff.value if isinstance(eff.value, dict) else {}
+    radius = float(p.get("radius", 8.0))
+    clear = bool(p.get("clear", False)) or radius <= 0
+    if clear:
+        _queue_visual_fx(state, {"fx": "screen_blur", "clear": True,
+                                 "duration": float(p.get("duration", 0.5))})
+        return {"kind": eff.kind, "clear": True}
+    duration = float(p.get("duration", 0.5))
+    easing = p.get("easing")
+    _queue_visual_fx(state, {"fx": "screen_blur", "radius": radius,
+                             "duration": duration, "easing": easing})
+    return {"kind": eff.kind, "radius": radius, "duration": duration}
 
 
 # ----------------------------------------------------------------------

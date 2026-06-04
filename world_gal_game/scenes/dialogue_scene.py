@@ -89,7 +89,11 @@ class DialogueScene(Scene):
         }
         # Which slot holds the current speaker, so lip-sync only moves their
         # mouth (and only while their line is still typing). None = nobody.
+        # It also drives speaker emphasis: non-speaking slots are dimmed.
         self._speaking_slot: str | None = None
+        # Reusable scratch surface for dimming a non-speaking slot's portrait
+        # (lazily sized to the frame). None until the first dimmed draw.
+        self._dim_scratch_surf: pygame.Surface | None = None
 
         # Background transition.
         self._bg_surface: pygame.Surface | None = None
@@ -104,6 +108,17 @@ class DialogueScene(Scene):
         self._shakes: list[ScreenShake] = []
         self._flashes: list[ScreenFlash] = []
         self._tint: ColorTint | None = None
+        # Background depth-of-field blur (the screen_blur effect): an animated
+        # radius applied to the background layer only — portraits / CG stay
+        # sharp. 0 = no blur (byte-identical draw). The cache holds the last
+        # (bg-surface identity, rounded radius) -> blurred surface so a steady
+        # blur isn't recomputed every frame.
+        self._bg_blur: float = 0.0
+        self._bg_blur_from: float = 0.0
+        self._bg_blur_target: float = 0.0
+        self._bg_blur_t: float = 0.0
+        self._bg_blur_dur: float = 0.0
+        self._bg_blur_cache: tuple | None = None
 
         # Scene transitions (set_background / show_cg / hide_cg / transition).
         # A SceneTransition snapshots the previous composed world frame and
@@ -227,6 +242,28 @@ class DialogueScene(Scene):
         pres = self.ctx.dialogue.next_line()
         self._render_presentation(pres)
 
+    def _speaker_color(self, speaker: str | None) -> tuple | None:
+        """Resolve a speaker's name-plate colour from its NPC ``name_color``.
+
+        Returns an RGB tuple parsed from the character's ``name_color``
+        ("#rgb" / "#rrggbb" / named colour), or None for narration, an unknown
+        speaker, or one that declares no colour (the box then keeps the theme
+        accent). Never raises — a malformed colour string resolves to None.
+        """
+        if not speaker:
+            return None
+        npcs = getattr(self.ctx, "npcs", None)
+        npc = (npcs.by_name(speaker)
+               if npcs is not None and hasattr(npcs, "by_name") else None)
+        raw = getattr(npc, "name_color", None) if npc is not None else None
+        if not raw:
+            return None
+        try:
+            from ..dialogue.richtext import _parse_color
+            return _parse_color(raw)
+        except Exception:
+            return None
+
     # ------------------------------------------------------------------
     # Portrait helpers
     # ------------------------------------------------------------------
@@ -248,6 +285,39 @@ class DialogueScene(Scene):
             path = npc.portrait_for(expression)
             return self.ctx.assets.image(path, fallback_size=fallback)
         return None
+
+    def _character_backend_spec(self, line) -> PortraitSpec | None:
+        """Route a single expression/default portrait through the speaker's
+        declared resting backend (``NPC.portrait_backend``).
+
+        Returns None — so the byte-identical legacy still path runs — unless the
+        line uses an expression/default portrait (not an explicit PortraitSpec),
+        the speaker resolves to an NPC declaring a non-"static" backend, and a
+        still image resolves. The explicit ``image`` pins resolution to exactly
+        the file the static path would have used, so only the resting animation
+        (breath / layered) is added — never a different picture.
+        """
+        speaker = getattr(line, "speaker", None)
+        npcs = getattr(self.ctx, "npcs", None)
+        npc = (npcs.by_name(speaker)
+               if npcs is not None and hasattr(npcs, "by_name") and speaker
+               else None)
+        if npc is None:
+            return None
+        backend = getattr(npc, "portrait_backend", "static") or "static"
+        if backend == "static":
+            return None
+        still = line.portrait if isinstance(line.portrait, str) \
+            else npc.portrait_for(line.expression)
+        if not still:
+            return None
+        return PortraitSpec(
+            character=npc.id,
+            expression=(line.expression or "default"),
+            backend=backend,
+            backend_args=dict(getattr(npc, "portrait_backend_args", {}) or {}),
+            image=still,
+        )
 
     @staticmethod
     def _spec_has_staging(spec: PortraitSpec | None) -> bool:
@@ -358,6 +428,14 @@ class DialogueScene(Scene):
         """Compute which slots change this line and start transitions."""
         sw, sh = self.ctx.screen_size
         speaker = getattr(line, "speaker", None)
+        # A portrait spec names its character by id (e.g. "qingyi"), but a line's
+        # speaker is the display name (e.g. "林青衣"); resolve one to the other so
+        # the speaking slot is found whichever form the pack uses.
+        speaker_id = None
+        npcs = getattr(self.ctx, "npcs", None)
+        if speaker and npcs is not None and hasattr(npcs, "by_name"):
+            _npc = npcs.by_name(speaker)
+            speaker_id = _npc.id if _npc is not None else None
         self._speaking_slot = None
         if line.portraits:
             # Multi-slot: clear all then populate from the spec list.
@@ -369,8 +447,10 @@ class DialogueScene(Scene):
             for spec in line.portraits:
                 surf, backend = self._resolve_slot(spec, sw, sh)
                 wanted[spec.slot] = (surf, spec, backend)
-                # The slot whose character is speaking drives lip-sync.
-                if speaker and spec.character == speaker:
+                # The slot whose character is speaking drives lip-sync + speaker
+                # emphasis. Match the spec's character against both the raw
+                # speaker string and its resolved id.
+                if speaker and spec.character in (speaker, speaker_id):
                     self._speaking_slot = spec.slot
             for slot, (surf, spec, backend) in wanted.items():
                 self._slot_backends[slot] = backend
@@ -382,10 +462,14 @@ class DialogueScene(Scene):
                     line.portrait, sw, sh)
                 center_spec = line.portrait
             else:
-                center_surf = self._surface_for_portrait(
-                    line.portrait, line.speaker, line.expression)
-                center_spec = None
-                center_backend = None
+                center_spec = self._character_backend_spec(line)
+                if center_spec is not None:
+                    center_surf, center_backend = self._resolve_slot(
+                        center_spec, sw, sh)
+                else:
+                    center_surf = self._surface_for_portrait(
+                        line.portrait, line.speaker, line.expression)
+                    center_backend = None
             self._slot_backends["center"] = center_backend
             # Single portrait == the speaker on screen, so it drives lip-sync.
             if center_surf is not None and speaker:
@@ -438,12 +522,15 @@ class DialogueScene(Scene):
                 if cur_sid != self._nvl_scene_id:
                     self.box.reset()
                     self._nvl_scene_id = cur_sid
-            self.box.set_line(line.speaker, line.text)
+            self.box.set_line(line.speaker, line.text,
+                              speaker_color=self._speaker_color(line.speaker))
             # SFX/BGM
             if line.bgm:
-                self.ctx.assets.play_music(line.bgm)
+                self.ctx.assets.play_music(
+                    line.bgm, volume=self.ctx.config.bgm_volume)
             if line.sfx:
-                self.ctx.assets.play_sound(line.sfx)
+                self.ctx.assets.play_sound(
+                    line.sfx, volume=self.ctx.config.sfx_volume)
             # Voice: cut any in-flight clip, then play this line's (if any).
             self.ctx.assets.stop_voice()
             if line.voice:
@@ -617,6 +704,9 @@ class DialogueScene(Scene):
                     duration=d.get("duration", 0.5),
                     max_alpha=d.get("max_alpha", 120),
                     easing=d.get("easing"))
+        elif fx == "screen_blur":
+            target = 0.0 if d.get("clear") else float(d.get("radius", 8.0))
+            self._start_bg_blur(target, float(d.get("duration", 0.5)))
         elif fx == "set_background":
             self._apply_set_background(d)
         elif fx == "show_cg":
@@ -792,11 +882,32 @@ class DialogueScene(Scene):
         self._flashes = [f for f in self._flashes if not f.done]
         if self._tint is not None:
             self._tint.update(dt)   # fades in then persists; never auto-removed
+        self._advance_bg_blur(dt)
         if self._scene_transition is not None:
             self._scene_transition.update(dt)
             if self._scene_transition.done:
                 self._scene_transition = None
         self._advance_ambient(dt)
+
+    def _start_bg_blur(self, target: float, duration: float) -> None:
+        """Animate the background blur radius toward ``target`` over ``duration``
+        (instant when duration<=0)."""
+        self._bg_blur_from = self._bg_blur
+        self._bg_blur_target = max(0.0, target)
+        self._bg_blur_dur = max(0.0, duration)
+        self._bg_blur_t = 0.0
+        if self._bg_blur_dur <= 0.0:
+            self._bg_blur = self._bg_blur_target
+
+    def _advance_bg_blur(self, dt: float) -> None:
+        if self._bg_blur == self._bg_blur_target or self._bg_blur_dur <= 0.0:
+            return
+        self._bg_blur_t = min(self._bg_blur_t + dt, self._bg_blur_dur)
+        frac = self._bg_blur_t / self._bg_blur_dur
+        self._bg_blur = self._bg_blur_from + (
+            self._bg_blur_target - self._bg_blur_from) * frac
+        if self._bg_blur_t >= self._bg_blur_dur:
+            self._bg_blur = self._bg_blur_target
 
     def _active_shake_offset(self) -> tuple[int, int]:
         ox = oy = 0
@@ -837,8 +948,16 @@ class DialogueScene(Scene):
             # rather than crashing the frame.
             backend = self._slot_backends.get(slot)
             if backend is not None:
-                talking = (slot == self._speaking_slot and self.box is not None
-                           and not self.box.fully_revealed())
+                # Lip-sync source: a voiced line moves the mouth for as long as
+                # the voice clip actually plays; an unvoiced line falls back to
+                # the typewriter (mouth moves while text is still revealing).
+                if slot != self._speaking_slot:
+                    talking = False
+                elif getattr(self._current_line, "voice", None):
+                    talking = self.ctx.assets.voice_busy()
+                else:
+                    talking = (self.box is not None
+                               and not self.box.fully_revealed())
                 try:
                     backend.update(dt, talking=talking)
                 except Exception:
@@ -1008,6 +1127,36 @@ class DialogueScene(Scene):
             rect.y += spec.offset[1]
         return rect
 
+    def _blur_bg(self, src: pygame.Surface) -> pygame.Surface:
+        """Return a blurred copy of the background for the current blur radius.
+
+        Cached by (background-surface identity, rounded radius) so a steady blur
+        isn't recomputed each frame. A radius below 1 returns the source
+        unchanged, so the no-blur path is byte-identical to before.
+        """
+        r = int(round(self._bg_blur))
+        if r < 1:
+            return src
+        key = (id(src), r)
+        cache = self._bg_blur_cache
+        if cache is not None and cache[0] == key:
+            return cache[1]
+        try:
+            out = pygame.transform.gaussian_blur(src, r)
+        except (AttributeError, pygame.error, ValueError):
+            out = self._box_blur(src, r)   # older/web pygame without gaussian_blur
+        self._bg_blur_cache = (key, out)
+        return out
+
+    @staticmethod
+    def _box_blur(src: pygame.Surface, radius: int) -> pygame.Surface:
+        """Cheap, web-safe blur fallback: downscale then upscale (soft box)."""
+        w, h = src.get_size()
+        f = max(2, min(10, radius // 2 + 2))
+        small = pygame.transform.smoothscale(
+            src, (max(1, w // f), max(1, h // f)))
+        return pygame.transform.smoothscale(small, (w, h))
+
     def _render_bg_fade(self, sw: int, sh: int) -> pygame.Surface:
         """Compose the active background crossfade onto an opaque surface.
 
@@ -1018,6 +1167,37 @@ class DialogueScene(Scene):
         buf.fill(self.ctx.theme.bg_deep)
         self._bg_fade.draw(buf)
         return buf
+
+    # Brightness multiplier applied to a non-speaking portrait so the active
+    # speaker visually stands out (the commercial-VN convention).
+    _INACTIVE_DIM: float = 0.55
+
+    def _slot_dim_factor(self, slot: str) -> float:
+        """1.0 = full brightness; <1.0 dims a non-speaking slot.
+
+        Only dims when speaker-dimming is enabled, a speaking slot is known,
+        this slot is not it, and this slot actually holds a portrait. Narration
+        (no speaking slot) and single-speaker frames are never dimmed, so the
+        common path is unchanged.
+        """
+        if not getattr(self.ctx.config, "dim_inactive_speakers", True):
+            return 1.0
+        speaking = self._speaking_slot
+        if speaking is None or slot == speaking:
+            return 1.0
+        if self._slot_surfaces.get(slot) is None:
+            return 1.0
+        return self._INACTIVE_DIM
+
+    def _dim_scratch(self, sw: int, sh: int) -> pygame.Surface:
+        """A cleared, frame-sized transparent scratch surface for dimming."""
+        s = self._dim_scratch_surf
+        if s is None or s.get_size() != (sw, sh):
+            s = pygame.Surface((sw, sh), pygame.SRCALPHA)
+            self._dim_scratch_surf = s
+        else:
+            s.fill((0, 0, 0, 0))
+        return s
 
     def _draw_with_camera(self, target: pygame.Surface,
                           src: pygame.Surface) -> None:
@@ -1049,13 +1229,14 @@ class DialogueScene(Scene):
         # The camera transform (zoom/pan) is applied to the background blit.
         if self._bg_fade is not None and not self._bg_fade.done:
             surface.fill(self.ctx.theme.bg_deep)
-            self._draw_with_camera(surface, self._render_bg_fade(sw, sh))
+            self._draw_with_camera(
+                surface, self._blur_bg(self._render_bg_fade(sw, sh)))
         elif self._bg_surface is not None:
             # Opaque base first so a semi-transparent (placeholder) background
             # never lets the scene beneath — e.g. an exploration top bar —
             # bleed through. With real opaque art this fill is invisible.
             surface.fill(self.ctx.theme.bg_deep)
-            self._draw_with_camera(surface, self._bg_surface)
+            self._draw_with_camera(surface, self._blur_bg(self._bg_surface))
         else:
             surface.fill(self.ctx.theme.bg_deep)
 
@@ -1096,10 +1277,19 @@ class DialogueScene(Scene):
                         # the settled draw rect this frame without altering art.
                         rect = self._emote_rect(rect, self._slot_emotes.get(slot))
                         backend = self._slot_backends.get(slot)
+                        # Non-speaking slots dim so the speaker stands out. A
+                        # dimmed slot draws onto a scratch surface that is then
+                        # multiplied down — only its opaque pixels darken, the
+                        # transparent margins stay clear — and composited. The
+                        # full-brightness path draws straight to the frame and is
+                        # byte-identical to before.
+                        dim = self._slot_dim_factor(slot)
+                        scratch = self._dim_scratch(sw, sh) if dim < 1.0 else None
+                        target = scratch if scratch is not None else surface
                         drawn = False
                         if backend is not None:
                             try:
-                                backend.draw(surface, rect,
+                                backend.draw(target, rect,
                                              flip=bool(spec and spec.flip))
                                 drawn = True
                             except Exception:
@@ -1112,7 +1302,12 @@ class DialogueScene(Scene):
                             surf = pygame.transform.smoothscale(src, dest.size)
                             if spec is not None and spec.flip:
                                 surf = pygame.transform.flip(surf, True, False)
-                            surface.blit(surf, dest.topleft)
+                            target.blit(surf, dest.topleft)
+                        if scratch is not None:
+                            d = max(0, min(255, int(255 * dim)))
+                            scratch.fill((d, d, d, 255),
+                                         special_flags=pygame.BLEND_RGB_MULT)
+                            surface.blit(scratch, (0, 0))
             elif self.portrait:
                 # Legacy fallback: no slot surfaces active, use PortraitView.
                 self.portrait.draw(surface)
