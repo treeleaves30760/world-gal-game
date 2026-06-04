@@ -39,6 +39,7 @@ class MenuScene(Scene):
         self.on_endings = None
         self.on_scene_replay = None
         self.on_flowchart = None
+        self.on_character_profiles = None
         self.on_quest_log = None
         self.on_clues = None
         self.on_save = None
@@ -50,7 +51,8 @@ class MenuScene(Scene):
     def enter(self, *, on_close=None, on_map=None, on_affection=None,
               on_log=None, on_achievements=None, on_inventory=None,
               on_cg_gallery=None, on_music_room=None, on_endings=None,
-              on_scene_replay=None, on_flowchart=None, on_quest_log=None,
+              on_scene_replay=None, on_flowchart=None,
+              on_character_profiles=None, on_quest_log=None,
               on_clues=None, on_save=None, on_load=None, on_settings=None,
               on_quit_to_title=None, on_quit_app=None, **_) -> None:
         self.on_close = on_close
@@ -64,6 +66,7 @@ class MenuScene(Scene):
         self.on_endings = on_endings
         self.on_scene_replay = on_scene_replay
         self.on_flowchart = on_flowchart
+        self.on_character_profiles = on_character_profiles
         self.on_quest_log = on_quest_log
         self.on_clues = on_clues
         self.on_save = on_save
@@ -109,6 +112,7 @@ class MenuScene(Scene):
             ("紀錄", [
                 ("地圖 (M)", self.on_map, "primary"),
                 ("好感 (A)", self.on_affection, "primary"),
+                ("角色檔案", self.on_character_profiles, "primary"),
                 (clue_label, self.on_clues, "primary"),
                 ("事件 (L)", self.on_log, "primary"),
                 ("成就 (T)", self.on_achievements, "primary"),

@@ -41,6 +41,7 @@ from .scenes.inventory_scene import InventoryScene
 from .scenes.scrollback_scene import ScrollbackScene
 from .scenes.menu_scene import MenuScene
 from .scenes.flowchart_scene import FlowchartScene
+from .scenes.character_profile_scene import CharacterProfileScene
 from .scenes.quest_log_scene import QuestLogScene
 from .scenes.clues_scene import CluesScene
 from .scenes.shop_scene import ShopScene
@@ -409,6 +410,7 @@ class GalGameApp:
             on_endings=from_menu(self._open_endings),
             on_scene_replay=from_menu(self._open_scene_replay),
             on_flowchart=from_menu(self._open_flowchart),
+            on_character_profiles=from_menu(self._open_character_profiles),
             on_quest_log=from_menu(self._open_quest_log),
             on_clues=from_menu(self._open_clues),
             on_save=from_menu(self._open_save_menu),
@@ -462,6 +464,10 @@ class GalGameApp:
             self._start_dialogue(scene_id)
         self.manager.push(FlowchartScene(self.ctx),
                           on_close=self.manager.pop, on_jump=jump)
+
+    def _open_character_profiles(self) -> None:
+        self.manager.push(CharacterProfileScene(self.ctx),
+                          on_close=self.manager.pop)
 
     def _open_shop(self, npc_id: str) -> None:
         self.manager.push(ShopScene(self.ctx),
