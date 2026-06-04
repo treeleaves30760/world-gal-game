@@ -36,6 +36,7 @@ _PERSISTED_SETTING_FIELDS: tuple[str, ...] = (
     "autosave_enabled",
     "autosave_slot_count",
     "quicksave_slot",
+    "seen_intro",
 )
 
 
@@ -207,6 +208,10 @@ class EngineConfig:
     # absent here fall back to ``voice_volume``. UI lives in the settings
     # scene.
     per_character_voice_volume: dict[str, float] = field(default_factory=dict)
+
+    # Whether the first-run control onboarding has been shown (persisted so a
+    # returning player never sees it again).
+    seen_intro: bool = False
 
     # Quicksave / autosave behaviour.
     autosave_enabled: bool = True

@@ -1,0 +1,20 @@
+{
+  "auto_emote_on_emotion": true,
+  "auto_play_delay": 2.5,
+  "auto_play_speed": 1.0,
+  "auto_play_wait_voice": true,
+  "autosave_enabled": true,
+  "autosave_slot_count": 3,
+  "bgm_volume": 0.6,
+  "dim_inactive_speakers": true,
+  "nvl_mode": false,
+  "per_character_voice_volume": {},
+  "quicksave_slot": "quicksave",
+  "rollback_enabled": true,
+  "seen_intro": true,
+  "sfx_volume": 1.0,
+  "skip_unread_only": true,
+  "text_speed": 45.0,
+  "touch_mode": false,
+  "voice_volume": 1.0
+}

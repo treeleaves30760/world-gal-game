@@ -42,6 +42,7 @@ from .scenes.scrollback_scene import ScrollbackScene
 from .scenes.menu_scene import MenuScene
 from .scenes.flowchart_scene import FlowchartScene
 from .scenes.character_profile_scene import CharacterProfileScene
+from .scenes.onboarding_scene import OnboardingScene
 from .scenes.quest_log_scene import QuestLogScene
 from .scenes.clues_scene import CluesScene
 from .scenes.shop_scene import ShopScene
@@ -359,10 +360,20 @@ class GalGameApp:
             # hook re-check fires (in case the intro's on_end satisfies a
             # hook at the starting location).
             self._start_dialogue(intro)
-            return
-        # No intro — still check whether the starting location has an
-        # auto/enter hook eligible right now.
-        self._check_ambient_hooks()
+        else:
+            # No intro — still check whether the starting location has an
+            # auto/enter hook eligible right now.
+            self._check_ambient_hooks()
+        # First run only: teach the controls once, over the first scene.
+        if not getattr(self.config, "seen_intro", False):
+            self._open_onboarding()
+
+    def _open_onboarding(self) -> None:
+        def done() -> None:
+            self.manager.pop()
+            self.config.seen_intro = True
+            self.config.save_to_disk()
+        self.manager.push(OnboardingScene(self.ctx), on_close=done)
 
     def _exploration_callbacks(self) -> dict[str, Callable]:
         return dict(
