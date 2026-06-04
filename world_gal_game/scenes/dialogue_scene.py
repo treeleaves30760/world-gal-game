@@ -1408,10 +1408,15 @@ class DialogueScene(Scene):
                                 surf = pygame.transform.flip(surf, True, False)
                             target.blit(surf, dest.topleft)
                         if scratch is not None:
-                            # Cool-biased multiply: a non-speaker doesn't just
-                            # darken, it cools (recedes) — closer to the
-                            # commercial desaturate-and-push-back look than a
-                            # flat grey.
+                            # A non-speaker recedes: partially desaturate, then
+                            # cool-darken (commercial speaker emphasis), rather
+                            # than a flat grey multiply that reads weakly.
+                            try:
+                                gray = pygame.transform.grayscale(scratch)
+                                gray.set_alpha(120)        # ~47% desaturation
+                                scratch.blit(gray, (0, 0))
+                            except (AttributeError, pygame.error):
+                                pass                       # older pygame: skip
                             r = max(0, min(255, int(255 * dim * 0.92)))
                             g = max(0, min(255, int(255 * dim * 0.97)))
                             b = max(0, min(255, int(255 * dim * 1.08)))
