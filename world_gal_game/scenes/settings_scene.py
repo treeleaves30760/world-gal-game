@@ -138,6 +138,7 @@ class SettingsScene(Scene):
             ("僅快進已讀", "skip_unread_only", self._toggle_skip_unread),
             ("立繪壓暗非說話者", "dim_inactive_speakers",
              self._toggle_dim_speakers),
+            ("立繪情緒反應", "auto_emote_on_emotion", self._toggle_auto_emote),
             ("NVL 模式", "nvl_mode", self._toggle_nvl),
         ]:
             on = bool(getattr(cfg, attr))
@@ -272,6 +273,12 @@ class SettingsScene(Scene):
     def _toggle_dim_speakers(self) -> None:
         cfg = self.ctx.config
         cfg.dim_inactive_speakers = not cfg.dim_inactive_speakers
+        cfg.save_to_disk()
+        self._rebuild()
+
+    def _toggle_auto_emote(self) -> None:
+        cfg = self.ctx.config
+        cfg.auto_emote_on_emotion = not cfg.auto_emote_on_emotion
         cfg.save_to_disk()
         self._rebuild()
 

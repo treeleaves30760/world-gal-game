@@ -10,6 +10,7 @@ Design choices:
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -200,9 +201,26 @@ class SaveManager:
         payload["_thumbnail_path"] = thumb_path
 
         path = self._json_path(slot)
-        with open(path, "w", encoding="utf-8") as f:
+        # Atomic write: serialize to a temp file, flush+fsync, then os.replace()
+        # it over the slot (atomic on POSIX + NTFS). A crash / power loss / the
+        # per-frame autosave firing mid-write can no longer truncate a slot to
+        # corrupt JSON. The previous good file is kept one-deep as ``.bak`` so
+        # load() can fall back if the live file is ever damaged.
+        tmp_path = path.with_suffix(path.suffix + ".tmp")
+        with open(tmp_path, "w", encoding="utf-8") as f:
             json.dump(payload, f, ensure_ascii=False, indent=2,
                       default=_json_default)
+            f.flush()
+            try:
+                os.fsync(f.fileno())
+            except (OSError, AttributeError):
+                pass   # fsync unsupported (e.g. emscripten) — best effort
+        if path.exists():
+            try:
+                os.replace(path, path.with_suffix(path.suffix + ".bak"))
+            except OSError:
+                pass
+        os.replace(tmp_path, path)
         # On the web, push the freshly-written file from the in-memory IDBFS
         # cache down to IndexedDB so it survives a hard reload. No-op on
         # desktop / headless.
@@ -224,6 +242,16 @@ class SaveManager:
             with open(path, encoding="utf-8") as f:
                 data = json.load(f)
         except json.JSONDecodeError as exc:
+            # The live file is damaged (e.g. an interrupted pre-atomic write).
+            # Fall back to the last-good ``.bak`` the atomic save left behind
+            # rather than losing the slot outright.
+            bak = path.with_suffix(path.suffix + ".bak")
+            if bak.exists():
+                try:
+                    with open(bak, encoding="utf-8") as f:
+                        return self._migrate(json.load(f))
+                except (json.JSONDecodeError, OSError):
+                    pass
             raise SaveCorruptedError(
                 f"Save slot '{slot}' contains invalid JSON: {exc}"
             ) from exc
@@ -231,6 +259,13 @@ class SaveManager:
 
     def delete(self, slot: str) -> bool:
         path = self._json_path(slot)
+        # Clean up the atomic-write siblings (.bak / .tmp) alongside the slot.
+        for sib in (path.with_suffix(path.suffix + ".bak"),
+                    path.with_suffix(path.suffix + ".tmp")):
+            try:
+                sib.unlink(missing_ok=True)
+            except OSError:
+                pass
         if path.exists():
             path.unlink()
             thumb = self._thumb_path(slot)

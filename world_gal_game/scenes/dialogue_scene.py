@@ -94,6 +94,14 @@ class DialogueScene(Scene):
         # Reusable scratch surface for dimming a non-speaking slot's portrait
         # (lazily sized to the frame). None until the first dimmed draw.
         self._dim_scratch_surf: pygame.Surface | None = None
+        # Cached readability scrim (light global veil + bottom gradient band),
+        # rebuilt only on a resolution change.
+        self._scrim_surf: pygame.Surface | None = None
+        # Last (character, expression) settled in each slot, for emotion-change
+        # auto-emote. None until a slot is first populated.
+        self._slot_expr: dict[str, tuple[str, str] | None] = {
+            "left": None, "center": None, "right": None,
+        }
 
         # Background transition.
         self._bg_surface: pygame.Surface | None = None
@@ -479,6 +487,55 @@ class DialogueScene(Scene):
             self._start_slot_transition("left", None, None, sw, sh)
             self._slot_backends["right"] = None
             self._start_slot_transition("right", None, None, sw, sh)
+        self._apply_auto_emotes()
+
+    # Expression keywords that read as high-energy (→ a livelier emote) vs.
+    # subdued (→ a small nod); anything else gets a gentle default bounce.
+    _ENERGETIC_EXPR = frozenset({
+        "excited", "surprised", "scared", "angry", "radiant", "playing",
+        "determined", "happy", "shocked", "panic",
+    })
+    _SUBDUED_EXPR = frozenset({
+        "sad", "crying", "worried", "embarrassed", "shy", "nervous",
+        "distant", "relieved", "annoyed",
+    })
+
+    def _emote_for_expression(self, expr: str) -> tuple[str, float]:
+        e = (expr or "").lower()
+        if e in self._ENERGETIC_EXPR:
+            return ("bounce", 22.0)
+        if e in self._SUBDUED_EXPR:
+            return ("nod", 15.0)
+        return ("bounce", 11.0)
+
+    def _apply_auto_emotes(self) -> None:
+        """Play a small one-shot emote when a slot keeps the same character but
+        changes expression — the E-mote 'reacts to emotion' feel, without the
+        author writing an emote on every line.
+
+        Gated by ``config.auto_emote_on_emotion``. Never fires on first
+        appearance, a character swap, or when an emote is already running on the
+        slot. The per-slot last-expression is tracked either way so toggling the
+        feature on mid-scene doesn't fire a burst of stale reactions.
+        """
+        enabled = getattr(getattr(self.ctx, "config", None),
+                          "auto_emote_on_emotion", True)
+        for slot in ("left", "center", "right"):
+            spec = self._slot_specs.get(slot)
+            if spec is None:
+                self._slot_expr[slot] = None
+                continue
+            key = (spec.character, getattr(spec, "expression", "default"))
+            prev = self._slot_expr.get(slot)
+            if (enabled and prev is not None and prev[0] == key[0]
+                    and prev[1] != key[1]
+                    and self._slot_emotes.get(slot) is None):
+                kind, intensity = self._emote_for_expression(key[1])
+                # 0.5s so the reaction's tail still shows after the ~0.25s
+                # expression crossfade settles.
+                self._slot_emotes[slot] = PortraitEmote(
+                    kind=kind, duration=0.5, intensity=intensity)
+            self._slot_expr[slot] = key
 
     # ------------------------------------------------------------------
     # Background helper
@@ -1101,21 +1158,26 @@ class DialogueScene(Scene):
                    spec: PortraitSpec | None = None) -> pygame.Rect:
         """Return the bounding rect for a portrait slot, anchored at bottom.
 
-        When ``spec`` carries staging fields the rect is scaled about its
-        center and nudged by ``offset``. With no spec (or a neutral one) the
-        rect is byte-for-byte the historical one.
+        Commercial-VN scale: a tall slot whose baseline sits at the screen
+        bottom, so the figure reads at ~90% of screen height and its lower body
+        bleeds behind the textbox — rather than a small bust floating in the
+        upper-centre. Width is generous so the sprite's own aspect (not a fixed
+        box) sets its on-screen size; ``fit_rect`` bottom-anchors within it.
+
+        When ``spec`` carries staging fields the rect is scaled about its centre
+        and nudged by ``offset``.
         """
-        box_h = 230
-        margin = 32
-        portrait_h = sh - box_h - margin - 60
-        portrait_w = 480
+        portrait_h = int(sh * 0.94)
+        portrait_w = int(sw * 0.60)
         anchor_x = {
-            "left":   int(sw * 0.20),
+            "left":   int(sw * 0.27),
             "center": int(sw * 0.50),
-            "right":  int(sw * 0.80),
+            "right":  int(sw * 0.73),
         }[slot]
         x = anchor_x - portrait_w // 2
-        y = 30
+        # Bottom-anchored at the screen bottom with a small bleed so the feet
+        # sit behind the textbox instead of floating above it.
+        y = sh + int(sh * 0.03) - portrait_h
         rect = pygame.Rect(x, y, portrait_w, portrait_h)
         if spec is not None and (spec.scale != 1.0 or spec.offset != (0, 0)):
             if spec.scale != 1.0:
@@ -1189,6 +1251,24 @@ class DialogueScene(Scene):
             return 1.0
         return self._INACTIVE_DIM
 
+    def _readability_scrim(self, sw: int, sh: int) -> pygame.Surface:
+        """A light full-screen veil with a stronger gradient band at the bottom,
+        for text contrast without flattening the whole background. Cached per
+        resolution (it is static)."""
+        s = self._scrim_surf
+        if s is not None and s.get_size() == (sw, sh):
+            return s
+        s = pygame.Surface((sw, sh), pygame.SRCALPHA)
+        s.fill((0, 0, 0, 22))                       # gentle global unification
+        band_h = max(1, int(sh * 0.42))
+        band = pygame.Surface((sw, band_h), pygame.SRCALPHA)
+        for i in range(band_h):
+            a = int(155 * (i / band_h) ** 1.7)      # transparent top → dark base
+            pygame.draw.line(band, (0, 0, 0, a), (0, i), (sw, i))
+        s.blit(band, (0, sh - band_h))              # alpha-composited over veil
+        self._scrim_surf = s
+        return s
+
     def _dim_scratch(self, sw: int, sh: int) -> pygame.Surface:
         """A cleared, frame-sized transparent scratch surface for dimming."""
         s = self._dim_scratch_surf
@@ -1240,10 +1320,11 @@ class DialogueScene(Scene):
         else:
             surface.fill(self.ctx.theme.bg_deep)
 
-        # dim the bg for text readability
-        veil = pygame.Surface((sw, sh), pygame.SRCALPHA)
-        veil.fill((0, 0, 0, 70))
-        surface.blit(veil, (0, 0))
+        # Readability scrim: a light global veil + a stronger bottom gradient
+        # behind the textbox region — instead of a heavy flat veil that washes
+        # the whole image out every frame (now that sprites read large, the art
+        # should stay vivid; only the text band needs darkening).
+        surface.blit(self._readability_scrim(sw, sh), (0, 0))
 
         # CG (full-screen) takes over the background; also rides the camera.
         if self.cg_surface_path:

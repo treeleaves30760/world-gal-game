@@ -31,6 +31,7 @@ _PERSISTED_SETTING_FIELDS: tuple[str, ...] = (
     "nvl_mode",
     "rollback_enabled",
     "dim_inactive_speakers",
+    "auto_emote_on_emotion",
     "per_character_voice_volume",
     "autosave_enabled",
     "autosave_slot_count",
@@ -171,6 +172,12 @@ class EngineConfig:
     # commercial-VN convention). When False, every on-screen portrait draws at
     # full brightness — byte-identical to the historical render path.
     dim_inactive_speakers: bool = True
+
+    # Auto-react: when a character's on-screen expression changes, play a small
+    # one-shot emote (the E-mote "acting" feel) so portraits respond to emotion
+    # without the author hand-writing an emote on every line. Off = no automatic
+    # motion (authored emotes still play).
+    auto_emote_on_emotion: bool = True
 
     # text speed (chars/sec); 0 = instant
     text_speed: float = 45.0
