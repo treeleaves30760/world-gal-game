@@ -969,7 +969,22 @@ class GalGameApp:
                 and self._view_size == tuple(self.config.screen_size)):
             self.display.blit(self.screen, (0, 0))
         else:
+            # The window aspect differs from the 16:9 canvas (e.g. a 16:10
+            # laptop display). Instead of hard black letterbox bars framing the
+            # art, fill the whole window with a window-COVERING, darkened copy
+            # of the frame, then blit the undistorted CONTAIN-fit frame centred
+            # on top — so the scene bleeds softly into the margin rather than
+            # being boxed in. Costs two scales, but only on the non-1:1 path.
+            dw, dh = self.display.get_size()
+            lw, lh = self.screen.get_size()
+            cover = max(dw / lw, dh / lh) if (lw and lh) else 1.0
+            cw, ch = max(1, int(lw * cover)), max(1, int(lh * cover))
+            back = pygame.transform.smoothscale(self.screen, (cw, ch))
             self.display.fill((0, 0, 0))
+            self.display.blit(back, ((dw - cw) // 2, (dh - ch) // 2))
+            shade = pygame.Surface((dw, dh), pygame.SRCALPHA)
+            shade.fill((0, 0, 0, 150))      # darken the bleed so it reads as frame, not a 2nd scene
+            self.display.blit(shade, (0, 0))
             scaled = pygame.transform.smoothscale(self.screen, self._view_size)
             self.display.blit(scaled, self._view_offset)
         pygame.display.flip()
