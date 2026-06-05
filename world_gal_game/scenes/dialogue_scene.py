@@ -28,6 +28,9 @@ class DialogueScene(Scene):
         # Story scene id whose lines currently fill the NVL transcript; used to
         # detect scene changes and clear the transcript. None until first line.
         self._nvl_scene_id: str | None = None
+        # Story scene id the staged portraits belong to, so they can persist
+        # across narration WITHIN a scene but clear on a scene change.
+        self._portrait_scene_id: str | None = None
         self.choices: ChoiceMenu | None = None
         self.portrait: PortraitView | None = None
         self._quick_bar: QuickMenuBar | None = None
@@ -449,6 +452,31 @@ class DialogueScene(Scene):
         if speaker and npcs is not None and hasattr(npcs, "by_name"):
             _npc = npcs.by_name(speaker)
             speaker_id = _npc.id if _npc is not None else None
+        # Portraits belong to a scene. When the story scene changes, drop any
+        # staged sprites so they can't leak into the next scene; within a scene
+        # they persist (see the narration branch below). Defensive getattr chain
+        # so minimal test contexts without a full state/story still work.
+        _story = getattr(getattr(self.ctx, "state", None), "story", None)
+        cur_sid = getattr(_story, "current_scene", None)
+        if cur_sid != self._portrait_scene_id:
+            self._portrait_scene_id = cur_sid
+            for _s in ("left", "center", "right"):
+                self._slot_backends[_s] = None
+                self._slot_surfaces[_s] = None
+                self._slot_specs[_s] = None
+                self._slot_fades[_s] = None
+                self._slot_anims[_s] = None
+                self._slot_expr[_s] = None
+        # Pure narration (no portrait + no speaker-backed sprite + no speaker):
+        # keep whatever is already on screen so a character stays put while the
+        # narrator describes the scene, instead of popping out every narration
+        # line (the "slideshow" feel). True only within a scene — a scene change
+        # cleared the slots just above.
+        _has_portrait = bool(line.portraits) or bool(line.portrait)
+        if (not _has_portrait and not speaker
+                and self._character_backend_spec(line) is None):
+            self._speaking_slot = None
+            return
         self._speaking_slot = None
         if line.portraits:
             # Multi-slot: clear all then populate from the spec list.
