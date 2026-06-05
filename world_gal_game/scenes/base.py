@@ -94,6 +94,13 @@ class SceneManager:
     def __init__(self):
         self._stack: list[Scene] = []
         self._pending: list[tuple[str, Scene | None, dict]] = []
+        # Cross-scene transition: snapshot the outgoing frame and dissolve it
+        # out over the incoming scene, so title→game and overlay open/close
+        # animate instead of hard-cutting. Set by the app; stays inert in
+        # headless/tests until a frame has actually been drawn.
+        self._transition = None
+        self._last_frame = None
+        self.transitions_enabled: bool = True
 
     # ---- mutation queue (so scenes can switch in their own update) ----
     def replace(self, scene: Scene, **kwargs) -> None:
@@ -123,6 +130,7 @@ class SceneManager:
         from ..plugins import fire_event
         from ..plugins.context import HookEvent
 
+        changed = bool(self._pending)
         for op, scene, kwargs in self._pending:
             if op == "replace":
                 old = self._stack[-1] if self._stack else None
@@ -162,6 +170,11 @@ class SceneManager:
                     fire_event(self._state_of(scene),
                                HookEvent.SCENE_REPLACE, old=None, new=scene)
         self._pending.clear()
+        # Start a dissolve from the just-departed frame over the new scene.
+        if changed and self.transitions_enabled and self._last_frame is not None:
+            from ..ui.transitions import SceneTransition
+            self._transition = SceneTransition(
+                self._last_frame.copy(), style="dissolve", duration=0.3)
 
     @staticmethod
     def _state_of(scene: Scene | None):
@@ -173,6 +186,10 @@ class SceneManager:
 
     def update(self, dt: float, inp) -> None:
         self.commit_pending()
+        if self._transition is not None:
+            self._transition.update(dt)
+            if self._transition.done:
+                self._transition = None
         if self._stack:
             self._stack[-1].update(dt, inp)
         self.commit_pending()
@@ -187,6 +204,12 @@ class SceneManager:
             bottom_idx -= 1
         for s in self._stack[bottom_idx:]:
             s.draw(surface)
+        # Snapshot the clean frame for the NEXT scene-change dissolve, then
+        # overlay the current (outgoing) transition on top of the new scene.
+        if self.transitions_enabled:
+            self._last_frame = surface.copy()
+        if self._transition is not None and not self._transition.done:
+            self._transition.draw(surface)
 
     def describe(self) -> list[dict]:
         return [s.describe() for s in self._stack]
