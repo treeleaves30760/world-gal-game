@@ -39,16 +39,26 @@ class TitleScene(Scene):
         if bgm:
             self.ctx.assets.play_music(bgm, volume=self.ctx.config.bgm_volume)
         sw, sh = self.ctx.screen_size
-        panel_w, panel_h = 420, 240
         cx = sw // 2
-        # Name input
+        # A single frosted panel holds the name field AND the menu, with a
+        # divider + clear gap between them (the old layout had the input box
+        # overlapping the first menu row). Lower-centre, below the wordmark.
+        panel_w, panel_h = 480, 484
+        panel_x, panel_y = cx - panel_w // 2, int(sh * 0.33)
+        self._panel_rect = pygame.Rect(panel_x, panel_y, panel_w, panel_h)
+        pad = 32
+        inner_w = panel_w - pad * 2
+        # Name input near the top (the 姓名 label is drawn just above it).
+        input_y = panel_y + pad + 28
         self.name_input = TextInput(
-            pygame.Rect(cx - panel_w // 2, sh // 2 + 20, panel_w, 50),
+            pygame.Rect(panel_x + pad, input_y, inner_w, 50),
             fonts=self.ctx.fonts, theme=self.ctx.theme,
             placeholder="輸入主角的名字…",
             initial=self.ctx.state.player.name if self.ctx.state.player.name != "玩家" else "",
             max_length=12,
         )
+        # A divider sits below the input; the menu starts well clear of it.
+        self._divider_y = input_y + 50 + 24
         # Menu
         self.on_continue = on_continue
         self.on_new_game = on_new_game
@@ -58,7 +68,7 @@ class TitleScene(Scene):
         self.on_music_room = on_music_room
         self.on_endings = on_endings
         self.on_settings = on_settings
-        self._menu_origin = (cx - panel_w // 2, sh // 2 + 90, panel_w)
+        self._menu_origin = (panel_x + pad, self._divider_y + 22, inner_w)
         self._extras_mode = False
         self._build_menu()
 
@@ -127,40 +137,37 @@ class TitleScene(Scene):
 
     def draw(self, surface: pygame.Surface) -> None:
         sw, sh = surface.get_size()
-        # Background gradient + optional art.
+        # Background art (kept brighter than before — the frosted panel below
+        # carries readability instead of washing the whole photo out), a cold
+        # radial glow, and a bottom darkening band for the byline/version.
         bg = pygame.Surface(surface.get_size())
         bg.fill(self.ctx.theme.bg_deep)
         if self.bg_path:
             img = self.ctx.assets.scaled(self.bg_path, surface.get_size(),
                                          fit="cover")
-            img.set_alpha(140)
+            img.set_alpha(205)
             bg.blit(img, (0, 0))
-        # Sakura-pink radial fade overlay
         veil = pygame.Surface(surface.get_size(), pygame.SRCALPHA)
-        for r, alpha in [(420, 10), (340, 18), (240, 28)]:
+        for r, alpha in [(460, 9), (340, 15), (240, 22)]:
             pygame.draw.circle(veil,
                                (*self.ctx.theme.accent[:3], alpha),
                                (sw // 2, sh // 3), r)
         bg.blit(veil, (0, 0))
+        grad = pygame.Surface((sw, 170), pygame.SRCALPHA)
+        for i in range(170):
+            pygame.draw.line(grad, (*self.ctx.theme.bg_deep[:3],
+                                    int(160 * (i / 170))), (0, i), (sw, i))
+        bg.blit(grad, (0, sh - 170))
         surface.blit(bg, (0, 0))
 
-        # Title text
-        title = self.ctx.fonts.render(self.title_text,
-                                      self.ctx.config.font_size_header + 20,
-                                      self.ctx.theme.accent, bold=True)
-        surface.blit(title, ((sw - title.get_width()) // 2, sh // 6))
-        if self.subtitle_text:
-            sub = self.ctx.fonts.render(self.subtitle_text,
-                                        self.ctx.config.font_size_menu,
-                                        self.ctx.theme.text_mute)
-            surface.blit(sub, ((sw - sub.get_width()) // 2,
-                               sh // 6 + title.get_height() + 6))
-        # Byline
+        # Wordmark: spectral glow + drop-shadow + fill, with the subtitle.
+        self._draw_logo(surface, sw, sh)
+
+        # Byline + version, bottom.
         byline = self.ctx.fonts.render("Powered by World Gal-Game",
                                        self.ctx.config.font_size_small,
                                        (*self.ctx.theme.text_dim, 200))
         surface.blit(byline, ((sw - byline.get_width()) // 2, sh - 40))
-        # Version, bottom-right corner (the build/release a player is on).
         if self.version_text:
             ver = self.ctx.fonts.render(f"v{self.version_text}",
                                         self.ctx.config.font_size_small,
@@ -168,16 +175,51 @@ class TitleScene(Scene):
             surface.blit(ver, (sw - ver.get_width() - 16,
                                sh - ver.get_height() - 14))
 
-        # Name prompt
-        prompt = self.ctx.fonts.render("姓名",
-                                       self.ctx.config.font_size_small,
-                                       self.ctx.theme.text_mute)
+        # Frosted panel behind the name field + menu.
+        pr = self._panel_rect
+        panel = pygame.Surface(pr.size, pygame.SRCALPHA)
+        pygame.draw.rect(panel, self.ctx.theme.bg_overlay, panel.get_rect(),
+                         border_radius=self.ctx.theme.radius_l)
+        pygame.draw.rect(panel, self.ctx.theme.border_strong, panel.get_rect(),
+                         width=1, border_radius=self.ctx.theme.radius_l)
+        surface.blit(panel, pr.topleft)
+
+        # 姓名 label + input, then a divider, then the menu — clearly separated.
         if self.name_input:
+            prompt = self.ctx.fonts.render("姓名",
+                                           self.ctx.config.font_size_small,
+                                           self.ctx.theme.text_mute)
             surface.blit(prompt, (self.name_input.rect.x,
-                                  self.name_input.rect.y - prompt.get_height() - 4))
+                                  self.name_input.rect.y - prompt.get_height() - 6))
             self.name_input.draw(surface)
+        pygame.draw.line(surface, self.ctx.theme.border_soft,
+                         (pr.x + 32, self._divider_y),
+                         (pr.right - 32, self._divider_y), 1)
         if self.menu:
             self.menu.draw(surface)
+
+    def _draw_logo(self, surface: pygame.Surface, sw: int, sh: int) -> None:
+        size = self.ctx.config.font_size_header + 20
+        title = self.ctx.fonts.render(self.title_text, size,
+                                      self.ctx.theme.accent, bold=True)
+        tx = (sw - title.get_width()) // 2
+        ty = sh // 7
+        glow = self.ctx.fonts.render(self.title_text, size,
+                                     self.ctx.theme.accent_alt, bold=True)
+        glow.set_alpha(45)
+        for ox, oy in [(-3, 0), (3, 0), (0, -3), (0, 3), (0, 5)]:
+            surface.blit(glow, (tx + ox, ty + oy))
+        shadow = self.ctx.fonts.render(self.title_text, size, (0, 0, 0),
+                                       bold=True)
+        shadow.set_alpha(160)
+        surface.blit(shadow, (tx + 3, ty + 4))
+        surface.blit(title, (tx, ty))
+        if self.subtitle_text:
+            sub = self.ctx.fonts.render(self.subtitle_text,
+                                        self.ctx.config.font_size_menu,
+                                        self.ctx.theme.text_mute)
+            surface.blit(sub, ((sw - sub.get_width()) // 2,
+                               ty + title.get_height() + 8))
 
     def describe(self) -> dict:
         return {
