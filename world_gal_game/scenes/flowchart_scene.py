@@ -90,6 +90,16 @@ class FlowchartScene(Scene):
             return chapter.entry_scene
         return chapter.scenes[0] if chapter.scenes else None
 
+    def _chapter_bg(self, chapter) -> str | None:
+        """The background image of the chapter's entry scene, for a node
+        thumbnail. None if the scene or its background can't be resolved."""
+        sid = self._jump_scene(chapter)
+        try:
+            sc = self.ctx.state.story.scenes.get(sid) if sid else None
+        except Exception:
+            sc = None
+        return getattr(sc, "background", None) if sc is not None else None
+
     # ---- lifecycle -----------------------------------------------------
     def enter(self, *, on_close=None, on_jump=None, **_) -> None:
         self.on_close = on_close
@@ -191,13 +201,30 @@ class FlowchartScene(Scene):
             read = self._chapter_read(ch)
             x = cx - card_w // 2
             card = pygame.Surface((card_w, self._CARD_H), pygame.SRCALPHA)
-            fill = (*color, 70) if read else (*theme.text_dim[:3], 26)
-            pygame.draw.rect(card, fill, card.get_rect(),
-                             border_radius=theme.radius_m)
-            pygame.draw.rect(card, (*color, 230) if read
+            rad = theme.radius_m
+            bg = self._chapter_bg(ch) if read else None
+            if bg:
+                # A darkened, round-cornered thumbnail of the chapter's scene as
+                # the card base — a "scene select" look. Corners rounded by
+                # multiplying the thumbnail's alpha through a rounded mask.
+                thumb = self.ctx.assets.scaled(
+                    bg, (card_w, self._CARD_H), fit="cover").copy()
+                mask = pygame.Surface((card_w, self._CARD_H), pygame.SRCALPHA)
+                pygame.draw.rect(mask, (255, 255, 255, 255), mask.get_rect(),
+                                 border_radius=rad)
+                thumb.blit(mask, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
+                card.blit(thumb, (0, 0))
+                dark = pygame.Surface((card_w, self._CARD_H), pygame.SRCALPHA)
+                pygame.draw.rect(dark, (10, 8, 16, 140), dark.get_rect(),
+                                 border_radius=rad)
+                card.blit(dark, (0, 0))            # keep the title legible
+            else:
+                fill = (*color, 70) if read else (*theme.text_dim[:3], 26)
+                pygame.draw.rect(card, fill, card.get_rect(),
+                                 border_radius=rad)
+            pygame.draw.rect(card, (*color, 235) if read
                              else (*theme.text_dim[:3], 90),
-                             card.get_rect(), width=2,
-                             border_radius=theme.radius_m)
+                             card.get_rect(), width=2, border_radius=rad)
             title = ch.title or ch.id
             t_col = theme.text if read else theme.text_dim
             # Truncate to fit the card, leaving room for the read/unread sigil.
