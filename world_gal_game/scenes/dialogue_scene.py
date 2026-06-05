@@ -295,8 +295,19 @@ class DialogueScene(Scene):
             return self.ctx.assets.resolve_portrait(portrait, fallback_size=fallback)
         if isinstance(portrait, str):
             return self.ctx.assets.image(portrait, fallback_size=fallback)
-        # Fall back to NPC default.
-        npc = self.ctx.npcs.get(speaker) if speaker else None
+        # Fall back to the speaker's expression/default portrait. ``speaker`` is
+        # a display name ("林青衣"), so resolve by name first (the form packs use
+        # on lines) and only then by id — otherwise a bare ``expression:`` line
+        # shows nothing. This path is what static-backend NPCs land on (they
+        # skip _character_backend_spec), so getting it wrong drops every
+        # bare-expression heroine sprite.
+        npc = None
+        npcs = getattr(self.ctx, "npcs", None)
+        if speaker and npcs is not None:
+            if hasattr(npcs, "by_name"):
+                npc = npcs.by_name(speaker)
+            if npc is None and hasattr(npcs, "get"):
+                npc = npcs.get(speaker)
         if npc is not None:
             path = npc.portrait_for(expression)
             return self.ctx.assets.image(path, fallback_size=fallback)
