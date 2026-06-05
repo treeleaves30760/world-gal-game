@@ -169,6 +169,16 @@ class GalGameApp:
             self.config.text_speed = float(self.meta["text_speed"])
         # Pack-provided typewriter blip asset (played softly while text reveals).
         self.config.text_blip = self.meta.get("text_blip")
+        # Pack-provided UI click sound + install the global Button hook so every
+        # menu button gives audible feedback (rides the SFX bus; toggleable).
+        self.config.ui_sound = self.meta.get("ui_sound")
+        from world_gal_game.ui.widgets.button import set_click_sound_hook
+
+        def _ui_click() -> None:
+            cfg = self.config
+            if cfg.ui_sound and cfg.ui_sound_enabled:
+                self.assets.play_sound(cfg.ui_sound, volume=cfg.sfx_volume * 0.6)
+        set_click_sound_hook(_ui_click)
 
         # Promote a plugin-registered brain if meta.yaml names one. Caller-
         # supplied brain (constructor kwarg) takes precedence — that's the

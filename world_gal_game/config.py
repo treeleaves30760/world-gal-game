@@ -33,6 +33,7 @@ _PERSISTED_SETTING_FIELDS: tuple[str, ...] = (
     "dim_inactive_speakers",
     "auto_emote_on_emotion",
     "typewriter_sound",
+    "ui_sound_enabled",
     "per_character_voice_volume",
     "autosave_enabled",
     "autosave_slot_count",
@@ -190,6 +191,11 @@ class EngineConfig:
     text_blip: str | None = None
     # User toggle for the typewriter blip (divisive — some players dislike it).
     typewriter_sound: bool = True
+
+    # Optional UI click sound (a pack asset path from meta; NOT persisted) and
+    # its persisted user toggle.
+    ui_sound: str | None = None
+    ui_sound_enabled: bool = True
 
     # seconds between auto-advances when auto-play mode is on
     auto_play_delay: float = 2.5

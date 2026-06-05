@@ -10,6 +10,18 @@ from ..fonts import FontRegistry
 from ..theme import Theme
 
 
+# Module-level UI click hook. The app installs one callback at init (playing the
+# pack's ui_sound on the SFX bus); every Button calls it on activation, so we get
+# clickable feedback without threading the AssetManager through every widget.
+# Stays None (silent) in headless / tests / packs without a UI sound.
+_click_sound_hook: "Callable[[], None] | None" = None
+
+
+def set_click_sound_hook(fn: "Callable[[], None] | None") -> None:
+    global _click_sound_hook
+    _click_sound_hook = fn
+
+
 class Button(Widget):
     def __init__(self, rect: pygame.Rect, label: str, *,
                  fonts: FontRegistry, theme: Theme,
@@ -35,6 +47,8 @@ class Button(Widget):
         target = 1.0 if self._hover else 0.0
         self._hover_t += (target - self._hover_t) * min(1.0, dt * 12.0)
         if self._hover and inp.mouse_clicked and self.on_click is not None:
+            if _click_sound_hook is not None:
+                _click_sound_hook()
             self.on_click()
 
     def draw(self, surface: pygame.Surface) -> None:
