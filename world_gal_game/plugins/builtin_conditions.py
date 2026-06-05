@@ -18,6 +18,7 @@ from .condition_args import (
     TimeInArgs, VisitedArgs, ScenePlayedArgs, HasItemArgs, AchievementArgs,
     ResourceGteArgs, ResourceLtArgs, ResourceEqArgs, QuestActiveArgs,
     QuestCompletedArgs, ObjectiveCompletedArgs,
+    ClearedEndingArgs, ClearedRouteArgs,
 )
 
 if TYPE_CHECKING:
@@ -96,6 +97,28 @@ def cond_visited(state: "GameState", cond: "Condition") -> bool:
            signature={"target": "scene_id"})
 def cond_scene_played(state: "GameState", cond: "Condition") -> bool:
     return state.story.is_played(cond.target)
+
+
+def _clear_data(state: "GameState"):
+    return state.meta.get("__clear_data__")
+
+
+@condition("cleared_ending", plugin_id=BUILTIN, args=ClearedEndingArgs,
+           description="An ending was reached in ANY prior playthrough "
+                       "(New Game+ clear data). For gating after-stories.",
+           signature={"target": "ending_id"})
+def cond_cleared_ending(state: "GameState", cond: "Condition") -> bool:
+    cd = _clear_data(state)
+    return bool(cd and cond.target in getattr(cd, "endings_seen", set()))
+
+
+@condition("cleared_route", plugin_id=BUILTIN, args=ClearedRouteArgs,
+           description="A route was cleared in ANY prior playthrough "
+                       "(New Game+ clear data). For gating after-stories.",
+           signature={"target": "route_id"})
+def cond_cleared_route(state: "GameState", cond: "Condition") -> bool:
+    cd = _clear_data(state)
+    return bool(cd and cond.target in getattr(cd, "cleared_routes", set()))
 
 
 # ----------------------------------------------------------------------

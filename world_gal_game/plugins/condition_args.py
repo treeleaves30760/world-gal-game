@@ -77,6 +77,18 @@ class ScenePlayedArgs(ArgModel):
     target: ReqStr                 # scene_id
 
 
+class ClearedEndingArgs(ArgModel):
+    """cleared_ending: this ending was reached in any prior playthrough (NG+)."""
+
+    target: ReqStr                 # ending_id
+
+
+class ClearedRouteArgs(ArgModel):
+    """cleared_route: this route was cleared in any prior playthrough (NG+)."""
+
+    target: ReqStr                 # route_id
+
+
 # ----------------------------------------------------------------------
 # Inventory / achievements
 

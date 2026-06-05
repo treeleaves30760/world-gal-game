@@ -150,6 +150,13 @@ class GalGameApp:
         if not content_root.exists():
             raise FileNotFoundError(f"Game pack not found: {content_root}")
         self.state, self.npcs, self.meta = load_pack(content_root)
+        # Cross-playthrough clear data (New Game+): load once and park it on the
+        # state so conditions (cleared_ending / cleared_route) can read it; it is
+        # global, so it lives outside the per-save schema.
+        from .core.clear_data import ClearData
+        self._clear_data_path = self.config.save_dir() / "clear_data.json"
+        self.clear_data = ClearData.load(self._clear_data_path)
+        self.state.meta["__clear_data__"] = self.clear_data
         # Apply pack title/subtitle to config so the title screen reflects them.
         if "title" in self.meta:
             self.config.title = self.meta["title"]
@@ -360,6 +367,19 @@ class GalGameApp:
     # ----------- scene navigation helpers -------------------------------
 
     def _start_new_game(self) -> None:
+        # New Game+: seed the read-log (per line) from clear data so "skip
+        # already-read" immediately covers everything seen in any prior
+        # playthrough — the standard completion-loop convenience.
+        try:
+            for sid in set(self.clear_data.scenes_seen):
+                sc = self.state.story.scenes.get(sid)
+                if sc is None:
+                    continue
+                self.state.read_log.mark_scene_done(sid)
+                for i in range(len(getattr(sc, "lines", []) or [])):
+                    self.state.read_log.mark_line(sid, i)
+        except Exception:
+            pass
         # Optional intro scene if defined in meta.
         self.manager.replace(ExplorationScene(self.ctx),
                              **self._exploration_callbacks())
@@ -507,7 +527,18 @@ class GalGameApp:
                           on_pick=picked,
                           on_close=self.manager.pop)
 
+    def _record_clear_data(self) -> None:
+        """Merge the current playthrough's progress into the persisted clear
+        data (New Game+). Called when returning to the title — a natural
+        end-of-run moment."""
+        try:
+            if self.clear_data.record_from_state(self.state):
+                self.clear_data.save(self._clear_data_path)
+        except Exception:
+            pass
+
     def _quit_to_title(self) -> None:
+        self._record_clear_data()
         self.manager.clear_to(TitleScene(self.ctx),
                               title=self.config.title,
                               subtitle=self.config.subtitle,

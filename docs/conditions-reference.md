@@ -66,6 +66,30 @@ Character's affection (on stat) is < value.
 - {kind: affection_lt, target: <string>, value: <integer>}
 ```
 
+### `cleared_ending`
+
+An ending was reached in ANY prior playthrough (New Game+ clear data). For gating after-stories.
+
+| 參數 | 型別 | 必填 | 預設 | 說明 |
+|---|---|---|---|---|
+| `target` | `string` | 是 |  | ending_id |
+
+```yaml
+- {kind: cleared_ending, target: <string>}
+```
+
+### `cleared_route`
+
+A route was cleared in ANY prior playthrough (New Game+ clear data). For gating after-stories.
+
+| 參數 | 型別 | 必填 | 預設 | 說明 |
+|---|---|---|---|---|
+| `target` | `string` | 是 |  | route_id |
+
+```yaml
+- {kind: cleared_route, target: <string>}
+```
+
 ### `flag`
 
 Flag is truthy.
