@@ -34,7 +34,7 @@ class OnboardingScene(Scene):
         self._panel_rect = pygame.Rect(0, 0, pw, ph)
         self._panel_rect.center = (sw // 2, sh // 2)
         self._panel = Panel(self._panel_rect, self.ctx.theme,
-                            fill=(*self.ctx.theme.bg_overlay[:3], 250),
+                            fill=(*self.ctx.theme.bg_overlay[:3], 240),
                             border=self.ctx.theme.border_strong,
                             radius=self.ctx.theme.radius_l, border_width=2)
         bw = 220

@@ -24,7 +24,7 @@ class MapScene(Scene):
         sw, sh = self.ctx.screen_size
         panel_rect = pygame.Rect(32, 32, sw - 64, sh - 64)
         self._panel = Panel(panel_rect, self.ctx.theme,
-                            fill=(*self.ctx.theme.bg_overlay[:3], 235),
+                            fill=(*self.ctx.theme.bg_overlay[:3], 240),
                             border=self.ctx.theme.border_strong,
                             radius=self.ctx.theme.radius_l, border_width=2)
         inner = panel_rect.inflate(-60, -100)

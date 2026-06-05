@@ -17,7 +17,7 @@ class AffectionScene(Scene):
         sw, sh = self.ctx.screen_size
         self._panel_rect = pygame.Rect(120, 80, sw - 240, sh - 160)
         self._panel = Panel(self._panel_rect, self.ctx.theme,
-                            fill=(*self.ctx.theme.bg_overlay[:3], 235),
+                            fill=(*self.ctx.theme.bg_overlay[:3], 240),
                             border=self.ctx.theme.border_strong,
                             radius=self.ctx.theme.radius_l, border_width=2)
         self.close_btn = Button(

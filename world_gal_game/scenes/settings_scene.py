@@ -53,7 +53,7 @@ class SettingsScene(Scene):
         ph = min(720, sh - 70)
         self._panel_rect = pygame.Rect((sw - pw) // 2, (sh - ph) // 2, pw, ph)
         self._panel = Panel(self._panel_rect, theme,
-                            fill=(*theme.bg_overlay[:3], 255),
+                            fill=(*theme.bg_overlay[:3], 240),
                             border=theme.border_strong,
                             radius=theme.radius_l, border_width=2)
         self._header_h = 78
@@ -64,8 +64,10 @@ class SettingsScene(Scene):
             self._panel_rect.height - self._header_h - 22,
         )
         self.close_btn = Button(
-            pygame.Rect(self._panel_rect.right - 116 - 20,
-                        self._panel_rect.y + 20, 116, 40),
+            # Standard system-overlay close button (matches save/gallery/etc.):
+            # 120x36, inset 16 from the panel's top-right corner.
+            pygame.Rect(self._panel_rect.right - 120 - 16,
+                        self._panel_rect.y + 16, 120, 36),
             self.ctx.localization.t("close", "關閉"),
             fonts=self.ctx.fonts, theme=theme,
             font_size=15, style="ghost",

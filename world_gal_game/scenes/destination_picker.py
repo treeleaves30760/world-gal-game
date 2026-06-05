@@ -423,7 +423,7 @@ class DestinationPickerScene(Scene):
         veil.fill((0, 0, 0, 165))
         surface.blit(veil, (0, 0))
 
-        Panel(self._panel, th, fill=(*th.bg_overlay[:3], 238),
+        Panel(self._panel, th, fill=(*th.bg_overlay[:3], 240),
               border=th.border_strong, radius=th.radius_l,
               border_width=2).draw(surface)
 

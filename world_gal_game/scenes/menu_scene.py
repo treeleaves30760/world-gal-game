@@ -84,7 +84,7 @@ class MenuScene(Scene):
         self._panel_rect = pygame.Rect(0, 0, pw, ph)
         self._panel_rect.center = (sw // 2, sh // 2)
         self._panel = Panel(self._panel_rect, theme,
-                            fill=(*theme.bg_overlay[:3], 255),
+                            fill=(*theme.bg_overlay[:3], 240),
                             border=theme.border_strong,
                             radius=theme.radius_l, border_width=2)
         self._header_h = 78
@@ -95,8 +95,9 @@ class MenuScene(Scene):
             self._panel_rect.height - self._header_h - 22,
         )
         self.close_btn = Button(
-            pygame.Rect(self._panel_rect.right - 116 - 20,
-                        self._panel_rect.y + 20, 116, 40),
+            # Standard system-overlay close button (120x36, inset 16).
+            pygame.Rect(self._panel_rect.right - 120 - 16,
+                        self._panel_rect.y + 16, 120, 36),
             self.ctx.localization.t("close", "關閉 (Esc)"),
             fonts=self.ctx.fonts, theme=theme,
             font_size=15, style="ghost",
