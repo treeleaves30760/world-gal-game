@@ -59,9 +59,10 @@ class ChoiceMenu(Widget):
     def draw(self, surface: pygame.Surface) -> None:
         if not self.visible:
             return
-        # darken background to focus the decision
+        # darken background to focus the decision (softer now that the stale
+        # textbox is hidden under choices — a CG/scene behind it still reads)
         veil = pygame.Surface(surface.get_size(), pygame.SRCALPHA)
-        veil.fill((0, 0, 0, 185))
+        veil.fill((0, 0, 0, 130))
         surface.blit(veil, (0, 0))
         if self.panel:
             self.panel.draw(surface)

@@ -99,11 +99,11 @@ class PortraitEmote:
             decay = 1.0 - p
             return (int(amp * 0.5 * math.sin(p * math.pi * 6.0) * decay),
                     0, 1.0, 1.0)
-        # bounce: squash on take-off / landing + a hop in the middle.
+        # bounce: a plain hop. No geometric squash — stretching/squashing a
+        # hand-drawn static立繪 reads as rubber (the same distortion the breath
+        # backend was dropped for); keep scale at 1.0 and only translate.
         hop = math.sin(math.pi * p)
-        # Squash hardest at the ends (p≈0 and p≈1), least at apex.
-        squash = (1.0 - hop) * 0.12
-        return (0, int(-amp * hop), 1.0 + squash * 0.6, 1.0 - squash)
+        return (0, int(-amp * hop), 1.0, 1.0)
 
 
 def _lerp_rect(a: pygame.Rect, b: pygame.Rect, t: float) -> pygame.Rect:

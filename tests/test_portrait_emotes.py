@@ -63,11 +63,15 @@ def test_nod_goes_down_at_midpoint():
     assert dy > 0                       # a bow dips downward
 
 
-def test_bounce_squashes():
+def test_bounce_hops_without_squash():
+    # bounce is a plain hop now: it translates up but must NOT scale-distort the
+    # static portrait (the geometric squash was removed — squashing a hand-drawn
+    # 立繪 reads as rubber, the same reason breath-scaling was dropped).
     e = PortraitEmote(kind="bounce", duration=1.0, intensity=40.0)
-    e.update(0.02)                      # near take-off → squashed
-    _dx, _dy, sx, sy = e.transform()
-    assert sx > 1.0 and sy < 1.0        # wider + shorter = squash
+    e.update(0.5)                       # apex of the hop
+    _dx, dy, sx, sy = e.transform()
+    assert dy < 0                       # hopped up
+    assert sx == 1.0 and sy == 1.0      # no geometric distortion
 
 
 def test_bad_intensity_falls_back():

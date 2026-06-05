@@ -223,7 +223,7 @@ class DialogueScene(Scene):
         if getattr(self.ctx.config, "nvl_mode", False):
             bar_y = sh - bar_h - 14
         else:
-            bar_y = (sh - box_h - margin) - bar_h - 10
+            bar_y = (sh - box_h - margin) - bar_h - 20   # clear the name-plate
         self._quick_bar = QuickMenuBar(
             sw - margin, bar_y, fonts=self.ctx.fonts, theme=self.ctx.theme,
             height=bar_h, font_size=14,
@@ -1278,8 +1278,14 @@ class DialogueScene(Scene):
         When ``spec`` carries staging fields the rect is scaled about its centre
         and nudged by ``offset``.
         """
-        portrait_h = int(sh * 0.94)
-        portrait_w = int(sw * 0.60)
+        # Side slots (two-character staging) render a touch shorter than the
+        # centre single, with a little more bottom bleed, so a heroine whose
+        # expression PNG frames the head higher in-canvas still clears the top
+        # of the frame instead of being cropped. Centre (single-sprite) keeps
+        # the original 0.94/0.60/0.03 numbers byte-for-byte.
+        side = slot in ("left", "right")
+        portrait_h = int(sh * (0.86 if side else 0.94))
+        portrait_w = int(sw * (0.52 if side else 0.60))
         anchor_x = {
             "left":   int(sw * 0.27),
             "center": int(sw * 0.50),
@@ -1288,7 +1294,7 @@ class DialogueScene(Scene):
         x = anchor_x - portrait_w // 2
         # Bottom-anchored at the screen bottom with a small bleed so the feet
         # sit behind the textbox instead of floating above it.
-        y = sh + int(sh * 0.03) - portrait_h
+        y = sh + int(sh * (0.05 if side else 0.03)) - portrait_h
         rect = pygame.Rect(x, y, portrait_w, portrait_h)
         if spec is not None and (spec.scale != 1.0 or spec.offset != (0, 0)):
             if spec.scale != 1.0:
@@ -1555,9 +1561,13 @@ class DialogueScene(Scene):
             self._scene_transition.draw(surface)
         self._last_world_frame = surface.copy()
 
-        if self.box and not self._ui_hidden:
+        # While a choice menu is up, hide the (stale) previous-line textbox so a
+        # decision over a CG isn't a dark empty box slab + a double-darkening
+        # veil — only the choice panel shows.
+        showing_choices = bool(self.choices and self.choices.visible)
+        if self.box and not self._ui_hidden and not showing_choices:
             self.box.draw(surface)
-        if self.choices and self.choices.visible:
+        if showing_choices:
             self.choices.draw(surface)
 
         # Composite the (possibly offscreen) frame back onto the real surface,
