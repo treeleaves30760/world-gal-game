@@ -182,6 +182,19 @@ class SettingsScene(Scene):
         self._labels.append(("關閉鏡頭推移／震動／閃光（暈眩・光敏）", 13, False,
                              theme.text_mute, 4, cy + 46))
         cy += 50 + 22
+        # 文字大小 (text size): scales the dialogue body + box together.
+        self._labels.append(("文字大小", 16, False, theme.text, 4, cy + 8))
+        bx = 130
+        for v, label in [(1.0, "標準"), (1.2, "大"), (1.4, "特大")]:
+            sel = abs(cfg.text_scale - v) < 0.05
+            b = self._mk(110, 42, label,
+                         (lambda v=v: self._set_text_scale(v)),
+                         style="primary" if sel else "ghost")
+            self._buttons.append((b, bx, cy))
+            bx += 120
+        self._labels.append(("（新的對話起套用）", 13, False,
+                             theme.text_mute, 4, cy + 46))
+        cy += 52 + 22
 
         # --- per-character voice volume -----------------------------------
         try:
@@ -254,6 +267,11 @@ class SettingsScene(Scene):
 
     def _set_text_speed(self, v: float) -> None:
         self.ctx.config.text_speed = v
+        self.ctx.config.save_to_disk()
+        self._rebuild()
+
+    def _set_text_scale(self, v: float) -> None:
+        self.ctx.config.text_scale = v
         self.ctx.config.save_to_disk()
         self._rebuild()
 

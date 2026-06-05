@@ -33,6 +33,7 @@ _PERSISTED_SETTING_FIELDS: tuple[str, ...] = (
     "dim_inactive_speakers",
     "auto_emote_on_emotion",
     "reduce_motion",
+    "text_scale",
     "typewriter_sound",
     "ui_sound_enabled",
     "per_character_voice_volume",
@@ -189,6 +190,11 @@ class EngineConfig:
     # swaps and the gentle scene crossfade are kept. Honoured in
     # DialogueScene._spawn_visual_fx.
     reduce_motion: bool = False
+
+    # Accessibility: dialogue text-size multiplier. Scales the dialogue body +
+    # speaker font AND the text box height together (so larger text still fits),
+    # honoured in DialogueScene.enter / DialogueBox. 1.0 = standard.
+    text_scale: float = 1.0
 
     # text speed (chars/sec); 0 = instant
     text_speed: float = 45.0

@@ -183,7 +183,11 @@ class DialogueScene(Scene):
                          else None)
         self._rewinding = False
         sw, sh = self.ctx.screen_size
-        box_h = 230
+        # Accessibility text-size: scale the box height with the font so larger
+        # text still fits; the portrait + quick-bar positions below derive from
+        # box_h, so they follow automatically.
+        text_scale = max(1.0, min(1.4, getattr(self.ctx.config, "text_scale", 1.0)))
+        box_h = int(230 * text_scale)
         margin = 32
         # ADV uses the bottom dialogue box; NVL uses a tall transcript panel.
         # Both expose the same set_line/force_reveal/fully_revealed/update/draw
@@ -202,6 +206,7 @@ class DialogueScene(Scene):
                             sw - margin * 2, box_h),
                 fonts=self.ctx.fonts, theme=self.ctx.theme,
                 text_speed=self.ctx.config.text_speed,
+                text_scale=text_scale,
             )
         self.choices = ChoiceMenu(
             pygame.Rect(0, 0, sw, sh),

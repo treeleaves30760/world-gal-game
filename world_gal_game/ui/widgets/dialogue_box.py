@@ -18,11 +18,12 @@ from ..theme import Theme
 
 class DialogueBox(Widget):
     def __init__(self, rect: pygame.Rect, *, fonts: FontRegistry, theme: Theme,
-                 text_speed: float = 45.0):
+                 text_speed: float = 45.0, text_scale: float = 1.0):
         super().__init__(rect)
         self.fonts = fonts
         self.theme = theme
         self.text_speed = text_speed   # chars/sec; 0 = instant
+        self.text_scale = text_scale   # accessibility text-size multiplier
         self.panel = Panel(rect, theme,
                            fill=(*theme.bg_panel[:3], 240),
                            border=theme.border_strong,
@@ -35,8 +36,9 @@ class DialogueBox(Widget):
                                 rect.width - pad * 2 - 12,
                                 rect.height - pad * 2 - 16)
         self.body = RichText(body_rect, "",
-                             fonts=fonts, size=26,
-                             color=theme.text, line_spacing=10,
+                             fonts=fonts, size=int(26 * text_scale),
+                             color=theme.text,
+                             line_spacing=int(10 * text_scale),
                              text_speed=text_speed)
         self.speaker: str | None = None
         # Optional per-speaker name-plate colour (RGB tuple); None = theme accent.
@@ -81,9 +83,10 @@ class DialogueBox(Widget):
         if self.speaker:
             # Name-plate: a filled accent tab straddling the box's top edge —
             # the classic VN speaker label. Name in light text for contrast.
-            name = self.fonts.render(self.speaker, 22, self.theme.text, bold=True)
+            name = self.fonts.render(self.speaker, int(22 * self.text_scale),
+                                     self.theme.text, bold=True)
             plate_w = name.get_width() + 40
-            plate_h = 42
+            plate_h = int(42 * self.text_scale)
             px = self.rect.x + 30
             py = self.rect.y - plate_h // 2
             plate = pygame.Surface((plate_w, plate_h), pygame.SRCALPHA)
