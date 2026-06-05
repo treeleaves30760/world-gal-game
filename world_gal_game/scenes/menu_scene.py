@@ -136,6 +136,7 @@ class MenuScene(Scene):
         ]
 
         self._buttons: list[tuple] = []   # (Button, cx, cy)
+        self._focus: int = -1             # gamepad/keyboard focus; -1 = none
         self._labels: list[tuple] = []    # (text, size, bold, color, cx, cy)
         gap = 14
         col_w = (self._body_rect.width - gap) // 2
@@ -175,15 +176,40 @@ class MenuScene(Scene):
             return
         if self._body_rect.collidepoint(inp.mouse_pos):
             self._scroll_y -= int(inp.mouse_wheel) * 44
+        # Gamepad / keyboard focus: D-pad (inp.nav) walks the enabled buttons,
+        # A/Enter (inp.confirm) fires the focused one. Mouse users never touch
+        # _focus (stays -1), so the pointer path is unchanged.
+        enabled = [i for i, (b, _, _) in enumerate(self._buttons) if b.enabled]
+        if inp.nav and enabled:
+            if self._focus not in enabled:
+                self._focus = enabled[0] if inp.nav > 0 else enabled[-1]
+            else:
+                pos = (enabled.index(self._focus) + inp.nav) % len(enabled)
+                self._focus = enabled[pos]
+            # Scroll the focused row into view.
+            _b, _cx, fcy = self._buttons[self._focus]
+            bh = _b.rect.height
+            vis = self._body_rect.height
+            if fcy < self._scroll_y:
+                self._scroll_y = fcy
+            elif fcy + bh > self._scroll_y + vis:
+                self._scroll_y = fcy + bh - vis
+        if inp.confirm and 0 <= self._focus < len(self._buttons):
+            b = self._buttons[self._focus][0]
+            if b.enabled and b.on_click:
+                b.on_click()
+                return
         self._scroll_y = max(0, min(self._scroll_y, self._max_scroll()))
         self._reposition()
         self.close_btn.update(dt, inp)
         body = self._body_rect
-        for b, _cx, _cy in self._buttons:
+        for i, (b, _cx, _cy) in enumerate(self._buttons):
             if body.y <= b.rect.y and b.rect.bottom <= body.bottom:
                 b.update(dt, inp)
             else:
                 b._hover = False
+            if i == self._focus:
+                b._hover = True      # focus highlight (overrides mouse)
 
     def draw(self, surface: pygame.Surface) -> None:
         theme = self.ctx.theme
