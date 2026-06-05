@@ -246,6 +246,8 @@ class SettingsScene(Scene):
     def _adjust_sfx_volume(self, delta: float) -> None:
         new_v = max(0.0, min(1.0, round(self.ctx.config.sfx_volume + delta, 3)))
         self.ctx.config.sfx_volume = new_v
+        # Live-update the looping ambient bed (it rides the SFX bus at 0.55).
+        self.ctx.assets.set_ambient_volume(new_v * 0.55)
         self.ctx.config.save_to_disk()
 
     def _adjust_char_voice(self, npc_id: str, delta: float) -> None:

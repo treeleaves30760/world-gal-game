@@ -48,6 +48,12 @@ class AssetManager:
         # channel at init so auto-allocated SFX never steal it.
         self._voice_channel: pygame.mixer.Channel | None = None
         self._voice_volume: float = 1.0
+        # Reserved ambient channel (mixer Channel 3): one looping environment
+        # bed (room tone / rain / hum) under the BGM, switched per scene with a
+        # fade. Carry-over by path so unchanged scenes don't restart it.
+        self._ambient_channel: pygame.mixer.Channel | None = None
+        self._current_ambient: str | None = None
+        self._ambient_volume: float = 0.4
 
     def set_pack_root(self, pack_root: Path | None) -> None:
         """Tell the asset manager where to resolve pack-relative paths.
@@ -318,6 +324,67 @@ class AssetManager:
             except pygame.error:
                 pass
         self._current_music = None
+
+    def _ensure_ambient_channel(self) -> bool:
+        """Bind the reserved ambient channel (3). False if unavailable."""
+        if self._ambient_channel is not None:
+            return True
+        try:
+            self._ambient_channel = pygame.mixer.Channel(3)
+            return True
+        except pygame.error:
+            self._ambient_channel = None
+            return False
+
+    def play_ambient(self, path: str | None, *, volume: float = 0.4,
+                     fade_ms: int = 1000) -> None:
+        """Play a looping ambient bed on the reserved ambient channel.
+
+        Carry-over by path: re-issuing the same ambient (the common case, since
+        every line of a scene carries the scene's ambient) is a no-op, so it
+        doesn't restart each line. ``None`` means "no change" (carry the current
+        bed across scenes that don't declare one), NOT stop — use
+        :meth:`stop_ambient` for that. Silent no-op on missing file / mixer
+        error, so packs without ambient audio just stay quiet.
+        """
+        if path is None or path == self._current_ambient:
+            return
+        abs_path = self._resolve(path)
+        if abs_path is None or not Path(abs_path).exists():
+            return
+        if not self._ensure_ambient_channel():
+            return
+        snd = self.sound(path)
+        if snd is None:
+            return
+        self._ambient_volume = volume
+        try:
+            ch = self._ambient_channel
+            if ch.get_busy():
+                ch.fadeout(fade_ms)
+            ch.set_volume(volume)
+            ch.play(snd, loops=-1, fade_ms=fade_ms)
+            self._current_ambient = path
+        except pygame.error:
+            self._current_ambient = None
+
+    def stop_ambient(self, *, fade_ms: int = 1000) -> None:
+        """Fade out the ambient bed."""
+        if self._ambient_channel is not None:
+            try:
+                if self._ambient_channel.get_busy():
+                    self._ambient_channel.fadeout(fade_ms)
+            except pygame.error:
+                pass
+        self._current_ambient = None
+
+    def set_ambient_volume(self, volume: float) -> None:
+        self._ambient_volume = volume
+        if self._ambient_channel is not None:
+            try:
+                self._ambient_channel.set_volume(volume)
+            except pygame.error:
+                pass
 
     def set_music_volume(self, volume: float) -> None:
         """Set the live BGM volume (active crossfade channel or fallback stream);

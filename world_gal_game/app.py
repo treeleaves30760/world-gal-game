@@ -100,11 +100,12 @@ class GalGameApp:
         if not headless:
             try:
                 pygame.mixer.init()
-                # Reserve channel 0 for per-line voice and channels 1-2 for the
-                # two-stream BGM crossfade, so auto-allocated SFX never steal
-                # them; 8 total mixing channels is plenty for a VN.
+                # Reserve channel 0 for per-line voice, channels 1-2 for the
+                # two-stream BGM crossfade, and channel 3 for the looping
+                # ambient bed, so auto-allocated SFX never steal them; 8 total
+                # mixing channels is plenty for a VN.
                 pygame.mixer.set_num_channels(8)
-                pygame.mixer.set_reserved(3)
+                pygame.mixer.set_reserved(4)
             except pygame.error:
                 # Fine in CI / no-audio environments.
                 pass

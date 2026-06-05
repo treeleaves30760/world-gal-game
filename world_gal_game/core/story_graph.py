@@ -98,6 +98,7 @@ class Line(BaseModel):
     cg: str | None = None            # full-screen CG to display
     sfx: str | None = None
     bgm: str | None = None
+    ambient: str | None = None       # switch the looping environment bed
     voice: str | None = None         # per-line voice clip (played on a reserved channel)
     effects: list[Effect] = Field(default_factory=list)
     requires: list[Condition] = Field(default_factory=list)
@@ -115,6 +116,7 @@ class Scene(BaseModel):
     location: str | None = None
     background: str | None = None
     bgm: str | None = None
+    ambient: str | None = None       # looping environment bed (room tone / rain)
     cg: str | None = None            # scene-wide CG; individual line.cg overrides
     lines: list[Line] = Field(default_factory=list)
     choices: list[Choice] = Field(default_factory=list)

@@ -30,6 +30,9 @@ class TitleScene(Scene):
         self.title_text = title or self.title_text
         self.subtitle_text = subtitle or self.subtitle_text
         self.version_text = version
+        # Stop any in-game ambient bed so a scene's room-tone/hum doesn't bleed
+        # under the title screen.
+        self.ctx.assets.stop_ambient(fade_ms=600)
         # Title BGM: play the pack's title track if one is set. A missing file
         # or an uninitialised mixer (headless) degrades to silence inside
         # play_music, so this is always safe to call.

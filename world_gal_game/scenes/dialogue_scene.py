@@ -586,10 +586,15 @@ class DialogueScene(Scene):
                     self._nvl_scene_id = cur_sid
             self.box.set_line(line.speaker, line.text,
                               speaker_color=self._speaker_color(line.speaker))
-            # SFX/BGM
+            # SFX/BGM/ambient. play_ambient carries over by path, so re-issuing
+            # the scene's bed every line is a no-op; it only fades when the bed
+            # actually changes.
             if line.bgm:
                 self.ctx.assets.play_music(
                     line.bgm, volume=self.ctx.config.bgm_volume)
+            if getattr(line, "ambient", None):
+                self.ctx.assets.play_ambient(
+                    line.ambient, volume=self.ctx.config.sfx_volume * 0.55)
             if line.sfx:
                 self.ctx.assets.play_sound(
                     line.sfx, volume=self.ctx.config.sfx_volume)

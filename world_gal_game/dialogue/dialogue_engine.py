@@ -62,6 +62,7 @@ class LinePresentation:
     cg: str | None = None
     background: str | None = None
     bgm: str | None = None
+    ambient: str | None = None
     sfx: str | None = None
     voice: str | None = None
     scene_id: str | None = None
@@ -117,6 +118,9 @@ class DialogueEngine:
             # would miss almost every track. Line-level cg/bgm unlock in
             # _present_line complements this.
             self.state.music_room.unlock(scene.bgm)
+        # Scene-level ambient bed carries until another scene changes it.
+        if scene.ambient:
+            self.state.meta["current_ambient"] = scene.ambient
         if scene.cg:
             self.state.cg_gallery.unlock(scene.cg)
         return self._present_current()
@@ -285,6 +289,8 @@ class DialogueEngine:
             effects_out = self.state.apply_all(line.effects)
         if line.bgm:
             self.state.meta["current_bgm"] = line.bgm
+        if line.ambient:
+            self.state.meta["current_ambient"] = line.ambient
         # Mark as read *before* pushing to history (order doesn't matter for
         # the ReadLog, but it's consistent with "user has now seen this").
         self.state.read_log.mark_line(scene.id, idx)
@@ -317,6 +323,7 @@ class DialogueEngine:
             cg=line.cg or scene.cg,
             background=scene.background,
             bgm=line.bgm or self.state.meta.get("current_bgm"),
+            ambient=line.ambient or self.state.meta.get("current_ambient"),
             sfx=line.sfx,
             voice=line.voice,
             scene_id=scene.id,
