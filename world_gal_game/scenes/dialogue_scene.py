@@ -687,8 +687,16 @@ class DialogueScene(Scene):
             # the scene's bed every line is a no-op; it only fades when the bed
             # actually changes.
             if line.bgm:
-                self.ctx.assets.play_music(
-                    line.bgm, volume=self.ctx.config.bgm_volume)
+                if line.bgm in ("none", "silence", "-"):
+                    # Sentinel: cut the music to silence — the Key/WA2
+                    # gut-punch move. stop_music() (a clean fade) already
+                    # exists in the asset layer but was unreachable from pack
+                    # content; a line's bgm carries forward as current_bgm, so
+                    # the silence persists until a later line names a track.
+                    self.ctx.assets.stop_music()
+                else:
+                    self.ctx.assets.play_music(
+                        line.bgm, volume=self.ctx.config.bgm_volume)
             if getattr(line, "ambient", None):
                 self.ctx.assets.play_ambient(
                     line.ambient, volume=self.ctx.config.sfx_volume * 0.55)

@@ -90,6 +90,10 @@ def _check_line_assets(raw_line: dict, *, file: str, path: str,
                        ("sfx", "音效"), ("bgm", "背景音樂")):
         ref = raw_line.get(fld)
         if isinstance(ref, str) and ref:
+            # ``bgm: none`` / ``silence`` / ``-`` is the cut-to-silence sentinel
+            # (routes to stop_music), not a file — don't flag it as missing.
+            if fld == "bgm" and ref in ("none", "silence", "-"):
+                continue
             resolved = _resolve_asset_path(ref, pack_root=pack_root)
             if resolved is not None and not resolved.exists():
                 issues.append(ValidationIssue(
