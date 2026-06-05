@@ -143,6 +143,7 @@ class SettingsScene(Scene):
             ("立繪壓暗非說話者", "dim_inactive_speakers",
              self._toggle_dim_speakers),
             ("立繪情緒反應", "auto_emote_on_emotion", self._toggle_auto_emote),
+            ("打字音效", "typewriter_sound", self._toggle_typewriter),
             ("NVL 模式", "nvl_mode", self._toggle_nvl),
         ]:
             on = bool(getattr(cfg, attr))
@@ -283,6 +284,12 @@ class SettingsScene(Scene):
     def _toggle_auto_emote(self) -> None:
         cfg = self.ctx.config
         cfg.auto_emote_on_emotion = not cfg.auto_emote_on_emotion
+        cfg.save_to_disk()
+        self._rebuild()
+
+    def _toggle_typewriter(self) -> None:
+        cfg = self.ctx.config
+        cfg.typewriter_sound = not cfg.typewriter_sound
         cfg.save_to_disk()
         self._rebuild()
 

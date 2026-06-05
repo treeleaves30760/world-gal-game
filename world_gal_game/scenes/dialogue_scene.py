@@ -49,6 +49,8 @@ class DialogueScene(Scene):
         # Skip / auto-play state
         self.auto_play_enabled: bool = False
         self._auto_play_timer: float = 0.0
+        # Typewriter blip throttle (plays a soft tick while text reveals).
+        self._blip_timer: float = 0.0
         # Skip is "held": pressing Ctrl latches it on, releasing latches it
         # off, so the on-screen SKIP indicator reflects an ongoing skip rather
         # than a single keypress. Mode (skip-read vs skip-all) is read from
@@ -1107,6 +1109,21 @@ class DialogueScene(Scene):
             return
         if self.box:
             self.box.update(dt, inp)
+        # Typewriter blip: a soft tick on a fixed throttle while the line is
+        # still revealing, so reading has texture instead of dead silence
+        # between BGM. Gated on a pack-provided blip asset + the user toggle;
+        # rides the SFX volume at half level. Degrades silently with no asset.
+        blip = getattr(self.ctx.config, "text_blip", None)
+        if (blip and getattr(self.ctx.config, "typewriter_sound", True)
+                and self.box is not None and self._current_line is not None
+                and not self.box.fully_revealed()):
+            self._blip_timer += dt
+            if self._blip_timer >= 0.055:
+                self._blip_timer = 0.0
+                self.ctx.assets.play_sound(
+                    blip, volume=self.ctx.config.sfx_volume * 0.5)
+        else:
+            self._blip_timer = 0.0
         if self.portrait:
             self.portrait.update(dt, inp)
         # advance on click/space — but only if click isn't on a button etc.

@@ -166,6 +166,8 @@ class GalGameApp:
             self.config.subtitle = self.meta["subtitle"]
         if "text_speed" in self.meta:
             self.config.text_speed = float(self.meta["text_speed"])
+        # Pack-provided typewriter blip asset (played softly while text reveals).
+        self.config.text_blip = self.meta.get("text_blip")
 
         # Promote a plugin-registered brain if meta.yaml names one. Caller-
         # supplied brain (constructor kwarg) takes precedence — that's the

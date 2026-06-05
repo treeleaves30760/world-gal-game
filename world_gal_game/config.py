@@ -32,6 +32,7 @@ _PERSISTED_SETTING_FIELDS: tuple[str, ...] = (
     "rollback_enabled",
     "dim_inactive_speakers",
     "auto_emote_on_emotion",
+    "typewriter_sound",
     "per_character_voice_volume",
     "autosave_enabled",
     "autosave_slot_count",
@@ -182,6 +183,13 @@ class EngineConfig:
 
     # text speed (chars/sec); 0 = instant
     text_speed: float = 45.0
+
+    # Optional typewriter "blip" sound (a pack asset path, set from meta), played
+    # softly while dialogue text reveals. Not a user preference (it's a pack
+    # asset), so it is NOT persisted; the toggle below is.
+    text_blip: str | None = None
+    # User toggle for the typewriter blip (divisive — some players dislike it).
+    typewriter_sound: bool = True
 
     # seconds between auto-advances when auto-play mode is on
     auto_play_delay: float = 2.5
