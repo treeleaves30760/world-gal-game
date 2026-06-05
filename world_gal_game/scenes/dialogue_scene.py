@@ -335,6 +335,41 @@ class DialogueScene(Scene):
             image=still,
         )
 
+    def _apply_npc_backend(self, spec: PortraitSpec | None) -> PortraitSpec | None:
+        """Route an explicit portrait spec through its character's resting
+        backend when the spec doesn't name one itself.
+
+        Packs stage heroines with ``portrait: {character, expression}`` specs,
+        which default to ``backend: "static"`` — so those lines used to render as
+        dead stills even when the NPC declares a ``portrait_backend`` (breath /
+        layered). This pins the exact same still the static path would show and
+        only adds the resting animation, so explicitly-staged portraits breathe
+        like the expression-only ones. A spec that names its own backend, or a
+        character with no declared backend, is returned unchanged.
+        """
+        if spec is None or (spec.backend and spec.backend != "static"):
+            return spec
+        npcs = getattr(self.ctx, "npcs", None)
+        npc = npcs.get(spec.character) if npcs is not None \
+            and hasattr(npcs, "get") else None
+        if npc is None:
+            return spec
+        backend = getattr(npc, "portrait_backend", "static") or "static"
+        if backend == "static":
+            return spec
+        still = spec.image
+        if not still and hasattr(npc, "portrait_for"):
+            try:
+                still = npc.portrait_for(spec.expression)
+            except Exception:
+                still = None
+        npc_args = dict(getattr(npc, "portrait_backend_args", {}) or {})
+        return spec.model_copy(update={
+            "backend": backend,
+            "backend_args": {**npc_args, **(spec.backend_args or {})},
+            "image": still,
+        })
+
     @staticmethod
     def _spec_has_staging(spec: PortraitSpec | None) -> bool:
         """True when a spec uses any non-neutral staging field.
@@ -486,6 +521,7 @@ class DialogueScene(Scene):
                 "right": (None, None, None),
             }
             for spec in line.portraits:
+                spec = self._apply_npc_backend(spec)
                 surf, backend = self._resolve_slot(spec, sw, sh)
                 wanted[spec.slot] = (surf, spec, backend)
                 # The slot whose character is speaking drives lip-sync + speaker
@@ -494,14 +530,20 @@ class DialogueScene(Scene):
                 if speaker and spec.character in (speaker, speaker_id):
                     self._speaking_slot = spec.slot
             for slot, (surf, spec, backend) in wanted.items():
+                # Unchanged portrait: keep the live backend instance so its
+                # breathing phase stays continuous across consecutive lines
+                # instead of resetting (the per-line stutter) every line.
+                if (spec is not None and spec == self._slot_specs.get(slot)
+                        and self._slot_backends.get(slot) is not None):
+                    continue
                 self._slot_backends[slot] = backend
                 self._start_slot_transition(slot, surf, spec, sw, sh)
         else:
             # Single-portrait / legacy path goes to center; clear other slots.
             if isinstance(line.portrait, PortraitSpec):
+                center_spec = self._apply_npc_backend(line.portrait)
                 center_surf, center_backend = self._resolve_slot(
-                    line.portrait, sw, sh)
-                center_spec = line.portrait
+                    center_spec, sw, sh)
             else:
                 center_spec = self._character_backend_spec(line)
                 if center_spec is not None:
@@ -511,11 +553,19 @@ class DialogueScene(Scene):
                     center_surf = self._surface_for_portrait(
                         line.portrait, line.speaker, line.expression)
                     center_backend = None
-            self._slot_backends["center"] = center_backend
             # Single portrait == the speaker on screen, so it drives lip-sync.
             if center_surf is not None and speaker:
                 self._speaking_slot = "center"
-            self._start_slot_transition("center", center_surf, center_spec, sw, sh)
+            # Unchanged portrait: keep the live backend instance (continuous
+            # breathing) rather than re-spawning and resetting it every line.
+            if (center_spec is not None
+                    and center_spec == self._slot_specs.get("center")
+                    and self._slot_backends.get("center") is not None):
+                pass
+            else:
+                self._slot_backends["center"] = center_backend
+                self._start_slot_transition(
+                    "center", center_surf, center_spec, sw, sh)
             self._slot_backends["left"] = None
             self._start_slot_transition("left", None, None, sw, sh)
             self._slot_backends["right"] = None
