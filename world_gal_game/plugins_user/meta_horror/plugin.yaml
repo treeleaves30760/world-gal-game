@@ -1,0 +1,38 @@
+id: meta_horror
+name: Meta Horror
+version: 0.1.0
+description: |
+  Fourth-wall / meta-narrative toolkit — the DDLC seam. Inline ops let a
+  character glitch the screen ([[glitch]]), address the player by their real OS
+  account name ([[whoami]]), and corrupt the dialogue text ([[corrupt:...]]),
+  plus a `glitch` effect form. Web-safe, deterministic (rollback-replays
+  cleanly), touches no files. For ghost-story / psychological packs where the
+  engine itself is part of the horror.
+author: World Gal-Game
+engine_version: ">=0.1.0"
+depends: []
+entry_module: plugin
+
+extends:
+  effects:
+    - kind: glitch
+      description: Corruption burst (screen shake + magenta/cyan chromatic flash).
+      signature:
+        value: "dict {intensity:float?}"
+  dialogue_ops:
+    - kind: glitch
+      description: "[[glitch]] / [[glitch:1.4]] — corruption burst (intensity arg)."
+    - kind: whoami
+      description: "[[whoami]] — the player's real OS account name (it knows you)."
+    - kind: corrupt
+      description: "[[corrupt:text]] — glitch-corrupt the given text."
+
+side_effects:
+  reads_filesystem: false
+  writes_filesystem: false
+  network: false
+  subprocess: false
+
+tags:
+  - meta
+  - horror
