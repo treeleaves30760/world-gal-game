@@ -108,6 +108,15 @@ class GalGameApp:
             except pygame.error:
                 # Fine in CI / no-audio environments.
                 pass
+            # Gamepad: open every connected controller so its JOY* events flow
+            # (InputState maps A→advance/confirm, B→cancel, D-pad→menu nav).
+            # Steam Deck / Steam Input present as a virtual pad here.
+            try:
+                pygame.joystick.init()
+                for _ji in range(pygame.joystick.get_count()):
+                    pygame.joystick.Joystick(_ji).init()
+            except pygame.error:
+                pass
         # ----- logical canvas + (optional) real window -----
         # Everything draws to ``self.screen`` at the fixed design resolution
         # (config.screen_size). In windowed mode we scale-blit that canvas onto
