@@ -640,7 +640,9 @@ class GalGameApp:
                 f"{self.state.time.label()} · "
                 f"{(loc.name if loc else '無位置')}"
             )
-            label = f"{self.localization.t('quicksave', '快速存檔')} {summary}"
+            # Clean slot title — the card already shows a 快速 badge + the
+            # summary line, so don't repeat the summary in the label.
+            label = self.state.player.name or self.localization.t('quicksave', '快速存檔')
             payload = self.state.model_dump(mode="json")
             from .plugins import fire_event
             from .plugins.context import HookEvent

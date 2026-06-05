@@ -228,10 +228,12 @@ class SaveScene(Scene):
                 f"{self.ctx.state.time.label()} · "
                 f"{(loc.name if loc else '無位置')}"
             )
+            # Clean slot title (the card already shows the summary line +
+            # timestamp separately, so don't embed the summary in the label).
             label = (
                 item.get("label")
                 if item.get("slot")
-                else f"存檔 {summary}"
+                else (self.ctx.state.player.name or "存檔")
             )
             # Grab current screen as thumbnail when the callback is available.
             thumbnail = None

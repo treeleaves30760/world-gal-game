@@ -87,13 +87,15 @@ def _write_autosave(state) -> None:
         # the save round-trips back into GameState (mirrors save_scene).
         payload = state.model_dump(mode="json")
 
-        # Build a human label/summary like the manual save path does.
+        # Build a human label/summary like the manual save path does. The save
+        # card shows a 自動 badge + the summary line separately, so the label is
+        # a clean slot title (the protagonist's name), not a repeat of summary.
         loc = state.map.current
         try:
             summary = f"{state.time.label()} · {(loc.name if loc else '無位置')}"
         except Exception:
             summary = ""
-        label = f"自動存檔 {summary}".strip()
+        label = (getattr(state.player, "name", "") or "自動存檔").strip()
 
         # Optional thumbnail from the current screen, if the app exposed one.
         thumbnail = None
