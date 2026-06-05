@@ -848,6 +848,13 @@ class DialogueScene(Scene):
 
     def _spawn_visual_fx(self, d: dict) -> None:
         fx = d.get("fx")
+        # Accessibility (reduce_motion): drop the camera moves, shake, flash and
+        # blur — the motion-sickness / photosensitivity triggers. Atmospheric
+        # tints, CG swaps and the gentle scene crossfade are kept (not triggers).
+        if getattr(self.ctx.config, "reduce_motion", False) and fx in (
+                "camera_pan", "camera_zoom", "screen_shake",
+                "screen_flash", "screen_blur"):
+            return
         if fx == "camera_pan":
             self._camera.pan_to(d.get("x", 0.0), d.get("y", 0.0),
                                 duration=d.get("duration", 0.6),

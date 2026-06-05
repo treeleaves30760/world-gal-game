@@ -172,6 +172,17 @@ class SettingsScene(Scene):
             self._buttons.append((b, 4, cy))
             cy += 50
 
+        # --- accessibility -------------------------------------------------
+        section("輔助使用")
+        rm_on = bool(cfg.reduce_motion)
+        rm_btn = self._mk(300, 42, self._toggle_label("減少動態效果", rm_on),
+                          self._toggle_reduce_motion,
+                          style="primary" if rm_on else "ghost")
+        self._buttons.append((rm_btn, 4, cy))
+        self._labels.append(("關閉鏡頭推移／震動／閃光（暈眩・光敏）", 13, False,
+                             theme.text_mute, 4, cy + 46))
+        cy += 50 + 22
+
         # --- per-character voice volume -----------------------------------
         try:
             npcs = self.ctx.npcs.all() if self.ctx.npcs is not None else []
@@ -314,6 +325,12 @@ class SettingsScene(Scene):
     def _toggle_dim_speakers(self) -> None:
         cfg = self.ctx.config
         cfg.dim_inactive_speakers = not cfg.dim_inactive_speakers
+        cfg.save_to_disk()
+        self._rebuild()
+
+    def _toggle_reduce_motion(self) -> None:
+        cfg = self.ctx.config
+        cfg.reduce_motion = not cfg.reduce_motion
         cfg.save_to_disk()
         self._rebuild()
 

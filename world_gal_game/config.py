@@ -32,6 +32,7 @@ _PERSISTED_SETTING_FIELDS: tuple[str, ...] = (
     "rollback_enabled",
     "dim_inactive_speakers",
     "auto_emote_on_emotion",
+    "reduce_motion",
     "typewriter_sound",
     "ui_sound_enabled",
     "per_character_voice_volume",
@@ -182,6 +183,12 @@ class EngineConfig:
     # expressions with no procedural geometric motion. Authored emotes still
     # play; players who want the auto "acting" feel can enable 立繪情緒反應.
     auto_emote_on_emotion: bool = False
+
+    # Accessibility: when True, drop motion-sickness / photosensitivity triggers
+    # (camera pans/zooms, screen shake, flashes, blur). Atmospheric tints, CG
+    # swaps and the gentle scene crossfade are kept. Honoured in
+    # DialogueScene._spawn_visual_fx.
+    reduce_motion: bool = False
 
     # text speed (chars/sec); 0 = instant
     text_speed: float = 45.0
