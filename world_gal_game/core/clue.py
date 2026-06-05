@@ -45,6 +45,10 @@ class Clue(BaseModel):
     forbids: list[Condition] = Field(default_factory=list)
     # Higher is more important; sort key inside each section.
     priority: int = 0
+    # A "record" entry (a 異聞錄 page, not a forward hint): it surfaces *after*
+    # the thing it describes is done, so the journal tags it 已收錄 (in a warm
+    # collected tone) instead of the forward-looking 進行中.
+    record: bool = False
 
 
 class ClueTracker(BaseModel):

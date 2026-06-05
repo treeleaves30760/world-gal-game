@@ -93,7 +93,9 @@ class ClueLog(Widget):
             selected = clue.id == self._selected_id
             unread = (self._tracker is not None
                       and clue.id in self._tracker.unread)
-            base_color = (self.theme.accent if status == "active"
+            is_record = getattr(clue, "record", False) and status == "active"
+            base_color = (self.theme.accent_warm if is_record
+                          else self.theme.accent if status == "active"
                           else self.theme.text_dim)
             bg_alpha = 80 if selected else 24
             row_rect = pygame.Rect(self._PAD, y, w - self._PAD,
@@ -114,7 +116,9 @@ class ClueLog(Widget):
                          (row_rect.x + 12, row_rect.y + 8))
 
             # Status pill
-            pill_text = "進行中" if status == "active" else "已解開"
+            pill_text = ("已收錄" if is_record
+                         else "進行中" if status == "active"
+                         else "已解開")
             pill = self.fonts.render(pill_text, 12, base_color)
             surface.blit(pill, (row_rect.x + 12, row_rect.y + 32))
 
