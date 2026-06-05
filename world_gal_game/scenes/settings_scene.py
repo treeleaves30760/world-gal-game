@@ -15,6 +15,7 @@ import pygame
 
 from .base import Scene, SceneContext
 from ..ui.widgets import Button, Panel
+from ..ui.widgets.slider import Slider
 
 
 class SettingsScene(Scene):
@@ -35,6 +36,12 @@ class SettingsScene(Scene):
         return Button(pygame.Rect(0, 0, w, h), label,
                       fonts=self.ctx.fonts, theme=self.ctx.theme,
                       font_size=font_size, style=style, on_click=on_click)
+
+    def _add_volume_slider(self, cy: int, on_change, getter) -> None:
+        s = Slider(pygame.Rect(0, 0, 360, 28), getter(),
+                   fonts=self.ctx.fonts, theme=self.ctx.theme,
+                   on_change=on_change)
+        self._sliders.append((s, 310, cy + 6, getter))
 
     def enter(self, *, on_close=None, **_) -> None:
         self.on_close = on_close
@@ -70,6 +77,10 @@ class SettingsScene(Scene):
         self._labels: list[tuple] = []   # (text, size, bold, color, cx, cy)
         self._values: list[tuple] = []   # (fn->str, size, color, cx, cy)
         self._buttons: list[tuple] = []  # (Button, cx, cy)
+        # (Slider, cx, cy, getter): a draggable level bar beside each volume's
+        # -/+ steppers. getter re-syncs the knob when a stepper moves the value.
+        self._sliders: list[tuple] = []
+        self._was_dragging = False
         cy = 4
 
         def section(title: str) -> None:
@@ -113,6 +124,8 @@ class SettingsScene(Scene):
                             font_size=20)
         self._buttons.append((bgm_minus, 200, cy))
         self._buttons.append((bgm_plus, 250, cy))
+        self._add_volume_slider(cy, self._apply_bgm,
+                                lambda: self.ctx.config.bgm_volume)
         cy += 52
         # Voice row
         self._labels.append(("語音", 16, False, theme.text, 4, cy + 8))
@@ -123,6 +136,8 @@ class SettingsScene(Scene):
                           font_size=20)
         self._buttons.append((v_minus, 200, cy))
         self._buttons.append((v_plus, 250, cy))
+        self._add_volume_slider(cy, self._apply_voice,
+                                lambda: self.ctx.config.voice_volume)
         cy += 52
         # SFX row
         self._labels.append(("音效", 16, False, theme.text, 4, cy + 8))
@@ -133,6 +148,8 @@ class SettingsScene(Scene):
                            font_size=20)
         self._buttons.append((se_minus, 200, cy))
         self._buttons.append((se_plus, 250, cy))
+        self._add_volume_slider(cy, self._apply_sfx,
+                                lambda: self.ctx.config.sfx_volume)
         cy += 52 + 14
 
         # --- playback toggles ---------------------------------------------
@@ -251,6 +268,20 @@ class SettingsScene(Scene):
         self.ctx.assets.set_ambient_volume(new_v * 0.55)
         self.ctx.config.save_to_disk()
 
+    # Absolute live-apply for the sliders (no disk write per drag frame — the
+    # scene saves once when the drag ends, see update()).
+    def _apply_bgm(self, v: float) -> None:
+        self.ctx.config.bgm_volume = max(0.0, min(1.0, round(v, 3)))
+        self.ctx.assets.set_music_volume(self.ctx.config.bgm_volume)
+
+    def _apply_voice(self, v: float) -> None:
+        self.ctx.config.voice_volume = max(0.0, min(1.0, round(v, 3)))
+        self.ctx.assets._voice_volume = self.ctx.config.voice_volume
+
+    def _apply_sfx(self, v: float) -> None:
+        self.ctx.config.sfx_volume = max(0.0, min(1.0, round(v, 3)))
+        self.ctx.assets.set_ambient_volume(self.ctx.config.sfx_volume * 0.55)
+
     def _adjust_char_voice(self, npc_id: str, delta: float) -> None:
         cur = self._char_voice_volume(npc_id)
         new_v = max(0.0, min(1.0, round(cur + delta, 3)))
@@ -323,6 +354,8 @@ class SettingsScene(Scene):
         body = self._body_rect
         for b, cx, cy in self._buttons:
             b.rect.topleft = (body.x + cx, body.y + cy - self._scroll_y)
+        for s, cx, cy, _g in self._sliders:
+            s.rect.topleft = (body.x + cx, body.y + cy - self._scroll_y)
 
     def update(self, dt: float, inp) -> None:
         if inp.cancel and self.on_close:
@@ -366,6 +399,18 @@ class SettingsScene(Scene):
                 b._hover = False
             if i == self._focus:
                 b._hover = True      # focus highlight (overrides mouse)
+        # Sliders: re-sync the knob to config (so a -/+ press moves it), drive
+        # drag, and persist once when a drag releases (not every frame).
+        dragging = False
+        for s, _cx, _cy, getter in self._sliders:
+            if not s._dragging:
+                s.set_value(getter())
+            if body.y <= s.rect.y and s.rect.bottom <= body.bottom:
+                s.update(dt, inp)
+            dragging = dragging or s._dragging
+        if self._was_dragging and not dragging:
+            self.ctx.config.save_to_disk()
+        self._was_dragging = dragging
 
     def draw(self, surface: pygame.Surface) -> None:
         theme = self.ctx.theme
@@ -397,6 +442,9 @@ class SettingsScene(Scene):
         for b, _cx, _cy in self._buttons:
             if b.rect.bottom >= body.y and b.rect.y <= body.bottom:
                 b.draw(surface)
+        for s, _cx, _cy, _g in self._sliders:
+            if s.rect.bottom >= body.y and s.rect.y <= body.bottom:
+                s.draw(surface)
         surface.set_clip(prev_clip)
 
         # scrollbar
