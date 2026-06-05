@@ -502,6 +502,14 @@ class DialogueScene(Scene):
                 self._slot_fades[_s] = None
                 self._slot_anims[_s] = None
                 self._slot_expr[_s] = None
+            # Weather is scene-scoped too: drop any ambient overlay so a scene's
+            # dust/rain doesn't leak into the next. A new scene's first line that
+            # carries a set_weather effect re-applies it from the fx queue this
+            # same frame, so opted-in scenes are unaffected.
+            if self._ambient is not None:
+                self._ambient = None
+                self._ambient_name = None
+                self._ambient_fade_dir = 0
         # Pure narration (no portrait + no speaker-backed sprite + no speaker):
         # keep whatever is already on screen so a character stays put while the
         # narrator describes the scene, instead of popping out every narration
