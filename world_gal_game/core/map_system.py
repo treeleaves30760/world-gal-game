@@ -129,6 +129,8 @@ class Location(BaseModel):
     description: str = ""
     background: str | None = None                          # default fallback bg path
     backgrounds: dict[str, str] = Field(default_factory=dict)  # time-of-day -> path
+    ambient: str | None = None    # default looping room-tone for scenes here that
+                                  # set no ambient of their own (DialogueEngine fallback)
     map_x: int = 0   # position on the world map view
     map_y: int = 0
     exits: list[Exit] = Field(default_factory=list)

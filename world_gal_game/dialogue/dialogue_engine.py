@@ -118,9 +118,16 @@ class DialogueEngine:
             # would miss almost every track. Line-level cg/bgm unlock in
             # _present_line complements this.
             self.state.music_room.unlock(scene.bgm)
-        # Scene-level ambient bed carries until another scene changes it.
+        # Scene-level ambient bed carries until another scene changes it. When a
+        # scene sets none, fall back to its location's default room-tone, so every
+        # scene at a place inherits that place's ambient with no per-scene authoring
+        # (the 演出 audit's "silence is the loudest tell in a daily" fix).
         if scene.ambient:
             self.state.meta["current_ambient"] = scene.ambient
+        elif scene.location:
+            loc = self.state.map.locations.get(scene.location)
+            if loc is not None and loc.ambient:
+                self.state.meta["current_ambient"] = loc.ambient
         if scene.cg:
             self.state.cg_gallery.unlock(scene.cg)
         return self._present_current()
