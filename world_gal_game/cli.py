@@ -882,10 +882,16 @@ def smoke_main(argv: list[str]) -> int:
     else:
         for r in report.results:
             status = "ok " if r.ok else "FAIL"
-            print(f"[{status}] {r.script}  ({r.duration_s:.2f}s, "
-                  f"ending={r.ending_flag})")
+            if r.criterion == "assert":
+                detail = f"asserts={r.asserts_passed}/{r.asserts_total}"
+            else:
+                detail = f"ending={r.ending_flag}"
+            print(f"[{status}] {r.script}  ({r.duration_s:.2f}s, {detail})")
             for err in r.errors:
                 print(f"        ! {err}")
+            for fa in r.failed_asserts:
+                print(f"        ✗ assert #{fa['index']}: {fa['assert']} "
+                      f"(actual={fa['actual']!r})")
         print()
         passed = sum(1 for r in report.results if r.ok)
         print(f"smoke: {passed}/{len(report.results)} passed")
@@ -955,6 +961,12 @@ def self_check_main(argv: list[str]) -> int:
                                 description="Full 5-stage pack verification.")
     p.add_argument("pack", help="path to the pack directory")
     p.add_argument("--skip-smoke", action="store_true")
+    p.add_argument("--skip-reachability", action="store_true",
+                   help="skip the organic ending-reachability (strand) stage")
+    p.add_argument("--reachability-budget", type=float, default=30.0,
+                   help="per-ending wall-clock budget (s) for the strand search")
+    p.add_argument("--reachability-max-nodes", type=int, default=700,
+                   help="per-ending node cap for the strand search")
     p.add_argument("--include-visual", action="store_true",
                    help="also run the visual stage (off by default)")
     p.add_argument("--no-stop-on-failure", action="store_true",
@@ -973,6 +985,9 @@ def self_check_main(argv: list[str]) -> int:
         stop_on_failure=not args.no_stop_on_failure,
         skip_smoke=args.skip_smoke,
         skip_visual=not args.include_visual,
+        skip_reachability=args.skip_reachability,
+        reachability_max_nodes=args.reachability_max_nodes,
+        reachability_time_budget_s=args.reachability_budget,
     )
     report = sc.run()
     if args.format == "json":

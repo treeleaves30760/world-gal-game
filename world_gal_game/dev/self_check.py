@@ -1,16 +1,20 @@
-"""SelfCheck — the integrated 5-stage pack verification pipeline.
+"""SelfCheck — the integrated pack verification pipeline.
 
 Stages, in order:
 
 1. **schema** — `validator.validate_pack` (pydantic + extra-field checks)
 2. **refs** — same `validate_pack` pass collects cross-file ref errors
 3. **dead_ends** — `PackInspector.dead_ends()` (orphan / unreachable / no-op)
-4. **smoke** — `SmokeRunner.run()` (replays every `scripts/test_*.json`)
-5. **visual** — `VisualCheck.run()` (optional, requires SDL working)
+4. **reachability** — `EndingReachabilityChecker` (organic, start-to-finish
+   strand guard: can ordinary play reach each declared ending / route-terminal
+   ending? — catches a route that strands mid-arc, which from-anywhere
+   reachability and the smoke runner both miss)
+5. **smoke** — `SmokeRunner.run()` (replays every `scripts/test_*.json`)
+6. **visual** — `VisualCheck.run()` (optional, requires SDL working)
 
 Earlier stages gate later ones (default ``stop_on_failure=True``): if the
-schema check finds errors we don't bother running the smoke or visual
-stages, since broken YAML almost certainly breaks those too.
+schema check finds errors we don't bother running the later stages, since
+broken YAML almost certainly breaks those too.
 
 Output is a :class:`SelfCheckReport` — JSON-friendly, machine-parseable
 for CI gates and AI agents.
@@ -37,7 +41,8 @@ from typing import Any, Literal
 _log = logging.getLogger("world_gal_game.dev.self_check")
 
 
-StageName = Literal["schema", "refs", "dead_ends", "smoke", "visual"]
+StageName = Literal[
+    "schema", "refs", "dead_ends", "reachability", "smoke", "visual"]
 
 
 @dataclass
@@ -81,13 +86,24 @@ class SelfCheck:
     def __init__(self, pack_root: Path | str,
                  *, stop_on_failure: bool = True,
                  skip_smoke: bool = False,
-                 skip_visual: bool = True) -> None:
+                 skip_visual: bool = True,
+                 skip_reachability: bool = False,
+                 reachability_max_nodes: int = 700,
+                 reachability_max_depth: int = 120,
+                 reachability_time_budget_s: float = 30.0) -> None:
         self.pack_root = Path(pack_root).resolve()
         self.stop_on_failure = stop_on_failure
         # Smoke runs always, visual defaults to off (it needs a working SDL +
         # baselines, and CI doesn't always have those — opt in explicitly).
         self.skip_smoke = skip_smoke
         self.skip_visual = skip_visual
+        # Reachability (the strand guard) runs by default; it is bounded so a CI
+        # run stays cheap. The budget is per ending — see
+        # ``EndingReachabilityChecker.check_all``.
+        self.skip_reachability = skip_reachability
+        self.reachability_max_nodes = reachability_max_nodes
+        self.reachability_max_depth = reachability_max_depth
+        self.reachability_time_budget_s = reachability_time_budget_s
 
     # ------------------------------------------------------------------
     # Run
@@ -110,7 +126,19 @@ class SelfCheck:
         if self._should_stop(de, report):
             return report
 
-        # Stage 4: smoke routes
+        # Stage 4: reachability (organic strand guard)
+        if self.skip_reachability:
+            report.stages.append(StageResult(
+                name="reachability", ok=True, skipped=True,
+                summary="reachability stage skipped",
+            ))
+        else:
+            reach = self._run_reachability()
+            report.stages.append(reach)
+            if self._should_stop(reach, report):
+                return report
+
+        # Stage 5: smoke routes
         if self.skip_smoke:
             report.stages.append(StageResult(
                 name="smoke", ok=True, skipped=True,
@@ -122,7 +150,7 @@ class SelfCheck:
             if self._should_stop(smoke, report):
                 return report
 
-        # Stage 5: visual (optional)
+        # Stage 6: visual (optional)
         if self.skip_visual:
             report.stages.append(StageResult(
                 name="visual", ok=True, skipped=True,
@@ -223,6 +251,53 @@ class SelfCheck:
             details=rep.to_dict(),
         )
 
+    def _run_reachability(self) -> StageResult:
+        """Organic ending-reachability — the strand guard.
+
+        ``strand`` verdicts (provably / by-exhaustion unreachable endings) fail
+        the stage. ``unverified`` verdicts (the bounded organic search ran out
+        of budget, or a route had no lock-in flag to seed precisely) are surfaced
+        as a warning but do **not** fail the stage — degrade gracefully rather
+        than emit a false failure. A pack that declares no endings is skipped.
+        """
+        from .reachability import EndingReachabilityChecker
+        try:
+            chk = EndingReachabilityChecker(self.pack_root)
+            results = chk.check_all(
+                max_nodes=self.reachability_max_nodes,
+                max_depth=self.reachability_max_depth,
+                time_budget_s=self.reachability_time_budget_s)
+        except Exception as exc:
+            return StageResult(
+                name="reachability", ok=False,
+                summary=f"reachability check raised: {exc}",
+                details={"error": str(exc)},
+            )
+        if not results:
+            return StageResult(
+                name="reachability", ok=True, skipped=True,
+                summary="no declared endings; skipped",
+            )
+        strands = [r for r in results if r.status == "strand"]
+        unverified = [r for r in results if r.status == "unverified"]
+        ok_count = sum(1 for r in results if r.status == "ok")
+        ok = not strands
+        if strands:
+            summary = (f"{len(strands)} strand(s): "
+                       + ", ".join(r.ending_id for r in strands))
+        else:
+            summary = (f"{ok_count}/{len(results)} ending(s) reachable"
+                       + (f", {len(unverified)} unverified"
+                          if unverified else ""))
+        return StageResult(
+            name="reachability", ok=ok, summary=summary,
+            details={
+                "strands": [r.to_dict() for r in strands],
+                "unverified": [r.to_dict() for r in unverified],
+                "reachable": [r.to_dict() for r in results if r.status == "ok"],
+            },
+        )
+
     def _run_visual(self) -> StageResult:
         from .visual_check import VisualCheck
         try:
@@ -269,6 +344,7 @@ class SelfCheck:
 
     @staticmethod
     def _downstream_of(name: StageName) -> list[StageName]:
-        order: list[StageName] = ["schema", "refs", "dead_ends", "smoke", "visual"]
+        order: list[StageName] = [
+            "schema", "refs", "dead_ends", "reachability", "smoke", "visual"]
         idx = order.index(name)
         return order[idx + 1:]

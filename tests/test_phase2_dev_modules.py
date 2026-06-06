@@ -179,13 +179,19 @@ def test_self_check_demo_pack_passes():
         sc = SelfCheck("games/demo_pack", skip_visual=True)
         rep = sc.run()
         assert rep.ok
-        # All five stages present (visual reports skipped)
+        # All stages present (visual reports skipped)
         names = [s.name for s in rep.stages]
         assert "schema" in names
         assert "refs" in names
         assert "dead_ends" in names
+        assert "reachability" in names
         assert "smoke" in names
         assert "visual" in names
+        # The strand guard must not false-flag demo's routes (they reach their
+        # endings); it may leave best-effort routes "unverified" but never fails.
+        reach = next(s for s in rep.stages if s.name == "reachability")
+        assert reach.ok
+        assert not reach.details.get("strands")
     finally:
         restore(snap)
 
