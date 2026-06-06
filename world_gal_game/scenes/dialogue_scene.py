@@ -420,13 +420,22 @@ class DialogueScene(Scene):
         if old_surf is new_surf and old_spec is new_spec:
             return
 
+        # Accessibility (reduce_motion): a sliding / rising / popping / bouncing
+        # entrance is a vestibular trigger, so when the setting is on we drop the
+        # translation and settle the slot with a plain alpha crossfade instead —
+        # the same "keep the gentle dissolve, drop the motion" rule the camera /
+        # scene FX use. The portrait still appears (and at its staged rect via
+        # the crossfade), it just doesn't travel.
+        reduce_motion = bool(getattr(
+            getattr(self.ctx, "config", None), "reduce_motion", False))
+
         animated = self._spec_has_staging(new_spec) or (
             old_spec is not None and old_spec.exit
             and old_spec.exit != "none"
         )
 
         if not animated:
-            if old_surf is None and new_surf is not None:
+            if old_surf is None and new_surf is not None and not reduce_motion:
                 # Genuine ENTRANCE (slot was empty): drift up + fade in, so a
                 # character *arrives* rather than just materialising. A one-time
                 # transition, not idle breathing — the baseline 演出 lift for
@@ -448,7 +457,18 @@ class DialogueScene(Scene):
 
         target = self._slot_rect(slot, sw, sh, new_spec)
         self._slot_fades[slot] = None
-        if new_surf is not None and new_spec is not None and new_spec.enter \
+        if reduce_motion:
+            # Honour the staged rect (offset/scale/flip) but drop the slide: a
+            # straight crossfade at the target rect, or a fade-out for a leave.
+            self._slot_anims[slot] = SlotAnimation(
+                kind="crossfade",
+                rect=(self._slot_rect(slot, sw, sh, old_spec)
+                      if new_surf is None and old_spec is not None else target),
+                duration=0.25, old=old_surf, new=new_surf,
+                flip=(new_spec.flip if new_spec else
+                      (old_spec.flip if old_spec else False)),
+            )
+        elif new_surf is not None and new_spec is not None and new_spec.enter \
                 and new_spec.enter != "none":
             self._slot_anims[slot] = SlotAnimation(
                 kind="enter", rect=target, duration=0.3,
@@ -578,37 +598,53 @@ class DialogueScene(Scene):
                 self._slot_backends[slot] = backend
                 self._start_slot_transition(slot, surf, spec, sw, sh)
         else:
-            # Single-portrait / legacy path goes to center; clear other slots.
+            # Single-portrait / legacy path. A bare string / expression goes to
+            # ``center`` unless the line carries ``portrait_pos`` (the author
+            # shorthand for placing the simple forms); an explicit spec is
+            # honoured at its own ``slot`` (so ``portrait: {character, slot:
+            # left}`` / ``{character, position: left}`` place it directly).
+            pos = getattr(line, "portrait_pos", None)
+            target_slot = pos if pos in ("left", "center", "right") else "center"
             if isinstance(line.portrait, PortraitSpec):
-                center_spec = self._apply_npc_backend(line.portrait)
-                center_surf, center_backend = self._resolve_slot(
-                    center_spec, sw, sh)
+                cur_spec = self._apply_npc_backend(line.portrait)
+                # An explicit spec's own slot wins; portrait_pos only overrides
+                # it when the spec left slot at the default centre.
+                if cur_spec.slot == "center" and target_slot != "center":
+                    cur_spec = cur_spec.model_copy(update={"slot": target_slot})
+                target_slot = cur_spec.slot
+                cur_surf, cur_backend = self._resolve_slot(cur_spec, sw, sh)
             else:
-                center_spec = self._character_backend_spec(line)
-                if center_spec is not None:
-                    center_surf, center_backend = self._resolve_slot(
-                        center_spec, sw, sh)
+                cur_spec = self._character_backend_spec(line)
+                if cur_spec is not None:
+                    if target_slot != "center":
+                        cur_spec = cur_spec.model_copy(
+                            update={"slot": target_slot})
+                    target_slot = cur_spec.slot
+                    cur_surf, cur_backend = self._resolve_slot(cur_spec, sw, sh)
                 else:
-                    center_surf = self._surface_for_portrait(
+                    cur_surf = self._surface_for_portrait(
                         line.portrait, line.speaker, line.expression)
-                    center_backend = None
+                    cur_backend = None
             # Single portrait == the speaker on screen, so it drives lip-sync.
-            if center_surf is not None and speaker:
-                self._speaking_slot = "center"
+            if cur_surf is not None and speaker:
+                self._speaking_slot = target_slot
             # Unchanged portrait: keep the live backend instance (continuous
             # breathing) rather than re-spawning and resetting it every line.
-            if (center_spec is not None
-                    and center_spec == self._slot_specs.get("center")
-                    and self._slot_backends.get("center") is not None):
+            if (cur_spec is not None
+                    and cur_spec == self._slot_specs.get(target_slot)
+                    and self._slot_backends.get(target_slot) is not None):
                 pass
             else:
-                self._slot_backends["center"] = center_backend
+                self._slot_backends[target_slot] = cur_backend
                 self._start_slot_transition(
-                    "center", center_surf, center_spec, sw, sh)
-            self._slot_backends["left"] = None
-            self._start_slot_transition("left", None, None, sw, sh)
-            self._slot_backends["right"] = None
-            self._start_slot_transition("right", None, None, sw, sh)
+                    target_slot, cur_surf, cur_spec, sw, sh)
+            # Clear whichever of the three slots this portrait did NOT take, so a
+            # single portrait never leaves a stale sprite in another slot.
+            for _other in ("left", "center", "right"):
+                if _other == target_slot:
+                    continue
+                self._slot_backends[_other] = None
+                self._start_slot_transition(_other, None, None, sw, sh)
         self._apply_auto_emotes()
 
     # Expression keywords that read as high-energy (→ a livelier emote) vs.

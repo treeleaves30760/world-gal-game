@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 Slot = Literal["left", "center", "right"]
 
@@ -34,11 +34,23 @@ class PortraitSpec(BaseModel):
       <character>.png
     """
 
+    # ``populate_by_name`` lets the canonical names still work while the
+    # author-friendly aliases below (``id`` for expression, ``position`` for
+    # slot) are also accepted — so ``portrait: {character: qingyi, id: smile,
+    # position: left}`` is just a friendlier spelling of the full spec.
+    model_config = ConfigDict(populate_by_name=True)
+
     character: str
-    expression: str = "default"
+    expression: str = Field(
+        default="default",
+        validation_alias=AliasChoices("expression", "id"),
+    )
     pose: str = "stand"
     outfit: str = "default"
-    slot: Slot = "center"
+    slot: Slot = Field(
+        default="center",
+        validation_alias=AliasChoices("slot", "position"),
+    )
     # Optional explicit image path. When set it is tried *first*, before the
     # naming convention below — so a portrait whose file doesn't follow the
     # convention (e.g. a character's default ``normal.png``) can still feed a

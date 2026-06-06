@@ -58,6 +58,7 @@ class LinePresentation:
     plain_text: str = ""            # markup stripped, for headless / history
     portrait: "str | PortraitSpec | None" = None
     portraits: list = field(default_factory=list)   # list[PortraitSpec], multi-character staging
+    portrait_pos: str | None = None                 # slot for the simple portrait forms
     expression: str | None = None
     cg: str | None = None
     background: str | None = None
@@ -326,6 +327,7 @@ class DialogueEngine:
             plain_text=plain,
             portrait=line.portrait,
             portraits=list(line.portraits),
+            portrait_pos=line.portrait_pos,
             expression=line.expression,
             cg=line.cg or scene.cg,
             background=scene.background,

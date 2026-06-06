@@ -426,6 +426,66 @@ uv run wgg capabilities --pack <pack>
 
 ---
 
+## 立繪定位與兩人同框（Portrait Staging）
+
+立繪可放在 **`left` / `center` / `right`** 三個定點（slot），同一行也可同時顯示多位
+角色（兩人同框、三人交會）。沒有指定時一律置中，**所有舊場景維持原樣**。
+
+### 玩家
+
+無操作 —— 由劇情編排決定。可在設定關閉「非說話者變暗」(`dim_inactive_speakers`)。
+
+### Pack 作者
+
+定位三種寫法（由簡到繁，皆向後相容）：
+
+```yaml
+# 1) 最簡：純表情 / 字串路徑 + portrait_pos（速記，不必寫完整 spec）
+- speaker: "林青衣"
+  text: "「我在左邊。」"
+  expression: smile
+  portrait_pos: left          # left / center / right（不寫 = center）
+
+# 2) spec + position 別名（id = expression、position = slot 的友善拼法）
+- speaker: "林青衣"
+  text: "「我在右邊。」"
+  portrait: {character: qingyi, id: smile, position: right}
+
+# 3) 完整 spec 的 slot 欄
+- speaker: "林青衣"
+  text: "「我在左邊。」"
+  portrait: {character: qingyi, expression: smile, slot: left}
+```
+
+兩人 / 多人同框 —— 用 `portraits:` 串列，各自帶 `slot`：
+
+```yaml
+- speaker: "林青衣"             # 說話者全亮，另一位自動變暗
+  text: "「湘湘，妳找的是樂譜館藏。」"
+  portraits:
+    - {character: qingyi,     expression: smile, slot: left, enter: fade}
+    - {character: xiangxiang, expression: shy,   slot: right, enter: fade}
+```
+
+說明：
+
+- **單一立繪會就位到自己的 `slot`**（含上面的 `position` / `portrait_pos`）；先前一律
+  置中，現在 `slot: left` 就真的在左。純字串路徑或純 `expression:`（無 `portrait_pos`）
+  仍置中，與舊內容**逐像素相同**。
+- **說話者強調**：多人同框時，目前說話者全亮，其餘 slot 變暗（去飽和 + 冷調壓暗）。
+  旁白行（無 speaker）不會壓暗任何人。可用 `dim_inactive_speakers: false` 關閉。
+- **入場演出**：角色第一次出現 / 換 slot 時會淡入並輕微上飄（`rise`）。`portraits` 的
+  每個 spec 也能指定 `enter`（`fade` / `slide_left` / `slide_right` / `bounce` / `pop`）
+  與 `exit`、`offset` / `scale` / `flip`。
+- **無障礙**：開啟 `reduce_motion` 時，入場的滑動 / 上飄 / 彈跳一律退化為單純淡入
+  （位置仍正確），不做位移 —— 與相機 / 螢幕特效的減動規則一致。
+- **CG 抑制**：整頁 CG（`show_cg` 或 scene/line 的 `cg`）顯示時，**站立立繪不另外繪製**
+  （避免 CG 已含該角色又重疊一張的「雙重描繪」）。立繪狀態保留，CG 收掉即恢復。
+- `portrait` 為 spec 時其自帶 `slot` 優先；`portrait_pos` 只在 spec 仍為預設 `center`
+  時補上定位。
+
+---
+
 ## 立繪定點 emote（Portrait Emotes）
 
 讓**已就位的立繪**做一個一次性的強調動作 —— 跳一下、搖頭、點頭、彈跳 —— 然後回到

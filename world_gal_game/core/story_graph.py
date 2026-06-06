@@ -12,7 +12,7 @@ from __future__ import annotations
 from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from .portrait_spec import PortraitSpec
+from .portrait_spec import PortraitSpec, Slot
 
 
 class Effect(BaseModel):
@@ -94,6 +94,11 @@ class Line(BaseModel):
     text: str
     portrait: str | PortraitSpec | None = None   # old: path; new: spec dict
     portraits: list[PortraitSpec] = Field(default_factory=list)  # multi-slot; overrides portrait when non-empty
+    # Author-friendly slot for the SIMPLE portrait forms (a bare ``expression:``
+    # or a string ``portrait:`` file path), which otherwise always centre. A
+    # spec ``portrait:`` carries its own ``slot`` and ignores this. None / unset
+    # = centre, so every legacy line is byte-identical.
+    portrait_pos: Slot | None = None
     expression: str | None = None    # e.g. "smile", "scared"
     cg: str | None = None            # full-screen CG to display
     sfx: str | None = None
