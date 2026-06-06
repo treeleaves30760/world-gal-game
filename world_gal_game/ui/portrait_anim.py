@@ -122,6 +122,7 @@ _ANIM_DEFAULT_EASE = {
     "bounce": "out_bounce",
     "pop": "out_back",
     "fade": "out_quad",
+    "rise": "out_cubic",
     "slide_left": "out_cubic",
     "slide_right": "out_cubic",
 }
@@ -195,6 +196,14 @@ class SlotAnimation:
             return target, 255
         if self.anim == "fade":
             return target, int(p * 255)
+        if self.anim == "rise":
+            # Subtle one-time arrival: the portrait drifts up a short distance
+            # into place while fading in. NOT idle breathing/scaling — it fires
+            # once, only when a slot goes from empty to occupied. Gives static
+            # WA2-style sprites the "the character arrives" feel.
+            dy = round((1.0 - p) * 26)
+            r = pygame.Rect(target.x, target.y + dy, target.width, target.height)
+            return r, int(min(1.0, p * 1.4) * 255)
         if self.anim == "pop":
             # Scale from a small box up to full, centered on the target.
             scale = _lerp(0.6, 1.0, p)

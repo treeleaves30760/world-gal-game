@@ -423,10 +423,22 @@ class DialogueScene(Scene):
         )
 
         if not animated:
-            # Neutral path: identical to the historical behaviour.
-            self._slot_anims[slot] = None
-            self._slot_fades[slot] = PortraitCrossfade(
-                old_surf, new_surf, duration=0.25)
+            if old_surf is None and new_surf is not None:
+                # Genuine ENTRANCE (slot was empty): drift up + fade in, so a
+                # character *arrives* rather than just materialising. A one-time
+                # transition, not idle breathing — the baseline 演出 lift for
+                # static sprites. Expression-changes (old_surf present) fall
+                # through to the in-place crossfade so the face just morphs.
+                target = self._slot_rect(slot, sw, sh, new_spec)
+                self._slot_fades[slot] = None
+                self._slot_anims[slot] = SlotAnimation(
+                    kind="enter", rect=target, duration=0.34,
+                    new=new_surf, anim="rise",
+                    flip=new_spec.flip if new_spec else False)
+            else:
+                self._slot_anims[slot] = None
+                self._slot_fades[slot] = PortraitCrossfade(
+                    old_surf, new_surf, duration=0.25)
             self._slot_surfaces[slot] = new_surf
             self._slot_specs[slot] = new_spec
             return
