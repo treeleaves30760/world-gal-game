@@ -179,7 +179,7 @@ class SettingsScene(Scene):
                           self._toggle_reduce_motion,
                           style="primary" if rm_on else "ghost")
         self._buttons.append((rm_btn, 4, cy))
-        self._labels.append(("關閉鏡頭推移／震動／閃光（暈眩・光敏）", 13, False,
+        self._labels.append(("關閉鏡頭推移／震動／閃光（暈眩／光敏）", 13, False,
                              theme.text_mute, 4, cy + 46))
         cy += 50 + 22
         # 文字大小 (text size): scales the dialogue body + box together.
@@ -218,6 +218,10 @@ class SettingsScene(Scene):
                                 font_size=18)
                 self._buttons.append((minus, 170, cy))
                 self._buttons.append((plus, 218, cy))
+                self._add_volume_slider(
+                    cy,
+                    (lambda v, nid=nid: self._set_char_voice(nid, v)),
+                    (lambda nid=nid: self._char_voice_volume(nid)))
                 cy += 46
 
         # --- display -------------------------------------------------------
@@ -318,6 +322,11 @@ class SettingsScene(Scene):
         new_v = max(0.0, min(1.0, round(cur + delta, 3)))
         self.ctx.config.per_character_voice_volume[npc_id] = new_v
         self.ctx.config.save_to_disk()
+
+    def _set_char_voice(self, npc_id: str, v: float) -> None:
+        # Absolute live-apply for the slider (the scene saves on drag-release).
+        self.ctx.config.per_character_voice_volume[npc_id] = max(
+            0.0, min(1.0, round(v, 3)))
 
     @staticmethod
     def _toggle_label(label: str, on: bool) -> str:
