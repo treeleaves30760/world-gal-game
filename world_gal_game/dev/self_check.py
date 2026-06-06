@@ -151,9 +151,11 @@ class SelfCheck:
                 "message": iss.message,
                 "hint": iss.hint,
             }
-            # Heuristic: anything with "未知" (unknown) or path containing
-            # "scenes[" looking up cross-refs goes into refs; rest into schema.
-            if any(t in iss.message for t in ("不是已知", "next_scene")) \
+            # Heuristic: cross-reference findings (unknown id/scene, or a scene
+            # naming an expression missing from a character's portrait_set) go
+            # into refs; the rest (schema/type/arg issues) into schema.
+            if any(t in iss.message for t in ("不是已知", "next_scene",
+                                              "portrait_set 中")) \
                     or "scenes[" in iss.path and "next_scene" in iss.path:
                 ref_issues.append(payload)
             else:

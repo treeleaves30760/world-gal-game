@@ -152,6 +152,13 @@ class GalGameApp:
         if not content_root.exists():
             raise FileNotFoundError(f"Game pack not found: {content_root}")
         self.state, self.npcs, self.meta = load_pack(content_root)
+        # Pin the pack identity on the config *before* any save_dir() call so
+        # every save path (clear_data, autosave bridge, save scene) lands in this
+        # pack's own namespace. Mirrors SaveManager's pack_id stamping
+        # (meta.id, falling back to the pack directory name).
+        self.config.pack_id = str(
+            self.state.meta.get("__pack_meta__", {}).get("pack_id", "")
+            or self.pack)
         # Cross-playthrough clear data (New Game+): load once and park it on the
         # state so conditions (cleared_ending / cleared_route) can read it; it is
         # global, so it lives outside the per-save schema.

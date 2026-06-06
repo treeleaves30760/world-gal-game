@@ -855,6 +855,13 @@ class _RefIndex:
     location_ids: set[str] = field(default_factory=set)
     item_ids: set[str] = field(default_factory=set)
     resource_ids: set[str] = field(default_factory=set)
+    # character id -> declared portrait_set expression keys (for the
+    # expression-reference check). Empty/absent set = character uses pure
+    # convention resolution, so we can't know its expressions → no check.
+    character_portraits: dict[str, set[str]] = field(default_factory=dict)
+    # display name -> character id, so a line's ``speaker`` (a display name)
+    # can be resolved back to the character whose ``expression`` it sets.
+    character_names: dict[str, str] = field(default_factory=dict)
 
 
 def _collect_scene_ids(data: Any) -> set[str]:
@@ -883,6 +890,47 @@ def _collect_simple_ids(data: Any, key: str) -> set[str]:
         if isinstance(item, dict) and "id" in item:
             ids.add(item["id"])
     return ids
+
+
+def _collect_character_portraits(
+    data: Any,
+) -> tuple[dict[str, set[str]], dict[str, str]]:
+    """Return (id -> declared portrait expression keys, display name -> id).
+
+    Used by the expression-reference check: a scene that names an
+    ``expression`` not present in the character's declared ``portrait_set``
+    silently falls back to the default face, which is almost always a bug.
+
+    The per-character key set is the ``portrait_set`` keys *plus* the stem of
+    the default ``portrait`` file (e.g. ``normal`` for ``…/normal.png``). The
+    engine's ``portrait_for`` falls back to that default portrait for an
+    unknown expression, so naming it explicitly resolves to the intended face
+    and must not be flagged.
+    """
+    from pathlib import Path as _Path
+
+    portraits: dict[str, set[str]] = {}
+    names: dict[str, str] = {}
+    raw_chars: list[Any] = []
+    if isinstance(data, dict) and "characters" in data:
+        raw_chars = data["characters"] or []
+    elif isinstance(data, list):
+        raw_chars = data
+    for raw in raw_chars:
+        if not isinstance(raw, dict) or "id" not in raw:
+            continue
+        cid = raw["id"]
+        ps = raw.get("portrait_set")
+        if isinstance(ps, dict):
+            keys = {str(k) for k in ps.keys()}
+            default = raw.get("portrait")
+            if isinstance(default, str) and default:
+                keys.add(_Path(default).stem)
+            portraits[cid] = keys
+        name = raw.get("name")
+        if isinstance(name, str) and name:
+            names[name] = cid
+    return portraits, names
 
 
 # ---------------------------------------------------------------------------
@@ -959,6 +1007,39 @@ def _check_refs_in_effects(
     return issues
 
 
+def _check_expression_ref(
+    character_id: str | None, expression: str | None, *,
+    file: str, path: str, index: _RefIndex,
+) -> ValidationIssue | None:
+    """Warn if ``expression`` is referenced for a character whose declared
+    ``portrait_set`` lacks it (silent fallback to the default face).
+
+    Returns a warning-level issue, or ``None`` when nothing is wrong / the
+    check doesn't apply (no character, no declared portrait_set, or the
+    always-valid ``default`` expression).
+    """
+    if not character_id or not expression or expression == "default":
+        return None
+    declared = index.character_portraits.get(character_id)
+    # No declared portrait_set → the character resolves portraits purely by
+    # naming convention, so we can't know which expressions exist. Skip.
+    if not declared:
+        return None
+    if expression in declared:
+        return None
+    suggestion = _suggest(expression, sorted(declared))
+    options = "、".join(sorted(declared))
+    hint = (f"你是不是想用 '{suggestion}'？" if suggestion
+            else f"已宣告的表情：{options}。在角色的 portrait_set 補上 "
+                 f"'{expression}'，或修正拼字。")
+    return ValidationIssue(
+        severity="warning", file=file, path=path,
+        message=(f"表情 '{expression}' 不在角色 '{character_id}' 的 "
+                 f"portrait_set 中，會靜默退回預設立繪。"),
+        hint=hint,
+    )
+
+
 def _check_refs_scenes(data: Any, *, file: str, index: _RefIndex) -> list[ValidationIssue]:
     issues: list[ValidationIssue] = []
     raw_scenes: list[Any] = []
@@ -990,6 +1071,33 @@ def _check_refs_scenes(data: Any, *, file: str, index: _RefIndex) -> list[Valida
                 file=file, path_prefix=f"{sp}.lines[{li}].effects",
                 index=index,
             ))
+            lp = f"{sp}.lines[{li}]"
+            # Expression references → must exist in the character's portrait_set.
+            # (a) Multi-slot portraits + the dict form of ``portrait`` carry an
+            #     explicit ``character`` id and ``expression``.
+            port_specs: list[Any] = list(raw_line.get("portraits") or [])
+            if isinstance(raw_line.get("portrait"), dict):
+                port_specs.append(raw_line["portrait"])
+            for pi, raw_p in enumerate(port_specs):
+                if not isinstance(raw_p, dict):
+                    continue
+                iss = _check_expression_ref(
+                    raw_p.get("character"), raw_p.get("expression"),
+                    file=file, path=f"{lp}.portraits[{pi}].expression",
+                    index=index)
+                if iss is not None:
+                    issues.append(iss)
+            # (b) The line-level ``expression`` applies to the line's speaker
+            #     (a display name); resolve it back to the character id.
+            line_expr = raw_line.get("expression")
+            speaker = raw_line.get("speaker")
+            if isinstance(line_expr, str) and isinstance(speaker, str):
+                cid = index.character_names.get(speaker, speaker)
+                iss = _check_expression_ref(
+                    cid, line_expr,
+                    file=file, path=f"{lp}.expression", index=index)
+                if iss is not None:
+                    issues.append(iss)
 
         # choice effects + next_scene
         for ci, raw_choice in enumerate(raw_scene.get("choices") or []):
@@ -1179,6 +1287,9 @@ def validate_pack(pack_root: Path) -> list[ValidationIssue]:
             index.scene_ids |= _collect_scene_ids(data)
         elif name == "characters.yaml":
             index.character_ids |= _collect_simple_ids(data, "characters")
+            ps, nm = _collect_character_portraits(data)
+            index.character_portraits.update(ps)
+            index.character_names.update(nm)
         elif name == "locations.yaml":
             index.location_ids |= _collect_simple_ids(data, "locations")
         elif name == "items.yaml":

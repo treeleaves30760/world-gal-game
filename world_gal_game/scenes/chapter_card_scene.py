@@ -3,9 +3,10 @@
 A :class:`ChapterCardScene` is pushed as an overlay (by the app's
 ``on_chapter_card`` callback, itself triggered by the ``chapter_card``
 visual-fx directive that ``set_chapter`` / ``advance_chapter`` queue). It paints
-a dark veil over the frozen scene beneath, then the chapter title (large, themed
-accent) and a muted subtitle (the route / act), with a thin rule between them —
-the same frosted, themed look as the other system overlays.
+an *opaque* themed background that fully covers the scene (and dialogue box)
+beneath — fading up from black so the cut reads as a deliberate eyecatch beat —
+then the chapter title (large, themed accent) and an optional muted subtitle,
+with a thin rule between them.
 
 It mirrors :class:`MoviePlayerScene`: it eats input while up, dismisses on any
 advance / cancel key or click (or after a short auto-timeout), and pops itself
@@ -27,6 +28,11 @@ class ChapterCardScene(Scene):
     # A small grace window so a key still held from the previous line does not
     # instantly dismiss the card on the very first frame(s).
     GRACE_S = 0.25
+    # The eyecatch fully covers the scene beneath. A short fade-in ramps the
+    # opaque background from black so the cut to the card reads as a deliberate
+    # beat rather than a hard pop; it reaches full opacity within the grace
+    # window, so nothing underneath ever shows once the card is interactive.
+    FADE_IN_S = 0.35
 
     def __init__(self, ctx: SceneContext):
         super().__init__(ctx)
@@ -69,10 +75,19 @@ class ChapterCardScene(Scene):
     def draw(self, surface: pygame.Surface) -> None:
         theme = self.ctx.theme
         sw, sh = surface.get_size()
-        # Dark veil over the frozen scene beneath (matches the other overlays).
-        veil = pygame.Surface((sw, sh), pygame.SRCALPHA)
-        veil.fill((*theme.bg_deep[:3], 224))
-        surface.blit(veil, (0, 0))
+        # Opaque eyecatch background — this overlay must fully cover the scene
+        # (and dialogue box) beneath; a translucent veil leaks the underlying
+        # text through the card. We paint a solid themed fill, ramping it up from
+        # black during the fade-in so the cut reads as an intentional beat. By
+        # the time the grace window ends (and input can dismiss) the fill is
+        # fully opaque, so nothing underneath is ever visible to the player.
+        if self.FADE_IN_S > 0:
+            t = max(0.0, min(1.0, self._elapsed / self.FADE_IN_S))
+        else:
+            t = 1.0
+        base = theme.bg_deep[:3]
+        fill = tuple(int(c * t) for c in base)   # black -> themed deep
+        surface.fill(fill)
 
         cx = sw // 2
         cy = sh // 2

@@ -191,9 +191,12 @@ def _set_chapter(state: "GameState", chapter_id: str, eff: "Effect", *,
     fire_event(state, HookEvent.CHAPTER_CHANGE, chapter=chapter_id, previous=prev,
                title=spec.title, route=spec.route, order=spec.order)
     if show_card:
+        # Subtitle is the pack-authored human line only — never the raw route/act
+        # tag (which reads as machine jargon, e.g. "common"/"qingyi", on the
+        # eyecatch). Packs that want a subtitle populate ChapterSpec.subtitle.
         _queue_visual_fx(state, {"fx": "chapter_card", "chapter": chapter_id,
                                  "title": spec.title,
-                                 "subtitle": spec.route or spec.act or ""})
+                                 "subtitle": spec.subtitle or ""})
     return {"kind": eff.kind, "chapter": chapter_id, "previous": prev,
             "title": spec.title}
 

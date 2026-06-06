@@ -505,3 +505,88 @@ def test_web_gate_does_not_affect_validate_pack(tmp_path: Path) -> None:
     assert not any(i.path == "bundled_font" for i in issues)
     assert not any(".mp3" in i.message for i in issues
                    if i.severity == "error")
+
+
+# ---------------------------------------------------------------------------
+# Expression reference vs. portrait_set (warning when the face is missing).
+# ---------------------------------------------------------------------------
+
+def _expr_warnings(issues: list[ValidationIssue]) -> list[ValidationIssue]:
+    return [i for i in issues
+            if i.severity == "warning" and "portrait_set 中" in i.message]
+
+
+def _pack_with_heroine_portraits(root: Path) -> None:
+    """Minimal pack whose heroine declares a portrait_set (smile/sad only)."""
+    _make_minimal_pack(root)
+    _write(root / "content" / "characters.yaml", {"characters": [
+        {"id": "hero_a", "name": "Hero A"},
+        {"id": "qingyi", "name": "林青衣",
+         "portrait": "assets/characters/qingyi/normal.png",
+         "portrait_set": {
+             "smile": "assets/characters/qingyi/smile.png",
+             "sad": "assets/characters/qingyi/sad.png",
+         }},
+    ]})
+
+
+def test_missing_expression_in_portrait_spec_warns(tmp_path: Path) -> None:
+    """A ``portrait: {character, expression}`` naming an undeclared expression
+    warns (it would silently fall back to the default face)."""
+    _pack_with_heroine_portraits(tmp_path)
+    _write(tmp_path / "content" / "scenes" / "expr.yaml", {"scenes": [
+        {"id": "scene_expr", "title": "E", "lines": [
+            {"speaker": "林青衣", "text": "...",
+             "portrait": {"character": "qingyi", "expression": "distant"}},
+        ]},
+    ]})
+    warns = _expr_warnings(validate_pack(tmp_path))
+    assert len(warns) == 1
+    assert "distant" in warns[0].message and "qingyi" in warns[0].message
+    # The hint enumerates the declared expressions to guide the fix.
+    assert warns[0].hint and ("smile" in warns[0].hint
+                              or "distant" in warns[0].hint)
+
+
+def test_missing_expression_line_level_warns(tmp_path: Path) -> None:
+    """A line-level ``expression`` is resolved against the speaker's character
+    and warns when that character's portrait_set lacks it."""
+    _pack_with_heroine_portraits(tmp_path)
+    _write(tmp_path / "content" / "scenes" / "expr.yaml", {"scenes": [
+        {"id": "scene_expr", "title": "E", "lines": [
+            {"speaker": "林青衣", "text": "...", "expression": "distant"},
+        ]},
+    ]})
+    warns = _expr_warnings(validate_pack(tmp_path))
+    assert len(warns) == 1
+    assert "distant" in warns[0].message
+
+
+def test_declared_and_default_expressions_do_not_warn(tmp_path: Path) -> None:
+    """A declared expression — and the default portrait's stem ('normal') —
+    are both valid and must not warn."""
+    _pack_with_heroine_portraits(tmp_path)
+    _write(tmp_path / "content" / "scenes" / "expr.yaml", {"scenes": [
+        {"id": "scene_expr", "title": "E", "lines": [
+            {"speaker": "林青衣", "text": "a", "expression": "smile"},
+            {"speaker": "林青衣", "text": "b", "expression": "normal"},
+            {"speaker": "林青衣", "text": "c", "expression": "default"},
+            {"speaker": "林青衣", "text": "d",
+             "portrait": {"character": "qingyi", "expression": "sad"}},
+        ]},
+    ]})
+    assert _expr_warnings(validate_pack(tmp_path)) == []
+
+
+def test_expression_not_checked_without_portrait_set(tmp_path: Path) -> None:
+    """A character with no declared portrait_set resolves portraits by naming
+    convention, so its expressions can't be validated — never warn."""
+    _make_minimal_pack(tmp_path)  # hero_a has no portrait_set
+    _write(tmp_path / "content" / "scenes" / "expr.yaml", {"scenes": [
+        {"id": "scene_expr", "title": "E", "lines": [
+            {"speaker": "Hero A", "text": "...", "expression": "whatever"},
+            {"speaker": "Hero A", "text": "...",
+             "portrait": {"character": "hero_a", "expression": "anything"}},
+        ]},
+    ]})
+    assert _expr_warnings(validate_pack(tmp_path)) == []

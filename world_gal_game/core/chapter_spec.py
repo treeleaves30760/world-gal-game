@@ -19,6 +19,7 @@ Shape (a bare list or ``{chapters: [...]}``)::
     chapters:
       - id: ch1_arrival
         title: "第一章 · 到站"
+        subtitle: "搬家當天"     # optional; shown under the title on the eyecatch
         route: common
         act: act1
         order: 10
@@ -48,6 +49,7 @@ class ChapterSpec(BaseModel):
 
     id: str
     title: str = ""
+    subtitle: str = ""        # optional human subtitle shown under the title-card
     route: str = ""           # route/path tag this chapter belongs to
     act: str = ""             # optional higher-level act grouping
     order: int = 0            # sort key for sequence (ties broken by id)

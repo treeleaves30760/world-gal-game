@@ -91,6 +91,24 @@ def writable_root(app_name: str = "WorldGalGame") -> Path:
     return base
 
 
+def _sanitize_pack_id(pack_id: str | None) -> str:
+    """Reduce a pack id to a single safe directory component for save namespacing.
+
+    A pack id is usually a plain slug (``demo_pack``), but it may arrive as a
+    path-like ``default_pack`` (e.g. ``../Tsing-Hua-Strange-Tales``). We keep
+    only the final component and strip anything that isn't filesystem-friendly,
+    so the save namespace can never escape the saves/ root or collide via
+    separators. An empty / all-stripped id yields ``""`` (flat layout).
+    """
+    if not pack_id:
+        return ""
+    # Take the last path component, normalizing both separators.
+    name = str(pack_id).replace("\\", "/").rstrip("/").split("/")[-1]
+    safe = "".join(c if (c.isalnum() or c in "-_.") else "_" for c in name)
+    safe = safe.strip("._")
+    return safe
+
+
 def resolve_asset(path: str | Path | None) -> Path | None:
     """Resolve an asset path (relative -> absolute against resource_root)."""
     if path is None:
@@ -158,6 +176,11 @@ class EngineConfig:
     game_pack_dir: Path = field(default_factory=lambda: Path("games"))
     default_pack: str = "demo_pack"
     save_subdir: str = "saves"
+    # Identity of the pack currently being driven (``meta.id`` or the pack
+    # directory name). Set by the app once the pack is loaded; used to give each
+    # pack its own save namespace so foreign saves never collide or get rejected
+    # (see ``save_dir``). Empty = unnamespaced (legacy flat ``saves/`` layout).
+    pack_id: str = ""
     # Extra directories to scan when resolving a pack name. The engine
     # always also checks the in-repo games/ directory; this list lets a
     # user pull packs from sibling directories or from a personal pack
@@ -285,7 +308,17 @@ class EngineConfig:
         )
 
     def save_dir(self) -> Path:
+        """Per-pack save directory: ``<writable_root>/saves/<pack_id>``.
+
+        Each pack gets its own namespace so a save from one pack never collides
+        with — or is rejected as incompatible by — another. When ``pack_id`` is
+        unset (legacy / embedding), it degrades to the historical flat
+        ``saves/`` layout, so old saves stay readable where they already live.
+        """
         d = writable_root(self.app_data_name) / self.save_subdir
+        ns = _sanitize_pack_id(self.pack_id)
+        if ns:
+            d = d / ns
         d.mkdir(parents=True, exist_ok=True)
         return d
 

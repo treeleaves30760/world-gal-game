@@ -152,6 +152,78 @@ SceneManager
 scene 之間的通訊只透過 `Scene.enter(**kwargs)` 拿回呼。App 是中央
 hub，由它組裝這些 callback。
 
+## 章節系統（Chapters）
+
+多路線、多章節的長篇 VN 想把「章 / 幕 / 路線」當成一等結構來推理，而不是
+只看單一 scene。章節系統把這層做成**可選的宣告式 overlay**，是純結構元資料，
+**不改 runtime dispatch**：沒有 `chapters.yaml` 的 pack 完全不受影響。
+
+**元資料模型**（`core/chapter_spec.py`）
+
+- `ChapterSpec`：一個宣告的章節 —
+  `id` / `title` / `subtitle`（標題卡下方的人讀副標，**選填**）/ `route`（路線標籤）/
+  `act`（更高層的幕 / 學年分組，例 `y1`…`y4`）/ `order`（敘事排序鍵）/
+  `entry_scene` / `scenes`（成員 scene id）/ `endings`（這條路線可達的結局）。
+- `ChapterManifest`：整包的章節結構，附 `ordered()` / `by_route()` /
+  `scene_to_chapter()` 等查詢。
+- 來源 `content/chapters.yaml`（像 `variables.yaml` 一樣載入），由
+  `content_loader` 停在私有橋接 `state.meta["__chapters__"]`（save 時被
+  `SaveManager` 過濾掉）。`wgg chapters <pack>` 可檢視 / 交叉檢查。
+
+**runtime 欄位**
+
+- `GameState.current_chapter: str | None` — 玩家目前所在章節的游標（預設
+  `None`）。這是章節系統**唯一**的 runtime 狀態，會進存檔。
+
+**effects**（`plugins/builtin_effects.py`，走中央 `apply` dispatch）
+
+- `set_chapter`：把游標設到某 chapter id（須存在於 manifest）。
+- `advance_chapter`：移到 `ordered()` 的下一章（`None` → 第一章）。
+- 兩者都會發 `chapter.change` hook，並（除非 `value: false`）排入一個
+  `chapter_card` 視覺指令。未知章節 / 沒有 manifest 時回 `{"error": ...}`
+  降級，不會 crash（isolate 契約）。
+
+**conditions**（`plugins/builtin_conditions.py`）
+
+- `in_chapter`：目前章節是否在給定 id 之一。
+- `chapter_at_or_after`：目前章節的 `order` 是否 ≥ 目標章節的 `order`
+  （拿來閘門「到了第幾章之後」的內容）。
+
+**hook**
+
+- `HookEvent.CHAPTER_CHANGE`（`"chapter.change"`）：`current_chapter` 變動時
+  觸發，帶 `chapter` / `previous` / `title` / `route` / `order`。
+
+**標題卡指令流**（eyecatch）
+
+```
+set_chapter / advance_chapter
+  → _queue_visual_fx({"fx": "chapter_card", title, subtitle})   # 排入 visual-fx 佇列
+  → DialogueScene._spawn_visual_fx 認得 chapter_card → on_chapter_card(directive)
+  → App._open_chapter_card 推一個 ChapterCardScene overlay（不透明 eyecatch）
+  → 點擊 / 按鍵 / 自動逾時後 pop 回對話
+```
+
+`subtitle` 只用 pack 作者寫的 `ChapterSpec.subtitle`，**不會**退回 `route`/`act`
+標籤（那讀起來是機器術語）。
+
+**章節選單 / 流程圖**
+
+`FlowchartScene`（`scenes/flowchart_scene.py`）把 manifest 畫成依
+**幕 / 學年（act）分列**的分支流程圖：共通線走頂列，路線只在分歧處才branch
+進自己的lane；標題自動折成兩行並可橫向捲動。已讀章節（依
+`state.read_log.scenes`）會亮起且可點擊跳轉（`on_jump`，暫停選單用）；標題畫面
+的瀏覽模式 `on_jump=None`，純看不跳。
+
+**目前限制（已知未來增強）**
+
+章節目前是**描述性 + effect 驅動**：引擎**不會**自動執行一張章節圖
+（不會「跑到下一章就自動播下一章的 scene」）。作者要自己用 effects / hooks
+把流程串起來（例如某 scene 的 `on_end` 放 `advance_chapter`，或在
+`chapter.change` hook 裡 `play_scene`）。**「章節圖自動執行」（chapter-graph
+execution）列為已知的未來增強**；屆時 manifest 的 `entry_scene` / `scenes` /
+`order` 可直接驅動章節推進，作者就不必手動接線。
+
 ## 加新 effect / condition kind 的兩條路徑
 
 **Effect.kind / Condition.kind 都是開放的 `str`**（不是 `Literal[...]`）—

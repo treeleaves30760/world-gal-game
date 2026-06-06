@@ -121,8 +121,9 @@ def _manifest() -> ChapterManifest:
     return ChapterManifest.from_items([
         {"id": "c1", "title": "第一章", "route": "common", "act": "act1",
          "order": 10, "entry_scene": "s1", "scenes": ["s1", "s1b"]},
-        {"id": "c2", "title": "第二章", "route": "lover", "act": "act2",
-         "order": 20, "scenes": ["s2"], "endings": ["ending_lover"]},
+        {"id": "c2", "title": "第二章", "subtitle": "湖畔", "route": "lover",
+         "act": "act2", "order": 20, "scenes": ["s2"],
+         "endings": ["ending_lover"]},
     ])
 
 
@@ -152,11 +153,13 @@ def test_set_chapter_sets_state_and_queues_card() -> None:
     assert result["chapter"] == "c2"
     assert result["previous"] is None
     assert result["title"] == "第二章"
-    # A chapter_card directive is queued on the visual-fx bridge.
+    # A chapter_card directive is queued on the visual-fx bridge. The subtitle
+    # is the pack-authored human line (ChapterSpec.subtitle), never the raw
+    # route/act tag.
     queue = state.meta.get(VISUAL_FX_QUEUE)
     assert queue and queue[-1] == {
         "fx": "chapter_card", "chapter": "c2",
-        "title": "第二章", "subtitle": "lover",
+        "title": "第二章", "subtitle": "湖畔",
     }
 
 
@@ -187,13 +190,25 @@ def test_set_chapter_unknown_target_errors_and_leaves_state() -> None:
     assert VISUAL_FX_QUEUE not in state.meta or not state.meta[VISUAL_FX_QUEUE]
 
 
-def test_set_chapter_subtitle_falls_back_to_act() -> None:
-    """A chapter with no route uses its act as the card subtitle."""
+def test_set_chapter_subtitle_is_empty_without_explicit_subtitle() -> None:
+    """A chapter with no ``subtitle`` queues an empty subtitle — the card never
+    falls back to the raw route/act tag (which reads as machine jargon)."""
     state = GameState()
     state.meta["__chapters__"] = ChapterManifest.from_items(
-        [{"id": "c1", "title": "序", "act": "prologue", "order": 5}])
+        [{"id": "c1", "title": "序", "route": "common", "act": "prologue",
+          "order": 5}])
     state.apply(Effect(kind="set_chapter", target="c1"))
-    assert state.meta[VISUAL_FX_QUEUE][-1]["subtitle"] == "prologue"
+    assert state.meta[VISUAL_FX_QUEUE][-1]["subtitle"] == ""
+
+
+def test_set_chapter_uses_explicit_subtitle() -> None:
+    """A chapter's authored ``subtitle`` is what the card shows."""
+    state = GameState()
+    state.meta["__chapters__"] = ChapterManifest.from_items(
+        [{"id": "c1", "title": "序章", "subtitle": "搬家當天",
+          "route": "common", "order": 5}])
+    state.apply(Effect(kind="set_chapter", target="c1"))
+    assert state.meta[VISUAL_FX_QUEUE][-1]["subtitle"] == "搬家當天"
 
 
 # ----------------------------------------------------------------------
