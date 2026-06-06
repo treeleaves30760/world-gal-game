@@ -57,6 +57,7 @@ class HookEvent:
     DIALOGUE_CHOICE_MADE           player picked a choice
     PLAYER_MOVE                    player successfully moved to a location
     TIME_ADVANCE                   TimeSystem advanced by N phases
+    CHAPTER_CHANGE                 current_chapter changed (set/advance_chapter)
     APP_FRAME                      App main loop — fires once per rendered frame
     ============================== ==========================================
 
@@ -77,6 +78,8 @@ class HookEvent:
     - DIALOGUE_CHOICE_MADE: scene_id (str), choice_id (str)
     - PLAYER_MOVE:         from_location (str | None), to_location (str)
     - TIME_ADVANCE:        phases (int), day (int), time_of_day (str)
+    - CHAPTER_CHANGE:      chapter (str), previous (str | None), title (str),
+                           route (str), order (int)
     - APP_FRAME:           dt (float)
     """
 
@@ -95,6 +98,7 @@ class HookEvent:
     DIALOGUE_CHOICE_MADE = "dialogue.choice_made"
     PLAYER_MOVE = "player.move"
     TIME_ADVANCE = "time.advance"
+    CHAPTER_CHANGE = "chapter.change"
     APP_FRAME = "app.frame"
 
     @classmethod
@@ -116,6 +120,7 @@ class HookEvent:
             cls.DIALOGUE_CHOICE_MADE,
             cls.PLAYER_MOVE,
             cls.TIME_ADVANCE,
+            cls.CHAPTER_CHANGE,
             cls.APP_FRAME,
         ]
 

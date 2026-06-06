@@ -28,6 +28,18 @@ Schema），可用來離線驗證 pack。
 
 ## 引擎內建
 
+### `advance_chapter`
+
+Move to the next chapter in ChapterManifest.ordered() (None -> first). Fires chapter.change and queues a chapter_card title directive unless value=false.
+
+| 參數 | 型別 | 必填 | 預設 | 說明 |
+|---|---|---|---|---|
+| `value` | `boolean` | — | `None` | bool? (false suppresses the title-card; default true) |
+
+```yaml
+- {kind: advance_chapter}
+```
+
 ### `advance_time`
 
 Advance time-of-day by N phases (default 1).
@@ -350,6 +362,19 @@ Change the background mid-scene, with an optional transition. target=image path;
 
 ```yaml
 - {kind: set_background, target: <string>}
+```
+
+### `set_chapter`
+
+Set the current chapter to a chapter id (must exist in the ChapterManifest). Fires chapter.change and queues a chapter_card title directive unless value=false.
+
+| 參數 | 型別 | 必填 | 預設 | 說明 |
+|---|---|---|---|---|
+| `target` | `string` | 是 |  | chapter_id |
+| `value` | `boolean` | — | `None` | bool? (false suppresses the title-card; default true) |
+
+```yaml
+- {kind: set_chapter, target: <string>}
 ```
 
 ### `set_flag`

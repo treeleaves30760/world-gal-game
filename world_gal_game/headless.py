@@ -113,6 +113,7 @@ class HeadlessSession:
                 "is_night": self.state.time.is_night(),
                 "is_haunting": self.state.time.is_haunting_hour(),
             },
+            "chapter": self._chapter_view(),
             "location": loc.id if loc else None,
             "location_name": loc.name if loc else None,
             "location_description": loc.description if loc else None,
@@ -192,6 +193,33 @@ class HeadlessSession:
                 "is_set": key in flags,
             })
         return out
+
+    def _chapter_view(self) -> dict:
+        """The pack's chapter structure paired with the live cursor.
+
+        Reads the pack's :class:`ChapterManifest` from the ``__chapters__`` meta
+        bridge (empty if the pack declares none) and reports the current chapter
+        plus the ordered list, each row flagged ``is_current`` and ``reached``
+        (its entry/member scenes appear in the read log). Mirrors
+        ``_variables_view``: schema-aware, not just a raw scalar dump.
+        """
+        manifest = self.state.meta.get("__chapters__")
+        chapters = manifest.ordered() if manifest is not None else []
+        cur = self.state.current_chapter
+        seen = getattr(self.state.read_log, "scenes", set()) or set()
+
+        def _reached(c) -> bool:
+            return (c.entry_scene in seen) or any(s in seen for s in c.scenes)
+
+        return {
+            "current": cur,
+            "current_title": next((c.title for c in chapters if c.id == cur), None),
+            "ordered": [
+                {"id": c.id, "title": c.title, "route": c.route, "order": c.order,
+                 "is_current": c.id == cur, "reached": _reached(c)}
+                for c in chapters
+            ],
+        }
 
     # ----- actions ------------------------------------------------------
 

@@ -10,6 +10,7 @@ so the 20+ existing tests run unchanged.
 """
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 
 from .registry import condition
@@ -19,12 +20,15 @@ from .condition_args import (
     ResourceGteArgs, ResourceLtArgs, ResourceEqArgs, QuestActiveArgs,
     QuestCompletedArgs, ObjectiveCompletedArgs,
     ClearedEndingArgs, ClearedRouteArgs,
+    InChapterArgs, ChapterAtOrAfterArgs,
 )
 
 if TYPE_CHECKING:
     from ..core.game_state import GameState
     from ..core.story_graph import Condition
 
+
+_log = logging.getLogger(__name__)
 
 BUILTIN = "builtin"
 
@@ -97,6 +101,40 @@ def cond_visited(state: "GameState", cond: "Condition") -> bool:
            signature={"target": "scene_id"})
 def cond_scene_played(state: "GameState", cond: "Condition") -> bool:
     return state.story.is_played(cond.target)
+
+
+# ----------------------------------------------------------------------
+# Chapters (the ChapterManifest runtime overlay)
+
+@condition("in_chapter", plugin_id=BUILTIN, args=InChapterArgs,
+           description="Current chapter is one of the values in the list.",
+           signature={"value": "list[str] | str (chapter id or ids)"})
+def cond_in_chapter(state: "GameState", cond: "Condition") -> bool:
+    cur = state.current_chapter
+    if cur is None:
+        return False
+    vals = cond.value if isinstance(cond.value, list) else [cond.value]
+    return cur in vals
+
+
+@condition("chapter_at_or_after", plugin_id=BUILTIN, args=ChapterAtOrAfterArgs,
+           description="Current chapter's order is >= the target chapter's order "
+                       "(the ordinal 'reached chapter N or later' gate).",
+           signature={"target": "chapter_id (threshold by order)"})
+def cond_chapter_at_or_after(state: "GameState", cond: "Condition") -> bool:
+    cur = state.current_chapter
+    if cur is None:
+        return False
+    manifest = state.meta.get("__chapters__")
+    if manifest is None:
+        return False
+    by_id = {c.id: c for c in manifest.chapters}
+    cur_spec, target_spec = by_id.get(cur), by_id.get(cond.target)
+    if cur_spec is None or target_spec is None:
+        _log.warning("chapter_at_or_after: unknown chapter id (current=%r "
+                     "target=%r) -> False", cur, cond.target)
+        return False
+    return cur_spec.order >= target_spec.order
 
 
 def _clear_data(state: "GameState"):
@@ -191,6 +229,7 @@ __all__ = [
     "cond_flag", "cond_not_flag", "cond_flag_eq",
     "cond_affection_gte", "cond_affection_lt",
     "cond_time_in", "cond_visited", "cond_scene_played",
+    "cond_in_chapter", "cond_chapter_at_or_after",
     "cond_has_item", "cond_achievement",
     "cond_resource_gte", "cond_resource_lt", "cond_resource_eq",
     "cond_quest_active", "cond_quest_completed", "cond_objective_completed",

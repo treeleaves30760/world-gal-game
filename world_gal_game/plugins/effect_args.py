@@ -104,6 +104,22 @@ class UnlockLocationArgs(ArgModel):
 
 
 # ----------------------------------------------------------------------
+# Chapters (the ChapterManifest runtime overlay)
+
+class SetChapterArgs(ArgModel):
+    """set_chapter: set the current chapter to a chapter id."""
+
+    target: ReqStr                 # chapter_id (must exist in the manifest)
+    value: bool | None = None      # optional: suppress the title-card when False (default True = show)
+
+
+class AdvanceChapterArgs(ArgModel):
+    """advance_chapter: move to the next chapter in ChapterManifest.ordered()."""
+
+    value: bool | None = None      # optional: suppress the title-card when False (default True = show)
+
+
+# ----------------------------------------------------------------------
 # Scene control
 
 class PlaySceneArgs(ArgModel):
@@ -443,6 +459,7 @@ __all__ = [
     "AffectionArgs", "StatArgs",
     "SetFlagArgs", "SetFlagIfUnsetArgs", "IncrementFlagArgs",
     "AdvanceTimeArgs", "MoveToArgs", "UnlockLocationArgs",
+    "SetChapterArgs", "AdvanceChapterArgs",
     "PlaySceneArgs", "EndSceneArgs", "LogEventArgs",
     "GiveItemArgs", "TakeItemArgs", "UseItemArgs",
     "GainResourceArgs", "SpendResourceArgs", "SetResourceArgs",

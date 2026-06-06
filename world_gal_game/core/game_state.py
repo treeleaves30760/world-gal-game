@@ -70,6 +70,7 @@ class GameState(BaseModel):
     music_room: MusicRoom = Field(default_factory=MusicRoom)
     endings: EndingTracker = Field(default_factory=EndingTracker)
     route: str | None = None    # which heroine route is currently dominant
+    current_chapter: str | None = None   # id of the chapter the player is in (None = chapter-less / not yet entered)
     meta: dict[str, Any] = Field(default_factory=dict)
 
     @field_serializer("meta")

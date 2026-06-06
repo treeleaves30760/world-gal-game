@@ -66,6 +66,18 @@ Character's affection (on stat) is < value.
 - {kind: affection_lt, target: <string>, value: <integer>}
 ```
 
+### `chapter_at_or_after`
+
+Current chapter's order is >= the target chapter's order (the ordinal 'reached chapter N or later' gate).
+
+| 參數 | 型別 | 必填 | 預設 | 說明 |
+|---|---|---|---|---|
+| `target` | `string` | 是 |  | chapter_id (threshold by order) |
+
+```yaml
+- {kind: chapter_at_or_after, target: <string>}
+```
+
 ### `cleared_ending`
 
 An ending was reached in ANY prior playthrough (New Game+ clear data). For gating after-stories.
@@ -126,6 +138,18 @@ Player has the item (>= value, default 1).
 
 ```yaml
 - {kind: has_item, target: <string>}
+```
+
+### `in_chapter`
+
+Current chapter is one of the values in the list.
+
+| 參數 | 型別 | 必填 | 預設 | 說明 |
+|---|---|---|---|---|
+| `value` | `array[string] \| string` | 是 |  | list[str] \| str (chapter id or ids) |
+
+```yaml
+- {kind: in_chapter, value: <array[string] | string>}
 ```
 
 ### `not_flag`

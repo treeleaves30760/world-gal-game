@@ -85,6 +85,12 @@ class FlowchartScene(Scene):
             return True
         return any(s in seen for s in chapter.scenes)
 
+    def _is_current(self, chapter) -> bool:
+        """The chapter the player is currently in (``state.current_chapter``),
+        for a 'you are here' emphasis. None / no match → not current."""
+        cur = getattr(self.ctx.state, "current_chapter", None)
+        return cur is not None and chapter.id == cur
+
     def _jump_scene(self, chapter) -> str | None:
         if chapter.entry_scene:
             return chapter.entry_scene
@@ -222,9 +228,16 @@ class FlowchartScene(Scene):
                 fill = (*color, 70) if read else (*theme.text_dim[:3], 26)
                 pygame.draw.rect(card, fill, card.get_rect(),
                                  border_radius=rad)
-            pygame.draw.rect(card, (*color, 235) if read
-                             else (*theme.text_dim[:3], 90),
-                             card.get_rect(), width=2, border_radius=rad)
+            here = self._is_current(ch)
+            if here:
+                # "You are here": a brighter, thicker accent border so the
+                # current chapter stands out from merely-read ones.
+                pygame.draw.rect(card, (*theme.accent[:3], 255),
+                                 card.get_rect(), width=3, border_radius=rad)
+            else:
+                pygame.draw.rect(card, (*color, 235) if read
+                                 else (*theme.text_dim[:3], 90),
+                                 card.get_rect(), width=2, border_radius=rad)
             title = ch.title or ch.id
             t_col = theme.text if read else theme.text_dim
             # Truncate to fit the card, leaving room for the read/unread sigil.
@@ -237,9 +250,12 @@ class FlowchartScene(Scene):
                 tsurf = self.ctx.fonts.render(title + "…", 18, t_col, bold=True)
             card.blit(tsurf, (12, 9))
             sub = f"{label}" + ("　·　終" if ch.endings else "")
-            ssurf = self.ctx.fonts.render(sub[:20], 13,
-                                          theme.text_mute if read
-                                          else theme.text_dim)
+            if here:
+                sub = "現在地　·　" + sub
+            ssurf = self.ctx.fonts.render(
+                sub[:20], 13,
+                theme.accent if here
+                else (theme.text_mute if read else theme.text_dim))
             card.blit(ssurf, (12, self._CARD_H - 22))
             # read / unread sigil: a drawn dot (filled = read, hollow = unread)
             # rather than a glyph, so a CJK font without ✓ shows no tofu.
@@ -297,7 +313,8 @@ class FlowchartScene(Scene):
             "scene": "FlowchartScene",
             "chapters": [
                 {"id": c.id, "route": c.route, "act": c.act,
-                 "read": self._chapter_read(c)}
+                 "read": self._chapter_read(c),
+                 "current": self._is_current(c)}
                 for c in chapters
             ],
         }

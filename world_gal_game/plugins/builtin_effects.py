@@ -25,7 +25,8 @@ from typing import TYPE_CHECKING, Any
 from .registry import effect
 from .effect_args import (
     AffectionArgs, StatArgs, SetFlagArgs, SetFlagIfUnsetArgs, IncrementFlagArgs,
-    AdvanceTimeArgs, MoveToArgs, UnlockLocationArgs, PlaySceneArgs, EndSceneArgs,
+    AdvanceTimeArgs, MoveToArgs, UnlockLocationArgs,
+    SetChapterArgs, AdvanceChapterArgs, PlaySceneArgs, EndSceneArgs,
     LogEventArgs, GiveItemArgs, TakeItemArgs, UseItemArgs, GainResourceArgs,
     SpendResourceArgs, SetResourceArgs, BuyItemArgs, SellItemArgs, GiftArgs,
     StartQuestArgs, CompleteObjectiveArgs, CompleteQuestArgs, FailQuestArgs,
@@ -146,6 +147,88 @@ def handle_move_to(state: "GameState", eff: "Effect") -> dict[str, Any]:
 def handle_unlock_location(state: "GameState", eff: "Effect") -> dict[str, Any]:
     state.events.set_flag(f"unlock:{eff.target}", True)
     return {"kind": eff.kind, "target": eff.target}
+
+
+# ----------------------------------------------------------------------
+# Chapters (the ChapterManifest runtime overlay)
+#
+# A pack's chapter structure (content/chapters.yaml) is parked on the private
+# ``state.meta["__chapters__"]`` bridge by content_loader. These effects move the
+# player's ``state.current_chapter`` cursor through that structure. Like every
+# other state change, they degrade rather than crash: a missing manifest or an
+# unknown chapter id returns an ``{"error": ...}`` dict (isolate contract). When
+# the move succeeds they fire ``HookEvent.CHAPTER_CHANGE`` and (unless suppressed)
+# queue a ``chapter_card`` presentation directive — the title-card consumer UI is
+# a separate task, so the directive is simply ignored until then.
+
+def _set_chapter(state: "GameState", chapter_id: str, eff: "Effect", *,
+                 show_card: bool) -> dict[str, Any]:
+    """Move the chapter cursor to ``chapter_id``; the shared body of both effects.
+
+    Looks the spec up in the parked ChapterManifest; an absent manifest or an
+    unknown id degrades to an error dict (no state change). On success it records
+    an event-log entry, fires CHAPTER_CHANGE, and — unless ``show_card`` is False
+    — queues a ``chapter_card`` visual-fx directive for the (future) title-card
+    scene.
+    """
+    manifest = state.meta.get("__chapters__")
+    spec = None
+    if manifest is not None:
+        spec = next((c for c in manifest.chapters if c.id == chapter_id), None)
+    if spec is None:
+        # isolate: degrade, don't crash, on an unknown chapter / no manifest.
+        return {"kind": eff.kind, "error": f"unknown chapter: {chapter_id}"}
+    prev = state.current_chapter
+    state.current_chapter = chapter_id
+    state.events.record(
+        kind="custom",
+        title=spec.title or chapter_id,
+        summary="",
+        data={"chapter": chapter_id, "from": prev},
+    )
+    from . import fire_event
+    from .context import HookEvent
+    fire_event(state, HookEvent.CHAPTER_CHANGE, chapter=chapter_id, previous=prev,
+               title=spec.title, route=spec.route, order=spec.order)
+    if show_card:
+        _queue_visual_fx(state, {"fx": "chapter_card", "chapter": chapter_id,
+                                 "title": spec.title,
+                                 "subtitle": spec.route or spec.act or ""})
+    return {"kind": eff.kind, "chapter": chapter_id, "previous": prev,
+            "title": spec.title}
+
+
+@effect("set_chapter", plugin_id=BUILTIN, args=SetChapterArgs,
+        description="Set the current chapter to a chapter id (must exist in the "
+                    "ChapterManifest). Fires chapter.change and queues a "
+                    "chapter_card title directive unless value=false.",
+        signature={"target": "chapter_id",
+                   "value": "bool? (false suppresses the title-card; default true)"})
+def handle_set_chapter(state: "GameState", eff: "Effect") -> dict[str, Any]:
+    return _set_chapter(state, eff.target, eff,
+                        show_card=(eff.value is None or bool(eff.value)))
+
+
+@effect("advance_chapter", plugin_id=BUILTIN, args=AdvanceChapterArgs,
+        description="Move to the next chapter in ChapterManifest.ordered() "
+                    "(None -> first). Fires chapter.change and queues a "
+                    "chapter_card title directive unless value=false.",
+        signature={"value": "bool? (false suppresses the title-card; default true)"})
+def handle_advance_chapter(state: "GameState", eff: "Effect") -> dict[str, Any]:
+    manifest = state.meta.get("__chapters__")
+    ordered = manifest.ordered() if manifest is not None else []
+    if not ordered:
+        return {"kind": eff.kind, "error": "no chapter manifest"}
+    ids = [c.id for c in ordered]
+    cur = state.current_chapter
+    if cur is None:
+        nxt = ids[0]
+    elif cur in ids and ids.index(cur) + 1 < len(ids):
+        nxt = ids[ids.index(cur) + 1]
+    else:
+        return {"kind": eff.kind, "error": "already at last chapter", "current": cur}
+    return _set_chapter(state, nxt, eff,
+                        show_card=(eff.value is None or bool(eff.value)))
 
 
 # ----------------------------------------------------------------------
@@ -731,6 +814,7 @@ def handle_play_movie(state: "GameState", eff: "Effect") -> dict[str, Any]:
 __all__ = [
     "handle_affection", "handle_stat", "handle_set_flag", "handle_set_flag_if_unset", "handle_increment_flag",
     "handle_advance_time", "handle_move_to", "handle_unlock_location",
+    "handle_set_chapter", "handle_advance_chapter",
     "handle_play_scene", "handle_end_scene", "handle_log_event",
     "handle_give_item", "handle_take_item", "handle_use_item",
     "handle_gain_resource", "handle_spend_resource", "handle_set_resource",

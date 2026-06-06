@@ -24,8 +24,8 @@ class TitleScene(Scene):
               subtitle: str | None = None, version: str | None = None,
               bgm: str | None = None, on_continue=None, on_new_game=None,
               on_load=None, on_quit=None, on_cg_gallery=None,
-              on_music_room=None, on_endings=None, on_settings=None,
-              **_) -> None:
+              on_music_room=None, on_endings=None, on_flowchart=None,
+              on_settings=None, **_) -> None:
         self.bg_path = bg
         self.title_text = title or self.title_text
         self.subtitle_text = subtitle or self.subtitle_text
@@ -67,6 +67,7 @@ class TitleScene(Scene):
         self.on_cg_gallery = on_cg_gallery
         self.on_music_room = on_music_room
         self.on_endings = on_endings
+        self.on_flowchart = on_flowchart
         self.on_settings = on_settings
         self._menu_origin = (panel_x + pad, self._divider_y + 22, inner_w)
         self._extras_mode = False
@@ -93,6 +94,9 @@ class TitleScene(Scene):
             if self.on_endings:
                 items.append(MenuItem(self.ctx.t("endings", "結局"),
                                       self.on_endings))
+            if self.on_flowchart:
+                items.append(MenuItem(self.ctx.t("flowchart", "篇章 / 流程圖"),
+                                      self.on_flowchart))
             items.append(MenuItem("← 返回", self._close_extras))
         else:
             if self.on_continue:
@@ -100,7 +104,8 @@ class TitleScene(Scene):
             items.append(MenuItem("開始新遊戲", self._start_new))
             items.append(MenuItem("載入存檔",
                                   lambda: self.on_load and self.on_load()))
-            if any((self.on_cg_gallery, self.on_music_room, self.on_endings)):
+            if any((self.on_cg_gallery, self.on_music_room, self.on_endings,
+                    self.on_flowchart)):
                 items.append(MenuItem(self.ctx.t("extras", "鑑賞模式"),
                                       self._open_extras))
             if self.on_settings:

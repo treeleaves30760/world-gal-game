@@ -90,6 +90,22 @@ class ClearedRouteArgs(ArgModel):
 
 
 # ----------------------------------------------------------------------
+# Chapters (the ChapterManifest runtime overlay)
+
+class InChapterArgs(ArgModel):
+    """in_chapter: current chapter is one of the given ids."""
+
+    # Handler wraps a non-list value in a list, so a single string is valid too.
+    value: list[str] | str            # single id or list of ids
+
+
+class ChapterAtOrAfterArgs(ArgModel):
+    """chapter_at_or_after: current chapter's order is >= the target's order."""
+
+    target: ReqStr                    # chapter_id whose order is the threshold
+
+
+# ----------------------------------------------------------------------
 # Inventory / achievements
 
 class HasItemArgs(ArgModel):
@@ -155,6 +171,7 @@ __all__ = [
     "FlagArgs", "NotFlagArgs", "FlagEqArgs",
     "AffectionGteArgs", "AffectionLtArgs",
     "TimeInArgs", "VisitedArgs", "ScenePlayedArgs",
+    "InChapterArgs", "ChapterAtOrAfterArgs",
     "HasItemArgs", "AchievementArgs",
     "ResourceGteArgs", "ResourceLtArgs", "ResourceEqArgs",
     "QuestActiveArgs", "QuestCompletedArgs", "ObjectiveCompletedArgs",
