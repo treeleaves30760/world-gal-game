@@ -39,6 +39,7 @@ class DialogueScene(Scene):
         self.scene_id: str | None = None
         self.on_done: Callable[[], None] | None = None
         self.on_movie: Callable[[dict], None] | None = None
+        self.on_chapter_card: Callable[[dict], None] | None = None
         self._current_line = None
         self._scene_started = False
         self._pending_choices = False
@@ -172,11 +173,13 @@ class DialogueScene(Scene):
               on_qsave: Callable[[], None] | None = None,
               on_qload: Callable[[], None] | None = None,
               on_movie: Callable[[dict], None] | None = None,
+              on_chapter_card: Callable[[dict], None] | None = None,
               **_) -> None:
         self.scene_id = scene_id
         self.on_done = on_done
         self.on_scrollback = on_scrollback
         self.on_movie = on_movie
+        self.on_chapter_card = on_chapter_card
         # Fresh rollback history per scene (rewind stays within this scene).
         self._history = (StateHistory()
                          if getattr(self.ctx.config, "rollback_enabled", True)
@@ -927,6 +930,12 @@ class DialogueScene(Scene):
             # has no manager backref). No callback wired → silently ignored.
             if self.on_movie is not None:
                 self.on_movie(d)
+        elif fx == "chapter_card":
+            # Push the chapter title-card overlay via the app callback (same
+            # pattern as play_movie). No callback wired → silently ignored,
+            # which is what keeps headless / tests safe.
+            if self.on_chapter_card is not None:
+                self.on_chapter_card(d)
 
     def _resolve_emote_slot(self, target: str) -> str | None:
         """Map an emote ``target`` to a slot: a slot name as-is, else the slot
@@ -1465,6 +1474,37 @@ class DialogueScene(Scene):
         out, topleft = self._camera.apply(src)
         target.blit(out, topleft)
 
+    # Time-of-day base light (pack opt-in). Warm through the day, cold at night —
+    # which also serves the ghost story's day/night arc (the warmth drains as the
+    # campus turns haunted). Subtle by day, stronger at night. (color, max_alpha).
+    _TIME_TINT = {
+        "morning":   ((202, 196, 178), 26),
+        "noon":      ((220, 202, 164), 24),
+        "afternoon": ((216, 186, 142), 30),
+        "evening":   ((206, 150, 104), 44),
+        "night":     ((40, 50, 82), 58),
+        "midnight":  ((28, 36, 66), 70),
+    }
+
+    def _time_tint_overlay(self, sw: int, sh: int):
+        """Cached full-screen wash for the current time of day, or None when the
+        time is unknown/unmapped. Rebuilt only when screen size or period change."""
+        try:
+            tod = self.ctx.state.time.time_of_day.value
+        except Exception:
+            return None
+        spec = self._TIME_TINT.get(tod)
+        if spec is None:
+            return None
+        key = (sw, sh, tod)
+        if getattr(self, "_tod_tint_key", None) != key:
+            color, alpha = spec
+            surf = pygame.Surface((sw, sh), pygame.SRCALPHA)
+            surf.fill((*color, alpha))
+            self._tod_tint_surf = surf
+            self._tod_tint_key = key
+        return self._tod_tint_surf
+
     def draw(self, surface: pygame.Surface) -> None:
         real_surface = surface
         sw, sh = surface.get_size()
@@ -1495,6 +1535,17 @@ class DialogueScene(Scene):
             self._draw_with_camera(surface, self._blur_bg(self._bg_surface))
         else:
             surface.fill(self.ctx.theme.bg_deep)
+
+        # Ambient time-of-day base light (pack opt-in via meta.ambient_time_tint):
+        # gives a scene that sets NO tint of its own a lighting signature for the
+        # current time of day, so the dailies read with a mood instead of a flat
+        # frame. Skipped when the scene owns an explicit tint (the directed peaks)
+        # or a CG is up — they never double up.
+        if (getattr(self.ctx.config, "ambient_time_tint", False)
+                and self._tint is None and not self.cg_surface_path):
+            tod = self._time_tint_overlay(sw, sh)
+            if tod is not None:
+                surface.blit(tod, (0, 0))
 
         # Readability scrim: a light global veil + a stronger bottom gradient
         # behind the textbox region — instead of a heavy flat veil that washes

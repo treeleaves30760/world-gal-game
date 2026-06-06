@@ -50,6 +50,7 @@ from .scenes.cg_gallery_scene import CGGalleryScene
 from .scenes.music_room_scene import MusicRoomScene
 from .scenes.endings_scene import EndingsScene
 from .scenes.scene_replay_scene import SceneReplayScene
+from .scenes.chapter_card_scene import ChapterCardScene
 from .ui.assets import AssetManager
 from .ui.fonts import FontRegistry
 from .ui.theme import default_theme
@@ -169,6 +170,8 @@ class GalGameApp:
             self.config.text_speed = float(self.meta["text_speed"])
         # Pack-provided typewriter blip asset (played softly while text reveals).
         self.config.text_blip = self.meta.get("text_blip")
+        # Pack opt-in: subtle time-of-day base tint on un-directed scenes.
+        self.config.ambient_time_tint = bool(self.meta.get("ambient_time_tint", False))
         # Pack-provided UI click sound + install the global Button hook so every
         # menu button gives audible feedback (rides the SFX bus; toggleable).
         self.config.ui_sound = self.meta.get("ui_sound")
@@ -267,6 +270,7 @@ class GalGameApp:
                              on_cg_gallery=self._open_cg_gallery,
                              on_music_room=self._open_music_room,
                              on_endings=self._open_endings,
+                             on_flowchart=self._open_flowchart_browse,
                              on_settings=self._open_settings)
         self._running = True
         self._screenshot_pending: str | None = None
@@ -518,6 +522,17 @@ class GalGameApp:
         self.manager.push(FlowchartScene(self.ctx),
                           on_close=self.manager.pop, on_jump=jump)
 
+    def _open_flowchart_browse(self) -> None:
+        """Open the chapter flowchart in browse-only mode (from the title).
+
+        There is no live scene to jump into from the title, so ``on_jump`` is
+        None — the chart reads as a chapter overview; clicking a chapter is
+        inert (FlowchartScene guards the jump on ``on_jump``). The pause-menu
+        entry (`_open_flowchart`) keeps its live jump-to-replay behaviour.
+        """
+        self.manager.push(FlowchartScene(self.ctx),
+                          on_close=self.manager.pop, on_jump=None)
+
     def _open_character_profiles(self) -> None:
         self.manager.push(CharacterProfileScene(self.ctx),
                           on_close=self.manager.pop)
@@ -566,6 +581,7 @@ class GalGameApp:
                               on_cg_gallery=self._open_cg_gallery,
                               on_music_room=self._open_music_room,
                               on_endings=self._open_endings,
+                              on_flowchart=self._open_flowchart_browse,
                               on_settings=self._open_settings)
 
     def _open_map(self) -> None:
@@ -767,7 +783,8 @@ class GalGameApp:
                           on_menu=self._open_menu,
                           on_qsave=self._quicksave,
                           on_qload=self._quickload,
-                          on_movie=self._open_movie)
+                          on_movie=self._open_movie,
+                          on_chapter_card=self._open_chapter_card)
 
     def _open_movie(self, directive: dict) -> None:
         """Push a full-screen movie overlay (from a play_movie effect).
@@ -784,6 +801,21 @@ class GalGameApp:
             fps=directive.get("fps", 24.0),
             loop=directive.get("loop", False),
             skippable=directive.get("skippable", True),
+            on_done=self.manager.pop,
+        )
+
+    def _open_chapter_card(self, directive: dict) -> None:
+        """Push the chapter title-card overlay (from a set_chapter /
+        advance_chapter directive).
+
+        ``directive`` is the queued chapter_card payload ({chapter, title,
+        subtitle}). The overlay pops itself when dismissed (click / key /
+        auto-timeout), returning to the dialogue beneath.
+        """
+        self.manager.push(
+            ChapterCardScene(self.ctx),
+            title=directive.get("title", ""),
+            subtitle=directive.get("subtitle", ""),
             on_done=self.manager.pop,
         )
 

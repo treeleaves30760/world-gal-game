@@ -196,6 +196,13 @@ class EngineConfig:
     # honoured in DialogueScene.enter / DialogueBox. 1.0 = standard.
     text_scale: float = 1.0
 
+    # Presentation (pack-driven, set from meta.yaml): when True, the dialogue
+    # scene paints a subtle time-of-day base tint on any scene that doesn't set
+    # its own screen_tint — giving un-directed scenes (dailies) a lighting
+    # signature for the time of day. Directed scenes (with an explicit tint)
+    # are untouched, so the two never double up. Honoured in DialogueScene.draw.
+    ambient_time_tint: bool = False
+
     # text speed (chars/sec); 0 = instant
     text_speed: float = 45.0
 
