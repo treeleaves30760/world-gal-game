@@ -276,6 +276,19 @@ Trigger transition to another scene (interpreted by DialogueEngine).
 - {kind: play_scene, target: <string>}
 ```
 
+### `play_scene_branch`
+
+Route the next scene by state: play the first scene whose 'when' condition holds, else 'target' (default). Lets one scene branch its transition instead of duplicating a scene per route. Resolves to a play_scene transition.
+
+| 參數 | 型別 | 必填 | 預設 | 說明 |
+|---|---|---|---|---|
+| `target` | `string` | — | `None` | scene_id? (default when no case matches) |
+| `value` | `array[PlaySceneBranchCase]` | — | `None` | list[{when: <condition>, target: <scene_id>}] (ordered cases; first matching wins) |
+
+```yaml
+- {kind: play_scene_branch}
+```
+
 ### `portrait_emote`
 
 Play a one-shot in-place accent (jump/shake/nod/bounce) on a settled portrait. target=slot ('left'/'center'/'right') or character name; value={emote, duration, intensity}. Queued for the scene; does not touch the display.

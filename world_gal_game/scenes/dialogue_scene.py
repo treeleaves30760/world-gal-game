@@ -786,8 +786,11 @@ class DialogueScene(Scene):
             self.choices.visible = False
         elif pres.kind == "choice":
             self._ui_hidden = False   # a decision always shows the UI
+            # Carry each choice's lock reason (4th tuple element) so a locked
+            # option renders WHY it is locked, not just a greyed ghost.
             self.choices.set_choices(
-                [(c.id, c.text, c.enabled) for c in pres.choices])
+                [(c.id, c.text, c.enabled, getattr(c, "reason", ""))
+                 for c in pres.choices])
             self.choices.visible = True
         elif pres.kind == "transition":
             if pres.next_scene:

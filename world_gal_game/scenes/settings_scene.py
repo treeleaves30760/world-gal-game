@@ -166,6 +166,8 @@ class SettingsScene(Scene):
             ("介面音效", "ui_sound_enabled", self._toggle_ui_sound),
             ("NVL 模式", "nvl_mode", self._toggle_nvl),
             ("章節／日期提示", "show_status_hud", self._toggle_status_hud),
+            ("好感變化提示", "show_affection_feedback",
+             self._toggle_affection_feedback),
         ]:
             on = bool(getattr(cfg, attr))
             b = self._mk(300, 42, self._toggle_label(label, on), handler,
@@ -389,6 +391,12 @@ class SettingsScene(Scene):
     def _toggle_status_hud(self) -> None:
         cfg = self.ctx.config
         cfg.show_status_hud = not cfg.show_status_hud
+        cfg.save_to_disk()
+        self._rebuild()
+
+    def _toggle_affection_feedback(self) -> None:
+        cfg = self.ctx.config
+        cfg.show_affection_feedback = not cfg.show_affection_feedback
         cfg.save_to_disk()
         self._rebuild()
 

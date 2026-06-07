@@ -479,16 +479,28 @@ class HeadlessSession:
         scene_id = self.state.story.current_scene
         scene = self.state.story.scenes.get(scene_id) if scene_id else None
         if scene:
+            from .dialogue.condition_text import summarize_lock
             for ch in scene.choices:
                 blocked_by = []
+                failed_requires = []
+                hit_forbids = []
                 for c in ch.requires:
                     if not self.state.evaluate(c):
                         blocked_by.append({"requires": c.kind, "target": c.target})
+                        failed_requires.append(c)
                 for c in ch.forbids:
                     if self.state.evaluate(c):
                         blocked_by.append({"forbids": c.kind, "target": c.target})
-                choices.append({"id": ch.id, "text": ch.text,
-                                "enabled": not blocked_by, "blocked_by": blocked_by})
+                        hit_forbids.append(c)
+                row = {"id": ch.id, "text": ch.text,
+                       "enabled": not blocked_by, "blocked_by": blocked_by}
+                if blocked_by:
+                    # A concise human-readable reason ("需要 與林青衣的好感度 ≥
+                    # 40") alongside the structured blocked_by — the same string
+                    # the choice menu shows under a locked option.
+                    row["lock_reason"] = summarize_lock(
+                        failed_requires, hit_forbids, self.state)
+                choices.append(row)
 
         scenes = [h.scene_id for h in self.state.map.available_scenes(
             time_of_day=tod, flags=flags,

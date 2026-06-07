@@ -9,9 +9,19 @@ player never sees the number. This panel lists each tracked character — heroin
   name-plate colour commercial VNs use), falling back to the theme accent;
 - an affection bar (0..``_BAR_MAX``);
 - the current tier label (``AffectionTracker.level_label``, which honours the
-  pack's localized affection bands); and, when the character declares named
-  ``AffectionThreshold``s, the *next* unreached named threshold ("下一階段
-  «在意你» · 還差 N") so the player can read where the relationship is heading.
+  pack's localized affection bands);
+- the **decisive route-lock-in gate** on each heroine's bar — the affection
+  value that actually unlocks her route (discovered from the pack, see
+  :meth:`RelationshipsScene._route_gate`), so the player sees the real target,
+  not just the cosmetic named tiers; and
+- when the character declares named ``AffectionThreshold``s, the *next* unreached
+  named threshold ("下一階段 «在意你» · 還差 N") so the player can read where the
+  relationship is heading.
+
+De-clutter: heroines (``NPC.is_heroine``) lead and are emphasised; non-heroine
+tracked NPCs follow, and 0-affection non-heroines (incidental "ghosts" the
+player hasn't engaged) are collapsed behind a one-line count so the roster reads
+as the romance roster, not a full cast dump.
 
 It is a sibling of the simpler "好感" :class:`AffectionScene` record (kept as-is):
 this one is the relationship *status* surface reached from the pause menu next to
@@ -78,6 +88,103 @@ class RelationshipsScene(Scene):
                                  (r[1].name if r[1] else r[0].character_id)))
         return rows
 
+    def _visible_rows(self):
+        """The rows to actually draw, plus a count of collapsed ones.
+
+        De-clutter rule: keep every heroine and every non-heroine the player has
+        actually engaged (affection != 0); collapse 0-affection non-heroines
+        (incidental tracked NPCs) into a single trailing count so the panel reads
+        as the romance roster. Returns ``(rows, collapsed_count)``.
+        """
+        rows = self._ordered_characters()
+        shown, collapsed = [], 0
+        for ca, npc in rows:
+            is_heroine = bool(getattr(npc, "is_heroine", False))
+            if is_heroine or ca.get("affection") != 0:
+                shown.append((ca, npc))
+            else:
+                collapsed += 1
+        return shown, collapsed
+
+    def _route_gate(self, npc, ca):
+        """The decisive route-lock-in affection value for a heroine, or None.
+
+        This is the number that actually gates her route — the thing the player
+        is really climbing toward — as opposed to the cosmetic named tiers.
+        Discovered from the pack, in order:
+
+        1. **The route-choice gate.** Find the choice anywhere in the story graph
+           that sets this heroine's ``route_<route_id>`` lock-in flag (the
+           route_choice convention) and read the ``affection_gte`` requirement on
+           that same choice targeting this character — e.g. value 40. This is the
+           real gate, read straight from content.
+        2. **A route-naming named threshold.** Else the value of a declared
+           ``AffectionThreshold`` whose ``unlocks`` references the route id or
+           contains "route"/"ending" (the per-character convention).
+        3. **A pack convention.** Else ``meta["route_gate_affection"]`` if the
+           pack declares a flat gate.
+
+        Returns ``None`` when nothing is discoverable (the bar then shows no
+        gate marker rather than a fabricated one). Never raises.
+        """
+        try:
+            return self._route_gate_inner(npc, ca)
+        except Exception:
+            return None
+
+    def _route_gate_inner(self, npc, ca):
+        route_id = getattr(npc, "route_id", None) if npc is not None else None
+        cid = ca.character_id
+
+        # (1) The route-choice gate: a choice that locks in this route AND gates
+        # on this character's affection. Most authoritative — it's the gate the
+        # player literally hits.
+        if route_id:
+            lockin_flag = f"route_{route_id}"
+            scenes = getattr(self.ctx.state.story, "scenes", {}) or {}
+            for scene in scenes.values():
+                for ch in getattr(scene, "choices", None) or []:
+                    effs = getattr(ch, "effects", None) or []
+                    sets_lockin = any(
+                        "set" in (getattr(e, "kind", "") or "")
+                        and "flag" in (getattr(e, "kind", "") or "")
+                        and getattr(e, "target", "") == lockin_flag
+                        for e in effs)
+                    if not sets_lockin:
+                        continue
+                    for c in getattr(ch, "requires", None) or []:
+                        if (getattr(c, "kind", "") == "affection_gte"
+                                and getattr(c, "target", "") == cid
+                                and c.value is not None):
+                            try:
+                                return int(c.value)
+                            except (TypeError, ValueError):
+                                pass
+
+        # (2) A named threshold whose unlocks name the route / an ending.
+        # Prefer the strongest signal: an unlock containing "route"/"ending"
+        # (an explicit route/ending gate) beats a bare route_id substring (which
+        # also matches a mere "friend" tier). Among equally-strong matches take
+        # the highest value — the route lock-in is the deeper commitment.
+        strong, weak = [], []
+        for th in getattr(ca, "thresholds", None) or []:
+            unlocks = getattr(th, "unlocks", None) or []
+            hay = " ".join(str(u) for u in unlocks).lower()
+            if "route" in hay or "ending" in hay or "lover" in hay:
+                strong.append(th.value)
+            elif route_id and route_id.lower() in hay:
+                weak.append(th.value)
+        if strong:
+            return max(strong)
+        if weak:
+            return max(weak)
+
+        # (3) Flat pack convention.
+        gate = self.ctx.state.meta.get("route_gate_affection")
+        if isinstance(gate, (int, float)):
+            return int(gate)
+        return None
+
     def _name_color(self, npc) -> tuple:
         """RGB for a character's name: parsed ``name_color`` or theme accent."""
         raw = getattr(npc, "name_color", None) if npc is not None else None
@@ -103,7 +210,7 @@ class RelationshipsScene(Scene):
     # ---- rendering ------------------------------------------------------
     def _draw_content(self, surface: pygame.Surface) -> int:
         theme = self.ctx.theme
-        rows = self._ordered_characters()
+        rows, collapsed = self._visible_rows()
         y = 0
         card_h = 104
         width = self._scroll.rect.width - 14
@@ -160,6 +267,22 @@ class RelationshipsScene(Scene):
             if fill_w > 0:
                 pygame.draw.rect(card, theme.accent,
                                  (bar_x, bar_y, fill_w, bar_h), border_radius=4)
+            # Decisive ROUTE-LOCK-IN gate marker (heroines only): the affection
+            # value that actually unlocks her route — the real target — drawn as
+            # a prominent warm marker with a small diamond head so it stands
+            # apart from the subtle next-tier tick below. Read from the pack.
+            gate = self._route_gate(npc, ca) if is_heroine else None
+            if gate is not None and gate > 0:
+                gx = bar_x + int(bar_w * max(0.0, min(1.0, gate / _BAR_MAX)))
+                reached = aff >= gate
+                gcol = theme.good if reached else theme.accent_warm
+                pygame.draw.rect(card, (*gcol[:3], 230),
+                                 (gx - 1, bar_y - 4, 3, bar_h + 8),
+                                 border_radius=2)
+                # diamond head so the gate is unmistakable at a glance
+                pygame.draw.polygon(card, (*gcol[:3], 235), [
+                    (gx, bar_y - 9), (gx + 5, bar_y - 4),
+                    (gx, bar_y + 1), (gx - 5, bar_y - 4)])
             # next named threshold marker on the bar + caption
             nxt = self._next_threshold(ca, aff)
             if nxt is not None:
@@ -174,9 +297,29 @@ class RelationshipsScene(Scene):
             else:
                 cap = self.ctx.fonts.render("關係已圓滿", 13, theme.good)
                 card.blit(cap, (text_x, 86))
+            # Route-gate caption (heroines): the decisive line — how far to the
+            # route lock-in, or that it's already reached. Drawn to the right of
+            # the next-tier caption so both read on one row.
+            if gate is not None and gate > 0:
+                if aff >= gate:
+                    gcap = self.ctx.fonts.render(
+                        f"路線已開啟（好感 {gate}）", 13, theme.good)
+                else:
+                    gcap = self.ctx.fonts.render(
+                        f"路線門檻 好感 {gate} · 還差 {gate - aff}", 13,
+                        theme.accent_warm)
+                card.blit(gcap, (width - gcap.get_width() - 26, 86))
             surface.blit(card, (0, y))
             y += card_h + 10
-        if not rows:
+        # Collapsed 0-affection non-heroines: one muted summary line so the
+        # roster stays the romance roster without hiding that other NPCs exist.
+        if collapsed:
+            note = self.ctx.fonts.render(
+                f"（另有 {collapsed} 位尚未熟識的角色未顯示）", 14,
+                theme.text_mute)
+            surface.blit(note, (0, y + 2))
+            y += note.get_height() + 8
+        if not rows and not collapsed:
             empty = self.ctx.fonts.render(
                 "（還沒有任何角色被記錄。先在校園裡認識她們吧。）",
                 18, theme.text_mute)
@@ -206,18 +349,34 @@ class RelationshipsScene(Scene):
         self._scroll.draw(surface)
 
     def describe(self) -> dict:
-        """Headless dump: per-character tier + next named threshold."""
+        """Headless dump: per-character tier + next named threshold + the
+        decisive route gate, plus the de-clutter summary.
+
+        ``characters`` lists ALL tracked characters (so existing consumers keep
+        seeing everyone) but each row carries ``visible`` (whether the panel
+        actually draws it) and, for heroines, ``route_gate`` (the decisive
+        affection value that unlocks her route, or None) plus ``route_unlocked``.
+        ``collapsed`` is the count of hidden 0-affection non-heroines.
+        """
+        shown, collapsed = self._visible_rows()
+        shown_ids = {ca.character_id for ca, _ in shown}
         out = []
         for ca, npc in self._ordered_characters():
             aff = ca.get("affection")
             nxt = self._next_threshold(ca, aff)
+            is_heroine = bool(getattr(npc, "is_heroine", False))
+            gate = self._route_gate(npc, ca) if is_heroine else None
             out.append({
                 "character_id": ca.character_id,
                 "name": (npc.name if npc is not None else ca.character_id),
-                "is_heroine": bool(getattr(npc, "is_heroine", False)),
+                "is_heroine": is_heroine,
                 "affection": aff,
                 "tier": self.ctx.state.affection.level_label(ca.character_id),
                 "next_threshold": (
                     {"name": nxt.name, "value": nxt.value} if nxt else None),
+                "route_gate": gate,
+                "route_unlocked": (gate is not None and aff >= gate),
+                "visible": ca.character_id in shown_ids,
             })
-        return {"scene": "RelationshipsScene", "characters": out}
+        return {"scene": "RelationshipsScene", "characters": out,
+                "collapsed": collapsed}

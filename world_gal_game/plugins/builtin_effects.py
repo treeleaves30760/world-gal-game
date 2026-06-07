@@ -1,9 +1,10 @@
 """Builtin effect handlers.
 
-Every builtin effect kind that the engine ships (37 of
-them, including the presentation-layer effects: camera/screen FX, scene
-transitions, weather, portrait emotes, and movie playback) is implemented here
-as a free function registered
+Every builtin effect kind that the engine ships (including the
+presentation-layer effects: camera/screen FX, scene transitions, weather,
+portrait emotes, and movie playback, plus the route-aware
+``play_scene_branch`` transition) is implemented here as a free function
+registered
 with ``@effect("kind", plugin_id="builtin")``. The :meth:`GameState.apply`
 dispatcher looks them up in the global :data:`EFFECT_REGISTRY`.
 
@@ -26,7 +27,8 @@ from .registry import effect
 from .effect_args import (
     AffectionArgs, StatArgs, SetFlagArgs, SetFlagIfUnsetArgs, IncrementFlagArgs,
     AdvanceTimeArgs, MoveToArgs, UnlockLocationArgs,
-    SetChapterArgs, AdvanceChapterArgs, PlaySceneArgs, EndSceneArgs,
+    SetChapterArgs, AdvanceChapterArgs, PlaySceneArgs, PlaySceneBranchArgs,
+    EndSceneArgs,
     LogEventArgs, GiveItemArgs, TakeItemArgs, UseItemArgs, GainResourceArgs,
     SpendResourceArgs, SetResourceArgs, BuyItemArgs, SellItemArgs, GiftArgs,
     StartQuestArgs, CompleteObjectiveArgs, CompleteQuestArgs, FailQuestArgs,
@@ -243,6 +245,55 @@ def handle_advance_chapter(state: "GameState", eff: "Effect") -> dict[str, Any]:
         signature={"target": "scene_id"})
 def handle_play_scene(state: "GameState", eff: "Effect") -> dict[str, Any]:
     return {"kind": eff.kind, "scene": eff.target}
+
+
+@effect("play_scene_branch", plugin_id=BUILTIN, args=PlaySceneBranchArgs,
+        description="Route the next scene by state: play the first scene whose "
+                    "'when' condition holds, else 'target' (default). Lets one "
+                    "scene branch its transition instead of duplicating a scene "
+                    "per route. Resolves to a play_scene transition.",
+        signature={"target": "scene_id? (default when no case matches)",
+                "value": "list[{when: <condition>, target: <scene_id>}] "
+                         "(ordered cases; first matching wins)"})
+def handle_play_scene_branch(state: "GameState", eff: "Effect") -> dict[str, Any]:
+    """Pick the next scene by evaluating each case's ``when`` condition in order.
+
+    Returns a ``play_scene``-shaped dict (``{"kind": "play_scene", "scene":
+    ...}``) so the DialogueEngine's existing on_end transition handling consumes
+    it with no extra wiring — the first case whose condition holds wins, else the
+    default ``target``. If no case matches and there is no default, returns a
+    no-op (``scene=None``) describing that nothing matched, so a misconfigured
+    branch degrades to "end the scene" rather than crashing. Each ``when`` is a
+    flat (kind/target/value/stat) condition dict, evaluated through the same
+    tolerant ``GameState.evaluate`` the requires-gates use.
+    """
+    from ..core.story_graph import Condition
+
+    cases = eff.value if isinstance(eff.value, list) else []
+    matched: str | None = None
+    for case in cases:
+        if not isinstance(case, dict):
+            continue
+        when = case.get("when")
+        target = case.get("target")
+        if not target or not isinstance(when, dict):
+            continue
+        try:
+            cond = Condition(**when)
+        except Exception:
+            # A malformed case is skipped, not fatal — try the next one.
+            continue
+        if state.evaluate(cond):
+            matched = target
+            break
+    if matched is None:
+        # Fall back to the default target (``eff.target``) when set.
+        matched = eff.target or None
+    # Always report as a play_scene so the engine's transition scan
+    # (``r.get("kind") == "play_scene"``) picks it up unchanged. A None scene
+    # means "no branch matched and no default" -> the scene simply ends.
+    return {"kind": "play_scene", "scene": matched,
+            "via": "play_scene_branch", "matched": matched is not None}
 
 
 @effect("end_scene", plugin_id=BUILTIN, args=EndSceneArgs,

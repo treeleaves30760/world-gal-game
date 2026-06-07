@@ -128,6 +128,38 @@ class PlaySceneArgs(ArgModel):
     target: ReqStr                 # scene_id
 
 
+class PlaySceneBranchCase(ArgModel):
+    """One conditional branch for ``play_scene_branch``.
+
+    ``when`` is a single condition (the flat (kind/target/value/stat) triple,
+    same shape as a ``requires`` entry); ``target`` is the scene to play if it
+    holds. Cases are tried in order; the first whose ``when`` evaluates true
+    wins. ``extra='ignore'`` (from ArgModel) tolerates an author writing the
+    condition keys inline.
+    """
+
+    target: ReqStr                 # scene_id to play when ``when`` holds
+    # The gate condition as a (kind/target/value/stat) dict. Kept as a loose
+    # dict here (not a Condition model) so the lint/schema layer stays decoupled
+    # from story_graph; the handler reconstructs a Condition at runtime.
+    when: dict[str, Any]
+
+
+class PlaySceneBranchArgs(ArgModel):
+    """play_scene_branch: route the next scene by state.
+
+    ``value`` is a list of ``{when: <condition>, target: <scene>}`` cases tried
+    in order — the first whose condition holds is played. ``target`` (optional)
+    is the default scene when no case matches; if both are absent / no case
+    matches and no default is set, the effect is a safe no-op (logged), so a
+    pack can collapse N near-identical opener scenes that differ only in their
+    final transition target into one shared scene with one branch.
+    """
+
+    target: str | None = None                  # default scene when no case matches
+    value: list[PlaySceneBranchCase] | None = None  # ordered conditional cases
+
+
 class EndSceneArgs(ArgModel):
     """end_scene: end the current scene. Takes no arguments."""
 
@@ -460,7 +492,8 @@ __all__ = [
     "SetFlagArgs", "SetFlagIfUnsetArgs", "IncrementFlagArgs",
     "AdvanceTimeArgs", "MoveToArgs", "UnlockLocationArgs",
     "SetChapterArgs", "AdvanceChapterArgs",
-    "PlaySceneArgs", "EndSceneArgs", "LogEventArgs",
+    "PlaySceneArgs", "PlaySceneBranchCase", "PlaySceneBranchArgs",
+    "EndSceneArgs", "LogEventArgs",
     "GiveItemArgs", "TakeItemArgs", "UseItemArgs",
     "GainResourceArgs", "SpendResourceArgs", "SetResourceArgs",
     "BuyItemArgs", "SellItemArgs", "GiftArgs",

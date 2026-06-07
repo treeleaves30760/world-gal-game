@@ -78,6 +78,11 @@ class ChoiceOption:
     id: str
     text: str
     enabled: bool
+    # When a visible choice is locked, ``reason`` is a concise human-readable
+    # phrase explaining why (the unmet condition, e.g. "需要 與林青衣的好感度 ≥
+    # 40"), so the UI can render it instead of a silent ghost button. Empty for
+    # an enabled choice. Computed from the failing requires/forbids.
+    reason: str = ""
 
 
 @dataclass
@@ -267,6 +272,27 @@ class DialogueEngine:
             return False
         return True
 
+    def _choice_lock_reason(self, choice: Choice) -> str:
+        """A concise human-readable phrase explaining why ``choice`` is locked.
+
+        Collects the choice's *failing* gates — a ``requires`` condition that is
+        unmet, or a ``forbids`` condition that is currently hit — and renders
+        them via :mod:`condition_text`. Returns "" for an available choice.
+        Isolated: any failure degrades to an empty reason (the choice still
+        renders, just without the why), never raising on the present path.
+        """
+        try:
+            failed_requires = [c for c in choice.requires
+                               if not self.state.evaluate(c)]
+            hit_forbids = [c for c in choice.forbids
+                           if self.state.evaluate(c)]
+            if not failed_requires and not hit_forbids:
+                return ""
+            from .condition_text import summarize_lock
+            return summarize_lock(failed_requires, hit_forbids, self.state)
+        except Exception:
+            return ""
+
     def _line_visible(self, line: Line) -> bool:
         return self.state.evaluate_all(line.requires)
 
@@ -382,10 +408,16 @@ class DialogueEngine:
                 ChoiceOption(id=c.id, text=interpolate(c.text, self.state), enabled=True)
                 for c in available
             ]
+            # Visible-but-locked choices carry a concise reason (the unmet
+            # gate, e.g. "需要 與林青衣的好感度 ≥ 40") so the UI can show *why*
+            # rather than a silent ghost button. ``hidden_if_locked`` choices
+            # were already filtered out above, so only legitimately-visible
+            # locked choices reach here.
             options += [
                 ChoiceOption(id=c.id,
-                             text=interpolate(c.text, self.state) + " (條件未達)",
-                             enabled=False)
+                             text=interpolate(c.text, self.state),
+                             enabled=False,
+                             reason=self._choice_lock_reason(c))
                 for c in hidden_locked
             ]
             return ScenePresentation(

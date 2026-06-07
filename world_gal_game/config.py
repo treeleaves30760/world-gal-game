@@ -31,6 +31,7 @@ _PERSISTED_SETTING_FIELDS: tuple[str, ...] = (
     "nvl_mode",
     "rollback_enabled",
     "show_status_hud",
+    "show_affection_feedback",
     "dim_inactive_speakers",
     "auto_emote_on_emotion",
     "reduce_motion",
@@ -269,6 +270,15 @@ class EngineConfig:
     # default and deliberately subtle; players who want a clean frame turn it
     # off. Honoured in DialogueScene.draw.
     show_status_hud: bool = True
+
+    # Per-choice affection feedback: when True, an affection-affecting choice
+    # surfaces a subtle "好感度 +N" toast for the character at the moment it
+    # resolves, so the stat that silently decides the route is legible. The
+    # named-threshold relationship toast ("「在意你」") always fires regardless;
+    # this controls only the lighter per-change "+N" beat. On by default and
+    # deliberately brief; players who find a per-choice number too gamey for a
+    # narrative VN can turn it off. Honoured in GameState.apply_all.
+    show_affection_feedback: bool = True
 
     # Per-character voice volume overrides keyed by speaker id; speakers
     # absent here fall back to ``voice_volume``. UI lives in the settings

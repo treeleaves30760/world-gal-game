@@ -194,31 +194,45 @@ class GameState(BaseModel):
 
     def _queue_affection_toasts(self, pre_affection: dict[str, dict[str, int]],
                                 out: list[dict[str, Any]]) -> None:
-        """Enqueue a relationship toast for every NAMED affection threshold this
-        batch just crossed (e.g. "林青衣 ·「在意你」").
+        """Enqueue affection feedback for this batch: a lightweight per-change
+        "好感度 +N" beat AND a relationship toast for every NAMED threshold just
+        crossed (e.g. "林青衣 ·「在意你」").
 
-        Driven purely off the data ``check_thresholds`` / ``crossed_thresholds``
-        model: for each tracked character we diff the pre-batch ``affection``
-        value against the post-batch value and emit one ``notice`` toast per
-        threshold whose ``value`` was crossed upward. The character's display
-        name comes from the parked NPC registry when available, else the id.
-        Isolated: a failure here never disturbs effect application.
+        Driven purely off the data model (``crossed_thresholds`` + a plain
+        before/after diff): for each tracked character we diff the pre-batch
+        ``affection`` value against the post-batch value. A non-zero net change
+        emits one ``affection`` toast carrying the signed delta; the App's toast
+        loop gates *rendering* of that kind on ``config.show_affection_feedback``
+        (so this stays data-only and headless-safe). Each named threshold the
+        stat rose past additionally emits a ``notice`` toast (always shown — a
+        route-gate beat is never noise). The character's display name comes from
+        the parked NPC registry when available, else the id. Isolated: a failure
+        here never disturbs effect application.
         """
         try:
             registry = self.meta.get("__npc_registry__")
             for cid, ca in self.affection.characters.items():
                 before = (pre_affection.get(cid) or {}).get("affection", 0)
                 after = ca.stats.get("affection", 0)
-                crossed = ca.crossed_thresholds(before, after, "affection")
-                if not crossed:
-                    continue
+                delta = after - before
                 name = cid
                 if registry is not None:
                     npc = registry.get(cid)
                     if npc is not None and getattr(npc, "name", None):
                         name = npc.name
                 queue = self.meta.setdefault("__pending_toasts__", [])
-                for th in crossed:
+                # Lightweight per-choice feedback: a subtle signed "好感度 +N"
+                # for the affected character. ("affection", name, delta) — the
+                # App renders it only when show_affection_feedback is on. This is
+                # surfaced purely via the toast queue (a side channel); it is
+                # deliberately NOT appended to ``out`` so apply_all keeps its
+                # historical "one result per effect (+ rare synthetic unlock
+                # rows)" shape — appending a row on every affection delta would
+                # break callers that unpack a single-effect batch.
+                if delta != 0:
+                    queue.append(("affection", name, delta))
+                # Named thresholds crossed upward: the heavier relationship beat.
+                for th in ca.crossed_thresholds(before, after, "affection"):
                     # ("notice", title, detail) — the App's toast loop renders
                     # title + detail. Keep the relationship beat in the detail.
                     queue.append(("notice", name, f"「{th.name}」"))

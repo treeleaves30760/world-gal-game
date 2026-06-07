@@ -1091,6 +1091,21 @@ class GalGameApp:
                         detail=f"{sign}{sym}{delta}",
                         icon=d.icon if d else None,
                     ))
+                elif kind == "affection":
+                    # Per-choice affection feedback: a subtle signed "好感度 +N"
+                    # for the affected character (`key` is the name, `delta` the
+                    # signed change). Gated on the user setting so a player who
+                    # finds a per-choice number too gamey can silence it; the
+                    # heavier named-threshold "notice" beat is unaffected. Brief
+                    # (2.2s) so it reads as an accent, not an interruption.
+                    if not getattr(self.config, "show_affection_feedback", True):
+                        continue
+                    sign = "+" if delta > 0 else ""
+                    self.toast_stack.push(Toast(
+                        title=str(key),
+                        detail=f"好感度 {sign}{delta}",
+                        icon=None, duration=2.2,
+                    ))
                 elif kind == "notice":
                     # `key` is the title, `delta` is the detail text.
                     self.toast_stack.push(Toast(
