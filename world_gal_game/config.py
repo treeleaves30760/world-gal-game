@@ -30,6 +30,7 @@ _PERSISTED_SETTING_FIELDS: tuple[str, ...] = (
     "skip_unread_only",
     "nvl_mode",
     "rollback_enabled",
+    "show_status_hud",
     "dim_inactive_speakers",
     "auto_emote_on_emotion",
     "reduce_motion",
@@ -261,6 +262,13 @@ class EngineConfig:
     # the current scene). Built on the same snapshot/restore machinery the
     # headless agent layer uses for branch exploration. Bound to Backspace.
     rollback_enabled: bool = True
+
+    # Persistent chapter/date HUD: a small, unobtrusive corner indicator shown
+    # during dialogue with the current chapter title (from current_chapter ->
+    # ChapterManifest) and the in-game date/time (TimeSystem.label). On by
+    # default and deliberately subtle; players who want a clean frame turn it
+    # off. Honoured in DialogueScene.draw.
+    show_status_hud: bool = True
 
     # Per-character voice volume overrides keyed by speaker id; speakers
     # absent here fall back to ``voice_volume``. UI lives in the settings

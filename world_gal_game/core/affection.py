@@ -53,6 +53,29 @@ class CharacterAffection(BaseModel):
                         newly_unlocked.append(u)
         return newly_unlocked
 
+    def crossed_thresholds(self, before: int, after: int,
+                           stat: str = "affection") -> list[AffectionThreshold]:
+        """Named thresholds whose ``value`` lies in ``(before, after]``.
+
+        Pure (no mutation): given a stat's value before and after an
+        adjustment, return the thresholds the stat just rose past, so the
+        UI can surface "crossed «在意你»". Only thresholds with a non-empty
+        ``name`` are returned (anonymous tiers stay silent). Empty when the
+        stat did not rise (``after <= before``).
+        """
+        if after <= before:
+            return []
+        return [th for th in self.thresholds
+                if th.name and before < th.value <= after]
+
+
+# Convenience alias used by the relationship-status UI: the tier bands shared
+# with localization.affection_label, exposed so tests/tools can introspect them.
+DEFAULT_AFFECTION_BANDS: tuple[tuple[int, str], ...] = (
+    (0, "敵意"), (10, "陌生"), (25, "認識"), (50, "朋友"),
+    (80, "好友"), (120, "心動"), (150, "戀人"),
+)
+
 
 class AffectionTracker(BaseModel):
     """Top-level tracker for all character affections."""

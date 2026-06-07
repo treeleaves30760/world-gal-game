@@ -1,4 +1,5 @@
 """Ending evaluation (mirrors tests/test_achievements.py)."""
+from world_gal_game.core.clear_data import ClearData
 from world_gal_game.core.endings import Ending, EndingTracker
 from world_gal_game.core.game_state import GameState
 from world_gal_game.core.story_graph import Condition, Effect
@@ -57,3 +58,44 @@ def test_ending_round_trip_via_route_id():
     restored = Ending.model_validate(e.model_dump())
     assert restored.route_id == "heroine_1"
     assert restored.hidden is True
+
+
+# --------------------------------------------------------------------------
+# Fix 3: EndingTracker.get -> ClearData.cleared_routes -> cleared_route gate.
+# Regression: without EndingTracker.get, record_from_state could never read an
+# ending's route_id, so cleared_routes stayed empty and NG+ gates never fired.
+# --------------------------------------------------------------------------
+def test_ending_tracker_get_returns_registered_ending():
+    t = EndingTracker()
+    t.register(Ending(id="ending_x", title="X", route_id="route_x"))
+    assert t.get("ending_x").route_id == "route_x"
+    assert t.get("missing") is None
+
+
+def test_clear_data_records_route_from_unlocked_ending():
+    """Clearing a route's ending records its route_id into cleared_routes."""
+    s = GameState()
+    s.endings.register(Ending(id="ending_qingyi_lover", title="湖畔",
+                              route_id="qingyi"))
+    s.endings.unlocked["ending_qingyi_lover"] = "2026-01-01T00:00:00"
+    cd = ClearData()
+    changed = cd.record_from_state(s)
+    assert changed is True
+    assert "qingyi" in cd.cleared_routes
+    assert "ending_qingyi_lover" in cd.endings_seen
+
+
+def test_cleared_route_condition_true_on_ng_plus():
+    """End-to-end: an ending cleared in a prior run satisfies the
+    cleared_route gate on a fresh New Game+ state."""
+    prev = GameState()
+    prev.endings.register(Ending(id="ending_qingyi", title="戀人",
+                                 route_id="qingyi"))
+    prev.endings.unlocked["ending_qingyi"] = "2026-01-01T00:00:00"
+    cd = ClearData()
+    cd.record_from_state(prev)
+
+    fresh = GameState()
+    fresh.meta["__clear_data__"] = cd
+    assert fresh.evaluate(Condition(kind="cleared_route", target="qingyi"))
+    assert not fresh.evaluate(Condition(kind="cleared_route", target="other"))

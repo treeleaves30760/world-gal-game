@@ -51,6 +51,16 @@ class EndingTracker(BaseModel):
     def register(self, ending: Ending) -> None:
         self.endings[ending.id] = ending
 
+    def get(self, ending_id: str) -> Ending | None:
+        """Look up a registered ending by id (``None`` if unknown).
+
+        ``ClearData.record_from_state`` relies on this to read each unlocked
+        ending's ``route_id`` into the cross-playthrough ``cleared_routes`` set
+        (the New Game+ ``cleared_route`` gate). Without it, the route-clear
+        gate never satisfies.
+        """
+        return self.endings.get(ending_id)
+
     def is_unlocked(self, ending_id: str) -> bool:
         return ending_id in self.unlocked
 

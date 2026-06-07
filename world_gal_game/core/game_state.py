@@ -192,13 +192,55 @@ class GameState(BaseModel):
         except Exception as exc:
             _log.exception("hook fire '%s' failed: %s", event, exc)
 
+    def _queue_affection_toasts(self, pre_affection: dict[str, dict[str, int]],
+                                out: list[dict[str, Any]]) -> None:
+        """Enqueue a relationship toast for every NAMED affection threshold this
+        batch just crossed (e.g. "林青衣 ·「在意你」").
+
+        Driven purely off the data ``check_thresholds`` / ``crossed_thresholds``
+        model: for each tracked character we diff the pre-batch ``affection``
+        value against the post-batch value and emit one ``notice`` toast per
+        threshold whose ``value`` was crossed upward. The character's display
+        name comes from the parked NPC registry when available, else the id.
+        Isolated: a failure here never disturbs effect application.
+        """
+        try:
+            registry = self.meta.get("__npc_registry__")
+            for cid, ca in self.affection.characters.items():
+                before = (pre_affection.get(cid) or {}).get("affection", 0)
+                after = ca.stats.get("affection", 0)
+                crossed = ca.crossed_thresholds(before, after, "affection")
+                if not crossed:
+                    continue
+                name = cid
+                if registry is not None:
+                    npc = registry.get(cid)
+                    if npc is not None and getattr(npc, "name", None):
+                        name = npc.name
+                queue = self.meta.setdefault("__pending_toasts__", [])
+                for th in crossed:
+                    # ("notice", title, detail) — the App's toast loop renders
+                    # title + detail. Keep the relationship beat in the detail.
+                    queue.append(("notice", name, f"「{th.name}」"))
+                    out.append({"kind": "affection_threshold", "target": cid,
+                                "threshold": th.name, "value": th.value})
+        except Exception as exc:
+            _log.exception("affection toast queueing failed: %s", exc)
+
     def apply_all(self, effs: list[Effect]) -> list[dict[str, Any]]:
         out: list[dict[str, Any]] = []
         # Capture pre-state so we can surface what changed (for toasts).
         pre_inventory = dict(self.inventory.counts)
         pre_resources = dict(self.resources.values)
+        # Per-character affection snapshot, so a NAMED threshold crossed by this
+        # batch can be surfaced as a relationship toast (mirrors clues below).
+        pre_affection = {
+            cid: dict(ca.stats)
+            for cid, ca in self.affection.characters.items()
+        }
         for e in effs:
             out.append(self.apply(e))
+        self._queue_affection_toasts(pre_affection, out)
         # Re-evaluate achievements after any state mutation. Newly
         # unlocked ones go into the event log so they're visible in the
         # journal alongside other story beats.

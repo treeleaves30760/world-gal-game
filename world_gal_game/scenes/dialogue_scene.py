@@ -1721,6 +1721,13 @@ class DialogueScene(Scene):
                 self.choices and self.choices.visible):
             self._quick_bar.draw(surface)
 
+        # Persistent chapter/date HUD (top-left, subtle): shown while the UI is
+        # visible and a choice menu is not up, so it never overlaps the choice
+        # panel. Gated behind config.show_status_hud (on by default).
+        if (not self._ui_hidden and not showing_choices
+                and getattr(self.ctx.config, "show_status_hud", True)):
+            self._draw_status_hud(surface)
+
         # Playback-mode badges (AUTO / SKIP), or the restore hint when hidden.
         if not self._ui_hidden:
             self._draw_mode_indicators(surface)
@@ -1761,6 +1768,62 @@ class DialogueScene(Scene):
             surface.blit(badge, rect.topleft)
             surface.blit(ts, (rect.x + pad_x, rect.y + pad_y))
             y += h + gap
+
+    def _current_chapter_title(self) -> str | None:
+        """Resolve ``state.current_chapter`` to its ChapterManifest title.
+
+        Returns None when there is no chapter cursor / no manifest / the id is
+        unknown — the HUD then shows only the date line. Never raises."""
+        try:
+            cid = getattr(self.ctx.state, "current_chapter", None)
+            if not cid:
+                return None
+            manifest = self.ctx.state.meta.get("__chapters__")
+            if manifest is None:
+                return None
+            spec = next((c for c in manifest.chapters if c.id == cid), None)
+            if spec is None:
+                return None
+            return spec.title or cid
+        except Exception:
+            return None
+
+    def _draw_status_hud(self, surface: pygame.Surface) -> None:
+        """Draw a subtle top-left chapter/date indicator.
+
+        Two stacked lines inside one low-alpha pill: the current chapter title
+        (omitted when unknown) above the in-game date/time
+        (``TimeSystem.label``). Functional, non-decorative, and deliberately
+        unobtrusive so it doesn't compete with the art. Never raises."""
+        try:
+            theme = self.ctx.theme
+            chapter = self._current_chapter_title()
+            date = self.ctx.state.time.label()
+            lines: list[tuple[str, int, tuple]] = []
+            if chapter:
+                lines.append((chapter, 15, theme.accent_warm))
+            if date:
+                lines.append((date, 14, theme.text_mute))
+            if not lines:
+                return
+            surfs = [self.ctx.fonts.render(t, sz, col) for t, sz, col in lines]
+            pad_x, pad_y, line_gap = 12, 7, 3
+            w = max(s.get_width() for s in surfs) + pad_x * 2
+            h = sum(s.get_height() for s in surfs) \
+                + line_gap * (len(surfs) - 1) + pad_y * 2
+            x, y = 16, 16
+            pill = pygame.Surface((w, h), pygame.SRCALPHA)
+            pygame.draw.rect(pill, (*theme.bg_overlay[:3], 170),
+                             pill.get_rect(), border_radius=theme.radius_s)
+            pygame.draw.rect(pill, (*theme.accent_warm[:3], 70),
+                             pill.get_rect(), 1, border_radius=theme.radius_s)
+            cy = pad_y
+            for s in surfs:
+                pill.blit(s, (pad_x, cy))
+                cy += s.get_height() + line_gap
+            surface.blit(pill, (x, y))
+        except Exception:
+            pass
 
     def describe(self) -> dict:
         return {

@@ -32,6 +32,7 @@ from .scenes.dialogue_scene import DialogueScene
 from .scenes.map_scene import MapScene
 from .scenes.destination_picker import DestinationPickerScene
 from .scenes.affection_scene import AffectionScene
+from .scenes.relationships_scene import RelationshipsScene
 from .scenes.event_log_scene import EventLogScene
 from .scenes.save_scene import SaveScene
 from .scenes.npc_action_scene import NPCActionScene
@@ -474,6 +475,7 @@ class GalGameApp:
             on_endings=from_menu(self._open_endings),
             on_scene_replay=from_menu(self._open_scene_replay),
             on_flowchart=from_menu(self._open_flowchart),
+            on_relationships=from_menu(self._open_relationships),
             on_character_profiles=from_menu(self._open_character_profiles),
             on_quest_log=from_menu(self._open_quest_log),
             on_clues=from_menu(self._open_clues),
@@ -539,6 +541,11 @@ class GalGameApp:
         """
         self.manager.push(FlowchartScene(self.ctx),
                           on_close=self.manager.pop, on_jump=None)
+
+    def _open_relationships(self) -> None:
+        """Open the read-only relationship-status panel (affection legibility)."""
+        self.manager.push(RelationshipsScene(self.ctx),
+                          on_close=self.manager.pop)
 
     def _open_character_profiles(self) -> None:
         self.manager.push(CharacterProfileScene(self.ctx),
