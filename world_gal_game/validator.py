@@ -862,6 +862,10 @@ class _RefIndex:
     # display name -> character id, so a line's ``speaker`` (a display name)
     # can be resolved back to the character whose ``expression`` it sets.
     character_names: dict[str, str] = field(default_factory=dict)
+    # character ids flagged ``is_heroine: true`` — used by the speaker↔portrait
+    # mismatch check to recognise the flagship "incidental NPC carrying a
+    # heroine's portrait" bug with high confidence.
+    heroine_ids: set[str] = field(default_factory=set)
 
 
 def _collect_scene_ids(data: Any) -> set[str]:
@@ -894,12 +898,14 @@ def _collect_simple_ids(data: Any, key: str) -> set[str]:
 
 def _collect_character_portraits(
     data: Any,
-) -> tuple[dict[str, set[str]], dict[str, str]]:
-    """Return (id -> declared portrait expression keys, display name -> id).
+) -> tuple[dict[str, set[str]], dict[str, str], set[str]]:
+    """Return (id -> declared portrait expression keys, display name -> id,
+    heroine ids).
 
     Used by the expression-reference check: a scene that names an
     ``expression`` not present in the character's declared ``portrait_set``
     silently falls back to the default face, which is almost always a bug.
+    The heroine-id set additionally feeds the speaker↔portrait mismatch check.
 
     The per-character key set is the ``portrait_set`` keys *plus* the stem of
     the default ``portrait`` file (e.g. ``normal`` for ``…/normal.png``). The
@@ -911,6 +917,7 @@ def _collect_character_portraits(
 
     portraits: dict[str, set[str]] = {}
     names: dict[str, str] = {}
+    heroines: set[str] = set()
     raw_chars: list[Any] = []
     if isinstance(data, dict) and "characters" in data:
         raw_chars = data["characters"] or []
@@ -930,7 +937,9 @@ def _collect_character_portraits(
         name = raw.get("name")
         if isinstance(name, str) and name:
             names[name] = cid
-    return portraits, names
+        if raw.get("is_heroine") is True:
+            heroines.add(cid)
+    return portraits, names, heroines
 
 
 # ---------------------------------------------------------------------------
@@ -1040,6 +1049,98 @@ def _check_expression_ref(
     )
 
 
+def _check_speaker_portrait_match(
+    raw_line: dict, *, file: str, path: str, index: _RefIndex,
+) -> ValidationIssue | None:
+    """Warn when a line's speaker and its single portrait belong to different
+    characters — the recurring "wrong face on screen" bug.
+
+    At runtime an explicit ``portrait: {character: X}`` (or a single
+    ``portraits: [{character: X}]``) shows X's face regardless of who speaks, so
+    a line whose ``speaker`` is character A but whose lone portrait is character
+    B renders B's face under A's name. The latest instance was a male NPC's
+    lines carrying a heroine's portrait.
+
+    The rule is deliberately narrow to stay low-false-positive — *legitimate*
+    VN reaction shots (showing someone else's face while a character speaks) are
+    common, so we only flag the two high-confidence shapes:
+
+    1. The line has a non-empty ``speaker`` that is **not** an interpolation
+       token (``{player_name}`` etc.) — the protagonist routinely has no own
+       portrait and legitimately keeps the listener's face on screen, so a
+       ``{...}`` speaker is never flagged. Narration (no speaker) is never
+       flagged.
+    2. The line has **exactly one** explicit portrait carrying a ``character``
+       id — a single ``portraits`` entry or the dict form of ``portrait``.
+       Multi-portrait staging is a deliberate multi-character composition where
+       reaction shots are expected, so it is never flagged.
+    3. That portrait ``character`` is a **declared** character id (a typo'd id
+       is caught by the asset-existence check instead).
+    4. The portrait ``character`` differs from the speaker's resolved character
+       id (the speaker display name resolved via the name index; an unknown
+       speaker name resolves to itself and cannot equal a declared id).
+    5. AND one of two high-confidence signals holds:
+       (a) the speaker is **also a declared character** (both sides are real
+           characters with their own faces — a lone non-speaker portrait is
+           almost always a wrong-id copy/paste), or
+       (b) the portrait ``character`` is a **heroine** while the speaker is a
+           different identity (the flagship "incidental / male NPC carrying a
+           heroine's portrait" case).
+
+    Returns a warning-level issue, or ``None`` when the rule does not apply.
+    """
+    speaker = raw_line.get("speaker")
+    if not isinstance(speaker, str) or not speaker:
+        return None  # narration — no speaker to mismatch
+    # A ``{...}`` interpolation-token speaker is the protagonist / a dynamic
+    # name; the player character has no own portrait and legitimately keeps the
+    # listener's face on screen, so never flag these.
+    if "{" in speaker and "}" in speaker:
+        return None
+
+    # Gather explicit portrait specs that carry a character id. The dict form of
+    # ``portrait`` and each ``portraits`` entry qualify; a bare string portrait
+    # or expression-only line has no explicit character and is out of scope.
+    specs: list[dict] = []
+    raw_ports = raw_line.get("portraits")
+    if isinstance(raw_ports, list):
+        specs.extend(p for p in raw_ports if isinstance(p, dict))
+    if isinstance(raw_line.get("portrait"), dict):
+        specs.append(raw_line["portrait"])
+    with_char = [p for p in specs if isinstance(p.get("character"), str)
+                 and p.get("character")]
+    # Exactly one portrait character on the line, else it is a multi-character
+    # composition (reaction shots expected) — don't flag.
+    if len(with_char) != 1:
+        return None
+    port_char = with_char[0]["character"]
+
+    # The portrait character must be a real declared character.
+    if port_char not in index.character_ids:
+        return None
+
+    # Resolve the speaker (a display name) to its character id; an unknown name
+    # resolves to itself, which won't equal any declared id.
+    speaker_id = index.character_names.get(speaker, speaker)
+    if speaker_id == port_char:
+        return None  # speaker and portrait agree — fine
+
+    speaker_is_char = speaker in index.character_names
+    port_is_heroine = port_char in index.heroine_ids
+    if not (speaker_is_char or port_is_heroine):
+        return None  # neither high-confidence signal → likely a reaction shot
+
+    hint = ("把 portrait.character 改成說話者本人，或移除 portrait 讓引擎"
+            "依說話者解析立繪；若這是刻意的『反應鏡頭』（顯示他人立繪），"
+            "可忽略此警告。")
+    return ValidationIssue(
+        severity="warning", file=file, path=path,
+        message=(f"說話者 '{speaker}' 的這句台詞，立繪卻是另一個角色 "
+                 f"'{port_char}'，畫面會顯示錯誤的臉。"),
+        hint=hint,
+    )
+
+
 def _check_refs_scenes(data: Any, *, file: str, index: _RefIndex) -> list[ValidationIssue]:
     issues: list[ValidationIssue] = []
     raw_scenes: list[Any] = []
@@ -1098,6 +1199,11 @@ def _check_refs_scenes(data: Any, *, file: str, index: _RefIndex) -> list[Valida
                     file=file, path=f"{lp}.expression", index=index)
                 if iss is not None:
                     issues.append(iss)
+            # (c) Speaker↔portrait-character mismatch (wrong face on screen).
+            iss = _check_speaker_portrait_match(
+                raw_line, file=file, path=lp, index=index)
+            if iss is not None:
+                issues.append(iss)
 
         # choice effects + next_scene
         for ci, raw_choice in enumerate(raw_scene.get("choices") or []):
@@ -1287,9 +1393,10 @@ def validate_pack(pack_root: Path) -> list[ValidationIssue]:
             index.scene_ids |= _collect_scene_ids(data)
         elif name == "characters.yaml":
             index.character_ids |= _collect_simple_ids(data, "characters")
-            ps, nm = _collect_character_portraits(data)
+            ps, nm, heroines = _collect_character_portraits(data)
             index.character_portraits.update(ps)
             index.character_names.update(nm)
+            index.heroine_ids |= heroines
         elif name == "locations.yaml":
             index.location_ids |= _collect_simple_ids(data, "locations")
         elif name == "items.yaml":

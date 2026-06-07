@@ -590,3 +590,140 @@ def test_expression_not_checked_without_portrait_set(tmp_path: Path) -> None:
         ]},
     ]})
     assert _expr_warnings(validate_pack(tmp_path)) == []
+
+
+# ---------------------------------------------------------------------------
+# Guard 1: speaker ↔ portrait-character mismatch ("wrong face on screen").
+# ---------------------------------------------------------------------------
+
+def _mismatch_warnings(issues: list[ValidationIssue]) -> list[ValidationIssue]:
+    return [i for i in issues
+            if i.severity == "warning" and "立繪卻是另一個角色" in i.message]
+
+
+def _pack_with_npc_and_heroine(root: Path) -> None:
+    """Pack with one heroine (yuening, is_heroine) and one ordinary declared
+    character (senpai), so both mismatch sub-cases can be exercised."""
+    _make_minimal_pack(root)
+    _write(root / "content" / "characters.yaml", {"characters": [
+        {"id": "hero_a", "name": "Hero A"},
+        {"id": "yuening", "name": "沈月凝", "is_heroine": True,
+         "portrait": "assets/characters/yuening/normal.png",
+         "portrait_set": {"normal": "n.png", "scared": "s.png"}},
+        {"id": "senpai", "name": "研究生學長"},
+    ]})
+
+
+def test_speaker_portrait_mismatch_incidental_npc_with_heroine_portrait(
+        tmp_path: Path) -> None:
+    """The flagship bug: an incidental/other NPC's line carries a heroine's lone
+    portrait (sub-case b) -> warning naming both sides."""
+    _pack_with_npc_and_heroine(tmp_path)
+    _write(tmp_path / "content" / "scenes" / "mm.yaml", {"scenes": [
+        {"id": "scene_mm", "title": "M", "lines": [
+            {"speaker": "研究生學長", "text": "...",
+             "portrait": {"character": "yuening", "expression": "normal"}},
+        ]},
+    ]})
+    warns = _mismatch_warnings(validate_pack(tmp_path))
+    assert len(warns) == 1, f"expected one mismatch warning, got: {warns}"
+    assert "研究生學長" in warns[0].message and "yuening" in warns[0].message
+    assert warns[0].hint  # carries a fix hint
+
+
+def test_speaker_portrait_mismatch_two_declared_characters(
+        tmp_path: Path) -> None:
+    """Both speaker and portrait are declared characters with their own faces;
+    a lone non-speaker portrait (sub-case a) is almost always a wrong-id paste."""
+    _pack_with_npc_and_heroine(tmp_path)
+    _write(tmp_path / "content" / "scenes" / "mm.yaml", {"scenes": [
+        {"id": "scene_mm", "title": "M", "lines": [
+            # senpai speaks, but the single portrait is Hero A.
+            {"speaker": "研究生學長", "text": "...",
+             "portraits": [{"character": "hero_a"}]},
+        ]},
+    ]})
+    warns = _mismatch_warnings(validate_pack(tmp_path))
+    assert len(warns) == 1, f"expected one mismatch warning, got: {warns}"
+    assert "hero_a" in warns[0].message
+
+
+def test_speaker_matches_portrait_no_warning(tmp_path: Path) -> None:
+    """Speaker resolves to the same character as the portrait -> no warning."""
+    _pack_with_npc_and_heroine(tmp_path)
+    _write(tmp_path / "content" / "scenes" / "ok.yaml", {"scenes": [
+        {"id": "scene_ok", "title": "OK", "lines": [
+            {"speaker": "沈月凝", "text": "...",
+             "portrait": {"character": "yuening", "expression": "normal"}},
+        ]},
+    ]})
+    assert _mismatch_warnings(validate_pack(tmp_path)) == []
+
+
+def test_narration_line_never_flagged(tmp_path: Path) -> None:
+    """A narration line (no speaker) showing a heroine's portrait is fine."""
+    _pack_with_npc_and_heroine(tmp_path)
+    _write(tmp_path / "content" / "scenes" / "narr.yaml", {"scenes": [
+        {"id": "scene_narr", "title": "N", "lines": [
+            {"text": "the camera lingers on her face",
+             "portrait": {"character": "yuening"}},
+        ]},
+    ]})
+    assert _mismatch_warnings(validate_pack(tmp_path)) == []
+
+
+def test_player_token_speaker_never_flagged(tmp_path: Path) -> None:
+    """A ``{player_name}`` speaker is the faceless protagonist; keeping the
+    listener's (heroine's) portrait on screen is the VN norm -> never flagged."""
+    _pack_with_npc_and_heroine(tmp_path)
+    _write(tmp_path / "content" / "scenes" / "pc.yaml", {"scenes": [
+        {"id": "scene_pc", "title": "PC", "lines": [
+            {"speaker": "{player_name}", "text": "「我幫你。」",
+             "portrait": {"character": "yuening", "expression": "normal"}},
+        ]},
+    ]})
+    assert _mismatch_warnings(validate_pack(tmp_path)) == []
+
+
+def test_multi_portrait_reaction_shot_not_flagged(tmp_path: Path) -> None:
+    """A multi-character composition (>1 portrait) is deliberate staging where
+    reaction shots are expected -> never flagged, even if the speaker isn't the
+    only face shown."""
+    _pack_with_npc_and_heroine(tmp_path)
+    _write(tmp_path / "content" / "scenes" / "multi.yaml", {"scenes": [
+        {"id": "scene_multi", "title": "Multi", "lines": [
+            {"speaker": "研究生學長", "text": "...", "portraits": [
+                {"character": "senpai", "slot": "left"},
+                {"character": "yuening", "slot": "right"},
+            ]},
+        ]},
+    ]})
+    assert _mismatch_warnings(validate_pack(tmp_path)) == []
+
+
+def test_reaction_shot_of_non_heroine_not_flagged(tmp_path: Path) -> None:
+    """A single non-heroine portrait while a *non-declared* speaker talks hits
+    neither high-confidence signal (speaker isn't a character, portrait isn't a
+    heroine) -> treated as a legitimate reaction shot, not flagged."""
+    _make_minimal_pack(tmp_path)  # hero_a is the only declared char (not heroine)
+    _write(tmp_path / "content" / "scenes" / "rs.yaml", {"scenes": [
+        {"id": "scene_rs", "title": "RS", "lines": [
+            # An off-screen voice (not a declared character) over hero_a's face.
+            {"speaker": "廣播", "text": "...",
+             "portrait": {"character": "hero_a"}},
+        ]},
+    ]})
+    assert _mismatch_warnings(validate_pack(tmp_path)) == []
+
+
+def test_undeclared_portrait_character_not_a_mismatch(tmp_path: Path) -> None:
+    """A portrait whose character isn't declared is an asset/typo problem (its
+    own check), not a speaker-mismatch -> no mismatch warning from this guard."""
+    _pack_with_npc_and_heroine(tmp_path)
+    _write(tmp_path / "content" / "scenes" / "ud.yaml", {"scenes": [
+        {"id": "scene_ud", "title": "UD", "lines": [
+            {"speaker": "研究生學長", "text": "...",
+             "portrait": {"character": "nobody_xyz"}},
+        ]},
+    ]})
+    assert _mismatch_warnings(validate_pack(tmp_path)) == []

@@ -961,6 +961,8 @@ def self_check_main(argv: list[str]) -> int:
                                 description="Full 5-stage pack verification.")
     p.add_argument("pack", help="path to the pack directory")
     p.add_argument("--skip-smoke", action="store_true")
+    p.add_argument("--skip-softlock", action="store_true",
+                   help="skip the soft-lock linter stage")
     p.add_argument("--skip-reachability", action="store_true",
                    help="skip the ending-reachability (strand) stage")
     p.add_argument("--reachability-deep", action="store_true",
@@ -991,6 +993,7 @@ def self_check_main(argv: list[str]) -> int:
         stop_on_failure=not args.no_stop_on_failure,
         skip_smoke=args.skip_smoke,
         skip_visual=not args.include_visual,
+        skip_softlock=args.skip_softlock,
         skip_reachability=args.skip_reachability,
         reachability_deep=args.reachability_deep,
         reachability_max_nodes=args.reachability_max_nodes,

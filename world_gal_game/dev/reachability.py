@@ -305,6 +305,24 @@ class StrandFixpoint:
         flags are forbidden, so choices/edges that would set them are not taken
         and route B's content does not leak into route A's reachability.
         """
+        flags, chapters, _playable = self.closure_with_scenes(
+            seed_flags, seed_chapter, forbidden_flags)
+        return flags, chapters
+
+    def closure_with_scenes(
+        self, seed_flags: set[str],
+        seed_chapter: str | None = None,
+        forbidden_flags: set[str] | None = None,
+    ) -> tuple[set[str], set[str], set[str]]:
+        """Like :meth:`closure` but also returns the set of *playable* scene ids.
+
+        The playable set is the over-approximation of scenes reachable from the
+        seed under the same generous assumptions (affection/time/item gates
+        satisfiable, ``forbids`` ignored, choices that would set a forbidden flag
+        not taken). The soft-lock linter uses this to ask "is scene S reachable
+        in a state where its choice-gating flags are still unset?" by passing
+        those flags as ``forbidden_flags``.
+        """
         forbidden = set(forbidden_flags or set())
         flags = set(seed_flags)
         chapters: set[str] = set()
@@ -353,7 +371,7 @@ class StrandFixpoint:
                         if nc and nc not in chapters:
                             chapters.add(nc)
                             changed = True
-        return flags, chapters
+        return flags, chapters, playable
 
 
 # ----------------------------------------------------------------------

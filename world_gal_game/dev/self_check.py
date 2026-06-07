@@ -5,14 +5,17 @@ Stages, in order:
 1. **schema** — `validator.validate_pack` (pydantic + extra-field checks)
 2. **refs** — same `validate_pack` pass collects cross-file ref errors
 3. **dead_ends** — `PackInspector.dead_ends()` (orphan / unreachable / no-op)
-4. **reachability** — `EndingReachabilityChecker` (strand guard: can ordinary
+4. **softlock** — `SoftLockChecker` (every choice-bearing scene must offer ≥1
+   selectable option on every reachable path; catches a menu that can become
+   all-locked with no fallthrough — the stance-gated-climax defect class)
+5. **reachability** — `EndingReachabilityChecker` (strand guard: can ordinary
    play reach each declared ending / route-terminal ending? — catches a route
    that strands mid-arc, which from-anywhere reachability and the smoke runner
    both miss). The default verdict source is the fast, exhaustive *static*
    fixpoint (finishes in seconds with real ok/strand verdicts);
    ``reachability_deep`` opts in to the slow organic planner replay on top.
-5. **smoke** — `SmokeRunner.run()` (replays every `scripts/test_*.json`)
-6. **visual** — `VisualCheck.run()` (optional, requires SDL working)
+6. **smoke** — `SmokeRunner.run()` (replays every `scripts/test_*.json`)
+7. **visual** — `VisualCheck.run()` (optional, requires SDL working)
 
 Earlier stages gate later ones (default ``stop_on_failure=True``): if the
 schema check finds errors we don't bother running the later stages, since
@@ -44,7 +47,8 @@ _log = logging.getLogger("world_gal_game.dev.self_check")
 
 
 StageName = Literal[
-    "schema", "refs", "dead_ends", "reachability", "smoke", "visual"]
+    "schema", "refs", "dead_ends", "softlock", "reachability", "smoke",
+    "visual"]
 
 
 @dataclass
@@ -89,6 +93,7 @@ class SelfCheck:
                  *, stop_on_failure: bool = True,
                  skip_smoke: bool = False,
                  skip_visual: bool = True,
+                 skip_softlock: bool = False,
                  skip_reachability: bool = False,
                  reachability_deep: bool = False,
                  reachability_max_nodes: int = 700,
@@ -100,6 +105,8 @@ class SelfCheck:
         # baselines, and CI doesn't always have those — opt in explicitly).
         self.skip_smoke = skip_smoke
         self.skip_visual = skip_visual
+        # Soft-lock linter (static, fast) runs by default.
+        self.skip_softlock = skip_softlock
         # Reachability (the strand guard) runs by default. The default verdict
         # source is the fast, exhaustive *static* fixpoint (seconds, real
         # ok/strand verdicts); ``reachability_deep`` opts in to the slow organic
@@ -132,7 +139,20 @@ class SelfCheck:
         if self._should_stop(de, report):
             return report
 
-        # Stage 4: reachability (organic strand guard)
+        # Stage 4: soft-lock linter (static; every choice-bearing scene must
+        # offer a selectable option / fallthrough on every reachable path)
+        if self.skip_softlock:
+            report.stages.append(StageResult(
+                name="softlock", ok=True, skipped=True,
+                summary="softlock stage skipped",
+            ))
+        else:
+            sl = self._run_softlock()
+            report.stages.append(sl)
+            if self._should_stop(sl, report):
+                return report
+
+        # Stage 5: reachability (organic strand guard)
         if self.skip_reachability:
             report.stages.append(StageResult(
                 name="reachability", ok=True, skipped=True,
@@ -185,11 +205,13 @@ class SelfCheck:
                 "message": iss.message,
                 "hint": iss.hint,
             }
-            # Heuristic: cross-reference findings (unknown id/scene, or a scene
-            # naming an expression missing from a character's portrait_set) go
-            # into refs; the rest (schema/type/arg issues) into schema.
+            # Heuristic: cross-reference findings (unknown id/scene, a scene
+            # naming an expression missing from a character's portrait_set, or a
+            # speaker↔portrait-character mismatch) go into refs; the rest
+            # (schema/type/arg issues) into schema.
             if any(t in iss.message for t in ("不是已知", "next_scene",
-                                              "portrait_set 中")) \
+                                              "portrait_set 中",
+                                              "立繪卻是另一個角色")) \
                     or "scenes[" in iss.path and "next_scene" in iss.path:
                 ref_issues.append(payload)
             else:
@@ -231,6 +253,28 @@ class SelfCheck:
             ok=not de,
             summary=(f"{len(de)} dead-end(s)" if de else "no dead-ends"),
             details={"items": details},
+        )
+
+    def _run_softlock(self) -> StageResult:
+        """Static soft-lock linter — fails if any choice-bearing scene can be
+        reached in a state with no selectable choice and no fallthrough."""
+        from .softlock import SoftLockChecker
+        try:
+            chk = SoftLockChecker(self.pack_root)
+            locks = chk.check()
+        except Exception as exc:
+            return StageResult(
+                name="softlock", ok=False,
+                summary=f"soft-lock check raised: {exc}",
+                details={"error": str(exc)},
+            )
+        return StageResult(
+            name="softlock",
+            ok=not locks,
+            summary=(f"{len(locks)} potential soft-lock(s): "
+                     + ", ".join(s.scene_id for s in locks)
+                     if locks else "no soft-locks"),
+            details={"items": [s.to_dict() for s in locks]},
         )
 
     def _run_smoke(self) -> StageResult:
@@ -352,6 +396,7 @@ class SelfCheck:
     @staticmethod
     def _downstream_of(name: StageName) -> list[StageName]:
         order: list[StageName] = [
-            "schema", "refs", "dead_ends", "reachability", "smoke", "visual"]
+            "schema", "refs", "dead_ends", "softlock", "reachability",
+            "smoke", "visual"]
         idx = order.index(name)
         return order[idx + 1:]
