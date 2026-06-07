@@ -73,6 +73,29 @@ def _resource_name(state: "GameState | None", rid: str) -> str:
     return rid
 
 
+def _flag_label(state: "GameState | None", fid: str) -> str | None:
+    """A human label for a flag id, from the variable manifest's description.
+
+    A raw flag id (``qingyi_copyroom_done``) is meaningless to a player, so the
+    lock caption must never leak it. When the pack's ``variables.yaml`` declares
+    the flag with a ``description`` (e.g. "影印室劇情已完成"), that reads as the
+    label. Returns ``None`` when no description is available — the caller then
+    falls back to a generic phrase rather than the raw id. Never raises.
+    """
+    if not fid or state is None:
+        return None
+    try:
+        manifest = state.meta.get("__variables__")
+        if manifest is not None:
+            spec = manifest.get(fid) if hasattr(manifest, "get") else None
+            desc = getattr(spec, "description", "") if spec is not None else ""
+            if desc and desc.strip():
+                return desc.strip()
+    except Exception:
+        pass
+    return None
+
+
 def _chapter_title(state: "GameState | None", chid: str) -> str:
     if not chid or state is None:
         return chid
@@ -139,16 +162,23 @@ def _describe_condition_inner(cond: "Condition", state: "GameState | None",
         return f"{_NEED}與{who}的{_axis_label(stat)} < {value}"
 
     # ---- flags -----------------------------------------------------------
+    # Flags are internal ids, meaningless to a player. Prefer a human label
+    # from the variable manifest's description; otherwise phrase generically
+    # WITHOUT ever echoing the raw id (the old behaviour leaked e.g.
+    # "qingyi_copyroom_done").
     if kind == "flag":
         # A bare flag-truthy gate. When negated (it sits in forbids) it means
         # "this must not have happened yet".
+        label = _flag_label(state, target)
         if negated:
-            return f"{_NEED}尚未：{target}"
-        return f"{_NEED}已達成：{target}"
+            return f"{_NEED}尚未{label}" if label else f"{_NEED}尚未達成某些前置劇情"
+        return f"{_NEED}先完成{label}" if label else f"{_NEED}先完成某些前置劇情"
     if kind == "not_flag":
-        return f"{_NEED}尚未：{target}"
+        label = _flag_label(state, target)
+        return f"{_NEED}尚未{label}" if label else f"{_NEED}尚未達成某些前置劇情"
     if kind == "flag_eq":
-        return f"{_NEED}{target} = {value}"
+        label = _flag_label(state, target)
+        return f"{_NEED}{label}" if label else f"{_NEED}達成某些前置劇情"
 
     # ---- resources -------------------------------------------------------
     if kind == "resource_gte":
@@ -225,15 +255,53 @@ def choice_lock_reasons(requires, forbids,
     return out
 
 
+# Flag conditions whose phrasing is generic (no quantitative/relationship
+# meaning a player can act on directly). When a choice has a *more meaningful*
+# sibling gate (affection / chapter / time / item / resource), these are
+# suppressed from the caption so the player sees the actionable reason, not a
+# vague "先完成某些前置劇情".
+_FLAG_KINDS = frozenset({"flag", "not_flag", "flag_eq"})
+
+
+def _is_flagish(cond, state: "GameState | None") -> bool:
+    """True for a flag-shaped gate that has *no* human label to show.
+
+    A flag with a manifest description reads meaningfully (so it is kept); a
+    bare, label-less flag is the generic one we drop in favour of a richer
+    sibling reason. Never raises.
+    """
+    try:
+        if (getattr(cond, "kind", "") or "") not in _FLAG_KINDS:
+            return False
+        return _flag_label(state, getattr(cond, "target", "") or "") is None
+    except Exception:
+        return False
+
+
 def summarize_lock(requires, forbids, state: "GameState | None" = None,
                    *, max_reasons: int = 2) -> str:
     """A single short line summarising why a choice is locked.
+
+    Prefers the *meaningful* gates: when a choice fails both a generic
+    label-less flag gate and a richer one (affection / chapter / time / item /
+    resource), the bare flag reason is dropped so the caption reads e.g. "需要
+    與林青衣的好感度 ≥ 40" rather than a vague "先完成某些前置劇情". A flag with
+    a manifest description still reads (it is not label-less) and is kept.
 
     Joins up to ``max_reasons`` reasons with a comma; if more gates fail it
     appends an ellipsis so the menu line stays compact. Empty string when no
     gate failed (the choice is not actually locked). Never raises.
     """
-    reasons = choice_lock_reasons(requires, forbids, state)
+    reqs = list(requires or [])
+    forb = list(forbids or [])
+    # Drop label-less flag gates only when a richer sibling exists on the same
+    # choice; if flags are the *only* failing gates, keep them (the player still
+    # needs to know the choice is gated on prior progress).
+    meaningful_reqs = [c for c in reqs if not _is_flagish(c, state)]
+    meaningful_forb = [c for c in forb if not _is_flagish(c, state)]
+    if meaningful_reqs or meaningful_forb:
+        reqs, forb = meaningful_reqs, meaningful_forb
+    reasons = choice_lock_reasons(reqs, forb, state)
     if not reasons:
         return ""
     shown = reasons[:max_reasons]

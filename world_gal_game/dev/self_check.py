@@ -5,10 +5,12 @@ Stages, in order:
 1. **schema** — `validator.validate_pack` (pydantic + extra-field checks)
 2. **refs** — same `validate_pack` pass collects cross-file ref errors
 3. **dead_ends** — `PackInspector.dead_ends()` (orphan / unreachable / no-op)
-4. **reachability** — `EndingReachabilityChecker` (organic, start-to-finish
-   strand guard: can ordinary play reach each declared ending / route-terminal
-   ending? — catches a route that strands mid-arc, which from-anywhere
-   reachability and the smoke runner both miss)
+4. **reachability** — `EndingReachabilityChecker` (strand guard: can ordinary
+   play reach each declared ending / route-terminal ending? — catches a route
+   that strands mid-arc, which from-anywhere reachability and the smoke runner
+   both miss). The default verdict source is the fast, exhaustive *static*
+   fixpoint (finishes in seconds with real ok/strand verdicts);
+   ``reachability_deep`` opts in to the slow organic planner replay on top.
 5. **smoke** — `SmokeRunner.run()` (replays every `scripts/test_*.json`)
 6. **visual** — `VisualCheck.run()` (optional, requires SDL working)
 
@@ -88,6 +90,7 @@ class SelfCheck:
                  skip_smoke: bool = False,
                  skip_visual: bool = True,
                  skip_reachability: bool = False,
+                 reachability_deep: bool = False,
                  reachability_max_nodes: int = 700,
                  reachability_max_depth: int = 120,
                  reachability_time_budget_s: float = 30.0) -> None:
@@ -97,10 +100,13 @@ class SelfCheck:
         # baselines, and CI doesn't always have those — opt in explicitly).
         self.skip_smoke = skip_smoke
         self.skip_visual = skip_visual
-        # Reachability (the strand guard) runs by default; it is bounded so a CI
-        # run stays cheap. The budget is per ending — see
-        # ``EndingReachabilityChecker.check_all``.
+        # Reachability (the strand guard) runs by default. The default verdict
+        # source is the fast, exhaustive *static* fixpoint (seconds, real
+        # ok/strand verdicts); ``reachability_deep`` opts in to the slow organic
+        # planner replay on top. The node/time budgets apply only in deep mode —
+        # see ``EndingReachabilityChecker.check_all``.
         self.skip_reachability = skip_reachability
+        self.reachability_deep = reachability_deep
         self.reachability_max_nodes = reachability_max_nodes
         self.reachability_max_depth = reachability_max_depth
         self.reachability_time_budget_s = reachability_time_budget_s
@@ -264,6 +270,7 @@ class SelfCheck:
         try:
             chk = EndingReachabilityChecker(self.pack_root)
             results = chk.check_all(
+                deep=self.reachability_deep,
                 max_nodes=self.reachability_max_nodes,
                 max_depth=self.reachability_max_depth,
                 time_budget_s=self.reachability_time_budget_s)

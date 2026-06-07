@@ -400,26 +400,30 @@ class DialogueEngine:
             )
 
         # We've consumed all lines — surface choices or end.
-        available = [c for c in scene.choices if self._choice_available(c)]
-        hidden_locked = [c for c in scene.choices
-                         if not self._choice_available(c) and not c.hidden_if_locked]
-        if available or hidden_locked:
-            options = [
-                ChoiceOption(id=c.id, text=interpolate(c.text, self.state), enabled=True)
-                for c in available
-            ]
-            # Visible-but-locked choices carry a concise reason (the unmet
-            # gate, e.g. "需要 與林青衣的好感度 ≥ 40") so the UI can show *why*
-            # rather than a silent ghost button. ``hidden_if_locked`` choices
-            # were already filtered out above, so only legitimately-visible
-            # locked choices reach here.
-            options += [
-                ChoiceOption(id=c.id,
-                             text=interpolate(c.text, self.state),
-                             enabled=False,
-                             reason=self._choice_lock_reason(c))
-                for c in hidden_locked
-            ]
+        #
+        # Present visible choices in their AUTHORED order — do NOT hoist the
+        # available ones above the locked ones. Reordering by availability is an
+        # active UX hazard at a pivotal decision: if the only currently-enabled
+        # option is a give-up / bad-ending branch (the heroine routes still
+        # locked behind affection), availability-first would float that worst
+        # option to the top of the menu. Keeping the author's order means a
+        # locked heroine option renders in place — greyed, with its lock reason
+        # — and the give-up option stays where the author put it (typically
+        # last). ``hidden_if_locked`` choices are still dropped entirely; only a
+        # legitimately-visible locked choice reaches the list (carrying a
+        # concise reason so the UI shows *why*, not a silent ghost button).
+        options: list[ChoiceOption] = []
+        for c in scene.choices:
+            enabled = self._choice_available(c)
+            if not enabled and c.hidden_if_locked:
+                continue
+            options.append(ChoiceOption(
+                id=c.id,
+                text=interpolate(c.text, self.state),
+                enabled=enabled,
+                reason="" if enabled else self._choice_lock_reason(c),
+            ))
+        if options:
             return ScenePresentation(
                 kind="choice", choices=options,
                 scene_id=scene.id, title=scene.title,

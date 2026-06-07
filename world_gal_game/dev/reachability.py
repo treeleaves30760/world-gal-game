@@ -593,34 +593,51 @@ class EndingReachabilityChecker:
 
     # -- per-ending check ----------------------------------------------
 
-    def check_all(self, *, max_nodes: int = 700, max_depth: int = 120,
+    def check_all(self, *, deep: bool = False,
+                  max_nodes: int = 700, max_depth: int = 120,
                   time_budget_s: float = 30.0) -> list[EndingReachability]:
         """Check every declared ending; return one verdict each.
 
-        Budgets are per ending. The default keeps each organic search to roughly
-        ``time_budget_s`` wall-clock; raise them for a thorough offline run, or
-        rely on the static fixpoint (which is unbounded and exhaustive) for the
-        definitive verdicts on a large pack the planner can't fully explore.
-        """
-        from .planner import Planner
+        The DEFAULT (``deep=False``) is **fast and conclusive**: the static
+        :class:`StrandFixpoint` alone decides every flag-gated ending —
+        ``ok`` when its flags lie in the over-approximation closure, ``strand``
+        when they provably do not. The fixpoint is unbounded and exhaustive yet
+        runs in well under a second even on a large campus-map pack, so the
+        marquee ``self-check`` finishes in seconds with real verdicts (no
+        "unverified" budget-exhaustion theatre).
 
+        ``deep=True`` *additionally* runs the bounded organic
+        :class:`~world_gal_game.dev.planner.Planner` replay per ending — the
+        forward model itself, which sees runtime *ordering* the static pass
+        cannot, so it can (a) confirm a real start-to-finish path and (b) refute
+        a static strand that the over-approximation missed (a scene reached by a
+        mechanism the static model doesn't track). It is opt-in because it is the
+        slow part (``time_budget_s`` per ending); on a large pack most endings
+        run out their budget and return "unverified", which is why it is no
+        longer in the default path. The ``max_nodes`` / ``max_depth`` /
+        ``time_budget_s`` budgets apply only in deep mode.
+        """
         state = self._load()
         endings = list(getattr(getattr(state, "endings", None), "endings", {})
                        .values())
         declared = self._declared_flags()
         fixpoint = StrandFixpoint(state)
-        planner = Planner(str(self.pack_root), seed=self.seed)
+        planner = None
+        if deep:
+            from .planner import Planner
+            planner = Planner(str(self.pack_root), seed=self.seed)
 
         results: list[EndingReachability] = []
         for ending in sorted(endings, key=lambda e: getattr(e, "id", "")):
             results.append(self._check_one(
-                ending, declared, fixpoint, planner,
+                ending, declared, fixpoint, planner, deep=deep,
                 max_nodes=max_nodes, max_depth=max_depth,
                 time_budget_s=time_budget_s))
         return results
 
     def _check_one(self, ending: Any, declared: set[str],
                    fixpoint: StrandFixpoint, planner: Any, *,
+                   deep: bool = False,
                    max_nodes: int, max_depth: int,
                    time_budget_s: float) -> EndingReachability:
         eid = getattr(ending, "id", "") or "?"
@@ -648,11 +665,30 @@ class EndingReachabilityChecker:
             seed_flag_set, lockin_chapter, forbidden_flags=forbidden)
         static_ok = all(f in reach_flags for f in flags)
 
-        # 2) Bounded organic planner (sees runtime ordering the static pass
-        #    cannot). Goal = the first ending flag (they are AND-ed; the planner
-        #    checks one, the others travel with it on the same writer scene in
-        #    practice — and the static pass confirms all are writable when it
-        #    says ``static_ok``).
+        # DEFAULT FAST PATH: the static fixpoint is conclusive on its own. It is
+        # an over-approximation, so ``static_ok`` (flags in the closure) confirms
+        # a structural path exists, and a missing flag is a *proof* of a strand.
+        # No planner, no wall-clock budget — this is what keeps the default
+        # self-check to seconds with real ok/strand verdicts.
+        if not deep:
+            if static_ok:
+                return EndingReachability(
+                    ending_id=eid, status="ok", route=route, flags=flags,
+                    method="static",
+                    detail="statically reachable (over-approximation closure "
+                           "contains the ending flags)")
+            missing = [f for f in flags if f not in reach_flags]
+            return EndingReachability(
+                ending_id=eid, status="strand", route=route, flags=flags,
+                method="static",
+                detail=("static reachability proves no path sets "
+                        f"{missing} (over-approximation closure omits it)"))
+
+        # 2) DEEP MODE — bounded organic planner (sees runtime ordering the
+        #    static pass cannot). Goal = the first ending flag (they are AND-ed;
+        #    the planner checks one, the others travel with it on the same writer
+        #    scene in practice — and the static pass confirms all are writable
+        #    when it says ``static_ok``).
         goal = {"flag": flags[0]}
         try:
             res = planner.find_path(

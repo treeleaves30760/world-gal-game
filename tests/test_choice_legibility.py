@@ -76,10 +76,12 @@ def test_condition_text_covers_many_kinds_without_raising():
 
 
 def test_summarize_lock_joins_and_truncates():
+    # Three *meaningful* (non-flag) gates so none are suppressed; the ellipsis
+    # check exercises the truncation, not the de-flagging.
     reqs = [
         Condition(kind="affection_gte", target="a", value=40),
         Condition(kind="has_item", target="key"),
-        Condition(kind="flag", target="third"),
+        Condition(kind="resource_gte", target="money", value=100),
     ]
     one = summarize_lock([reqs[0]], [], None)
     assert "好感度 ≥ 40" in one
@@ -88,6 +90,46 @@ def test_summarize_lock_joins_and_truncates():
     assert "…" in many
     # nothing failing -> empty
     assert summarize_lock([], [], None) == ""
+
+
+def test_summarize_lock_drops_bare_flag_when_meaningful_sibling_exists():
+    """Fix 3: a label-less flag gate is suppressed in favour of a richer sibling
+    reason (affection), and crucially the raw flag id never leaks."""
+    reqs = [
+        Condition(kind="affection_gte", target="qingyi", value=40),
+        Condition(kind="flag", target="qingyi_copyroom_done"),
+    ]
+    text = summarize_lock(reqs, [], None)
+    assert "好感度 ≥ 40" in text
+    # the raw flag id must not leak, and the vague flag phrase is dropped
+    assert "qingyi_copyroom_done" not in text
+    assert "前置劇情" not in text
+
+
+def test_summarize_lock_keeps_flag_when_it_is_the_only_gate():
+    """A flag-only lock still produces a (generic, id-free) reason — the player
+    needs to know the choice is gated on prior progress."""
+    text = summarize_lock([Condition(kind="flag", target="secret_done")],
+                          [], None)
+    assert text                                   # non-empty
+    assert "secret_done" not in text              # no raw id
+    assert "前置劇情" in text                       # generic phrasing
+
+
+def test_flag_reason_uses_manifest_description_label():
+    """When variables.yaml gives the flag a description, it reads as the label
+    (still id-free)."""
+    from world_gal_game.core.variable_spec import VariableManifest, VariableSpec
+    state = GameState()
+    state.meta["__variables__"] = VariableManifest(variables={
+        "qingyi_copyroom_done": VariableSpec(
+            key="qingyi_copyroom_done", type="bool",
+            description="影印室劇情"),
+    })
+    txt = describe_condition(
+        Condition(kind="flag", target="qingyi_copyroom_done"), state)
+    assert "影印室劇情" in txt
+    assert "qingyi_copyroom_done" not in txt
 
 
 def test_locked_choice_yields_reason_on_presentation():
@@ -112,6 +154,40 @@ def test_locked_choice_yields_reason_on_presentation():
     assert "好感度" in locked.reason and "40" in locked.reason
     assert avail.enabled is True
     assert avail.reason == ""
+
+
+def test_choices_keep_authored_order_with_locked_first():
+    """Fix 1: visible choices are presented in AUTHORED order — a locked option
+    listed first stays first, and the lone enabled option is NOT hoisted to the
+    top. (At a pivotal route_choice this is the difference between nudging the
+    player toward the heroine routes vs. the give-up/bad-ending option.)"""
+    s1 = Scene(id="s1", lines=[Line(text="a")], choices=[
+        # Three locked heroine-style options first ...
+        Choice(id="hero_a", text="選A",
+               requires=[Condition(kind="affection_gte", target="a", value=40)]),
+        Choice(id="hero_b", text="選B",
+               requires=[Condition(kind="affection_gte", target="b", value=40)]),
+        Choice(id="hero_c", text="選C",
+               requires=[Condition(kind="affection_gte", target="c", value=40)]),
+        # ... then the only currently-enabled (give-up) option last.
+        Choice(id="give_up", text="我還沒辦法只選一個人"),
+    ])
+    state = GameState()
+    state.story.add_scene(s1)
+    for cid in ("a", "b", "c"):
+        state.affection.register(cid)         # all at 0 < 40 -> locked
+    eng = DialogueEngine(state)
+    eng.start_scene("s1")
+    pres = eng.next_line()
+    assert pres.kind == "choice"
+    # Order is preserved exactly as authored — give_up is LAST, not hoisted.
+    assert [c.id for c in pres.choices] == ["hero_a", "hero_b", "hero_c", "give_up"]
+    assert pres.choices[-1].id == "give_up" and pres.choices[-1].enabled is True
+    # The locked heroine options render in place, disabled, with a reason.
+    for c in pres.choices[:3]:
+        assert c.enabled is False
+        assert "好感度" in c.reason
+    assert pres.choices[-1].reason == ""
 
 
 def test_hidden_if_locked_choice_is_not_shown():

@@ -962,11 +962,17 @@ def self_check_main(argv: list[str]) -> int:
     p.add_argument("pack", help="path to the pack directory")
     p.add_argument("--skip-smoke", action="store_true")
     p.add_argument("--skip-reachability", action="store_true",
-                   help="skip the organic ending-reachability (strand) stage")
+                   help="skip the ending-reachability (strand) stage")
+    p.add_argument("--reachability-deep", action="store_true",
+                   help="also run the slow organic planner replay on top of the "
+                        "fast static fixpoint (default is static-only: seconds, "
+                        "real ok/strand verdicts). Deep mode can refute a static "
+                        "strand and confirm a real start-to-finish path, but most "
+                        "endings on a large pack run out their per-ending budget.")
     p.add_argument("--reachability-budget", type=float, default=30.0,
-                   help="per-ending wall-clock budget (s) for the strand search")
+                   help="(--reachability-deep) per-ending wall-clock budget (s)")
     p.add_argument("--reachability-max-nodes", type=int, default=700,
-                   help="per-ending node cap for the strand search")
+                   help="(--reachability-deep) per-ending node cap")
     p.add_argument("--include-visual", action="store_true",
                    help="also run the visual stage (off by default)")
     p.add_argument("--no-stop-on-failure", action="store_true",
@@ -986,6 +992,7 @@ def self_check_main(argv: list[str]) -> int:
         skip_smoke=args.skip_smoke,
         skip_visual=not args.include_visual,
         skip_reachability=args.skip_reachability,
+        reachability_deep=args.reachability_deep,
         reachability_max_nodes=args.reachability_max_nodes,
         reachability_time_budget_s=args.reachability_budget,
     )
@@ -1080,10 +1087,13 @@ def main(argv: list[str] | None = None) -> int:
     if args.headless:
         from world_gal_game.headless import run_inspect, run_script
         if args.script:
-            run_script(config, str(args.script), pack=args.pack,
-                       inspect_after=not args.no_inspect_after)
-        else:
-            run_inspect(config, pack=args.pack)
+            # Propagate the script's exit code: non-zero when any `assert` op
+            # failed or any op errored, so `--script s.json && echo OK` and CI
+            # gates actually catch a regression (a silent exit 0 once let a
+            # route-strand stay hidden).
+            return run_script(config, str(args.script), pack=args.pack,
+                              inspect_after=not args.no_inspect_after)
+        run_inspect(config, pack=args.pack)
         return 0
 
     # GUI mode (or screenshot mode, which is GUI but exits early).

@@ -286,6 +286,49 @@ def test_checker_passes_clean_twin(tmp_path: Path):
     assert not any(r.status == "strand" for r in results.values())
 
 
+def test_default_fast_path_is_static_and_conclusive(tmp_path: Path):
+    """Default (deep=False) decides every flag-gated ending from the static
+    fixpoint alone: real ok/strand verdicts, method 'static', and crucially NO
+    'unverified' / budget theatre and NO planner replay."""
+    pack = _write_fixture(tmp_path / "clean", strand=False)
+    chk = EndingReachabilityChecker(pack)
+    results = chk.check_all()        # default: no deep, no budgets needed
+    assert all(r.status == "ok" for r in results.values()) if isinstance(
+        results, dict) else True
+    # check_all returns a list; normalise
+    res_list = results if isinstance(results, list) else list(results.values())
+    assert {r.ending_id for r in res_list} == {"ending_red", "ending_blue"}
+    for r in res_list:
+        assert r.status == "ok"
+        assert r.method == "static"
+        assert r.status != "unverified"
+        # no planner ran -> no node/elapsed cost recorded
+        assert r.nodes == 0 and r.elapsed_s == 0.0
+
+
+def test_default_fast_path_still_catches_strand(tmp_path: Path):
+    """The static default must still PROVE the deliberately-orphaned blue route
+    a strand (the whole point of the guard)."""
+    pack = _write_fixture(tmp_path / "strand", strand=True)
+    results = {r.ending_id: r for r in EndingReachabilityChecker(pack).check_all()}
+    assert results["ending_blue"].status == "strand"
+    assert results["ending_blue"].method == "static"
+    assert results["ending_red"].status == "ok"
+
+
+def test_deep_mode_runs_planner_and_confirms(tmp_path: Path):
+    """Opt-in deep mode runs the organic planner; on the clean pack it confirms
+    the routes by replay (method 'planner', with a recorded path length)."""
+    pack = _write_fixture(tmp_path / "clean", strand=False)
+    chk = EndingReachabilityChecker(pack)
+    results = {r.ending_id: r for r in chk.check_all(
+        deep=True, max_nodes=4000, time_budget_s=30)}
+    assert results["ending_red"].status == "ok"
+    assert results["ending_blue"].status == "ok"
+    # At least one ending should have been confirmed by an actual planner replay.
+    assert any(r.method == "planner" and r.depth > 0 for r in results.values())
+
+
 def test_self_check_stage_fails_on_strand(tmp_path: Path):
     """The reachability stage fails the whole self-check on a strand and names
     the stranded ending in its summary."""

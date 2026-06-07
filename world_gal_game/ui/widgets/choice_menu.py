@@ -51,7 +51,8 @@ class ChoiceMenu(Widget):
         btn_w = min(760, self.rect.width - 120)
         btn_h = 60
         gap = 14
-        reason_h = 22   # extra space under a locked button for its reason line
+        # Extra space under a locked button for its (now larger) reason caption.
+        reason_h = 28
         title_h = 50
         # Per-row vertical extent (button + optional reason caption).
         row_heights = [btn_h + (reason_h if r[3] else 0) for r in rows] or [btn_h]
@@ -76,7 +77,7 @@ class ChoiceMenu(Widget):
                        style="primary" if enabled else "ghost")
             self.buttons.append(b)
             if reason:
-                self._reason_anchors.append((r.centerx, r.bottom + 3))
+                self._reason_anchors.append((r.centerx, r.bottom + 5))
                 y += btn_h + reason_h + gap
             else:
                 self._reason_anchors.append(None)
@@ -111,6 +112,10 @@ class ChoiceMenu(Widget):
             reason = self._reasons[i] if i < len(self._reasons) else ""
             if not reason:
                 continue
-            cap = self.fonts.render(reason, 14, self.theme.text_mute)
+            # Larger + warmer than before: the old size-14 muted-violet caption
+            # was nearly illegible. Amber (the same attention colour the prompt
+            # uses) reads as a "why-not" hint with strong contrast on the dark
+            # panel, and size 16 clears the readability bar.
+            cap = self.fonts.render(reason, 16, self.theme.accent_warm)
             cx, cy = anchor
             surface.blit(cap, (cx - cap.get_width() // 2, cy))

@@ -811,7 +811,16 @@ def run_inspect(config: EngineConfig, pack: str | None = None) -> None:
 
 def run_script(config: EngineConfig, script_path: str,
                pack: str | None = None,
-               inspect_after: bool = True) -> None:
+               inspect_after: bool = True) -> int:
+    """Run a JSON op script headlessly; return a process exit code.
+
+    Returns non-zero (1) if any ``assert`` op failed *or* any op errored, so
+    ``wgg --headless --script s.json && echo OK`` and CI gates actually see a
+    failure instead of a silent exit 0 (which previously masked a route-strand
+    regression). A failing-assert / errored-op summary is printed to stderr; the
+    full JSON results+transcript still go to stdout unchanged. Exit 0 when every
+    op succeeded and all asserts (if any) passed.
+    """
     sess = HeadlessSession.open(config, pack=pack)
     data = json.loads(Path(script_path).read_text(encoding="utf-8"))
     commands = data if isinstance(data, list) else data.get("commands", [])
@@ -820,3 +829,30 @@ def run_script(config: EngineConfig, script_path: str,
     if inspect_after:
         output["final_state"] = sess.inspect()
     print(json.dumps(output, ensure_ascii=False, indent=2))
+
+    # Collect failures: an `assert` op whose result is not ok, or any op that
+    # errored. (`check` reports a boolean *result* and is not a gate — only
+    # `assert` is an expectation; an errored op of any kind is a hard failure.)
+    failed_asserts: list[tuple[int, dict]] = []
+    errored_ops: list[tuple[int, dict]] = []
+    for i, r in enumerate(results):
+        op = r.get("op")
+        if op == "assert" and not r.get("ok", False):
+            failed_asserts.append((i, r))
+        elif r.get("ok") is False and "error" in r:
+            errored_ops.append((i, r))
+
+    if failed_asserts or errored_ops:
+        print(f"[script] {script_path}: "
+              f"{len(failed_asserts)} assert(s) failed, "
+              f"{len(errored_ops)} op(s) errored", file=sys.stderr)
+        for i, r in failed_asserts:
+            desc = r.get("assert") or r.get("error") or "unknown assert"
+            actual = r.get("actual")
+            tail = f" (actual={actual!r})" if "actual" in r else ""
+            print(f"  ✗ op #{i} assert: {desc}{tail}", file=sys.stderr)
+        for i, r in errored_ops:
+            print(f"  ✗ op #{i} ({r.get('op')}) error: {r.get('error')}",
+                  file=sys.stderr)
+        return 1
+    return 0
