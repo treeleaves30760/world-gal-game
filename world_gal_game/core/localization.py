@@ -100,6 +100,7 @@ DEFAULT_UI: dict[str, str] = {
     "music_room":     "音樂室",
     "scene_replay":   "場景重溫",
     "endings":        "結局",
+    "credits":        "鳴謝",
     "auto":           "自動",
     "skip":           "快進",
     "quicksave":      "快速存檔",

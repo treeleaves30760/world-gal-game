@@ -18,6 +18,7 @@ class TitleScene(Scene):
         self.title_text: str = ctx.config.title
         self.subtitle_text: str = ctx.config.subtitle
         self.version_text: str | None = None
+        self.on_credits = None
         self.on_settings = None
 
     def enter(self, *, bg: str | None = None, title: str | None = None,
@@ -25,7 +26,7 @@ class TitleScene(Scene):
               bgm: str | None = None, on_continue=None, on_new_game=None,
               on_load=None, on_quit=None, on_cg_gallery=None,
               on_music_room=None, on_endings=None, on_flowchart=None,
-              on_settings=None, **_) -> None:
+              on_credits=None, on_settings=None, **_) -> None:
         self.bg_path = bg
         self.title_text = title or self.title_text
         self.subtitle_text = subtitle or self.subtitle_text
@@ -68,6 +69,7 @@ class TitleScene(Scene):
         self.on_music_room = on_music_room
         self.on_endings = on_endings
         self.on_flowchart = on_flowchart
+        self.on_credits = on_credits
         self.on_settings = on_settings
         self._menu_origin = (panel_x + pad, self._divider_y + 22, inner_w)
         self._extras_mode = False
@@ -97,6 +99,9 @@ class TitleScene(Scene):
             if self.on_flowchart:
                 items.append(MenuItem(self.ctx.t("flowchart", "篇章 / 流程圖"),
                                       self.on_flowchart))
+            if self.on_credits:
+                items.append(MenuItem(self.ctx.t("credits", "鳴謝"),
+                                      self.on_credits))
             items.append(MenuItem("← 返回", self._close_extras))
         else:
             if self.on_continue:
@@ -105,7 +110,7 @@ class TitleScene(Scene):
             items.append(MenuItem("載入存檔",
                                   lambda: self.on_load and self.on_load()))
             if any((self.on_cg_gallery, self.on_music_room, self.on_endings,
-                    self.on_flowchart)):
+                    self.on_flowchart, self.on_credits)):
                 items.append(MenuItem(self.ctx.t("extras", "鑑賞模式"),
                                       self._open_extras))
             if self.on_settings:

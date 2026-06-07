@@ -208,6 +208,69 @@ def test_hidden_if_locked_choice_is_not_shown():
     assert ids == ["always"]
 
 
+def test_locked_choice_reason_is_exposed_headlessly():
+    """A locked choice carries its human ``reason`` in the HEADLESS choice
+    presentation (``_serialize_pres``) — not only in the GUI — so agents/tests
+    can read WHY a choice is locked. The enabled sibling omits the key."""
+    from world_gal_game.config import EngineConfig
+    from world_gal_game.headless import HeadlessSession
+    from world_gal_game.npc.npc_base import NPCRegistry
+    from world_gal_game.npc.llm_brain import EchoBrain
+
+    s1 = Scene(id="s1", lines=[Line(text="a")], choices=[
+        Choice(id="open", text="陪她",
+               requires=[Condition(kind="affection_gte",
+                                   target="qingyi", value=40)]),
+        Choice(id="leave", text="先走"),
+    ])
+    state = GameState()
+    state.story.add_scene(s1)
+    state.affection.register("qingyi")              # 0 < 40 -> locked
+    sess = HeadlessSession(config=EngineConfig(), state=state,
+                           npcs=NPCRegistry(), brain=EchoBrain(),
+                           dialogue=DialogueEngine(state), meta={})
+    sess.start_scene("s1")
+    pres = sess.next_line()["presentation"]         # -> choice phase
+    assert pres["kind"] == "choice"
+    by_id = {c["id"]: c for c in pres["choices"]}
+    assert by_id["open"]["enabled"] is False
+    assert "好感度" in by_id["open"]["reason"] and "40" in by_id["open"]["reason"]
+    # The enabled choice has no reason key (terse common case).
+    assert by_id["leave"]["enabled"] is True
+    assert "reason" not in by_id["leave"]
+
+
+def test_affordances_locked_choice_carries_reason_and_blocked_by():
+    """``affordances()`` exposes both the human ``reason`` and the structured
+    ``blocked_by`` on a locked choice (and keeps ``lock_reason`` for back-compat)."""
+    from world_gal_game.config import EngineConfig
+    from world_gal_game.headless import HeadlessSession
+    from world_gal_game.npc.npc_base import NPCRegistry
+    from world_gal_game.npc.llm_brain import EchoBrain
+
+    s1 = Scene(id="s1", lines=[Line(text="a")], choices=[
+        Choice(id="open", text="陪她",
+               requires=[Condition(kind="affection_gte",
+                                   target="qingyi", value=40)]),
+        Choice(id="leave", text="先走"),
+    ])
+    state = GameState()
+    state.story.add_scene(s1)
+    state.affection.register("qingyi")
+    sess = HeadlessSession(config=EngineConfig(), state=state,
+                           npcs=NPCRegistry(), brain=EchoBrain(),
+                           dialogue=DialogueEngine(state), meta={})
+    sess.start_scene("s1")
+    sess.next_line()                                # advance to the choice phase
+    aff = sess.affordances()
+    locked = next(c for c in aff["choices"] if c["id"] == "open")
+    assert locked["enabled"] is False
+    assert locked["reason"] and "好感度" in locked["reason"]
+    assert locked["lock_reason"] == locked["reason"]     # back-compat alias
+    assert locked["blocked_by"] == [{"requires": "affection_gte",
+                                     "target": "qingyi"}]
+
+
 def test_choice_menu_widget_accepts_reason_tuple():
     """The ChoiceMenu widget accepts a 4-tuple (with reason) and a plain
     3-tuple, and draws both without raising (headless dummy surface)."""

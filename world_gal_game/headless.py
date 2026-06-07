@@ -22,7 +22,7 @@ import json
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 from .config import EngineConfig
 from .content_loader import load_pack
@@ -360,8 +360,18 @@ class HeadlessSession:
                 "is_llm_generated": pres.line.is_llm_generated,
             }
         if pres.choices:
-            d["choices"] = [{"id": c.id, "text": c.text, "enabled": c.enabled}
-                            for c in pres.choices]
+            # ``reason`` is the human lock phrase ("需要 與林青衣的好感度 ≥ 40")
+            # the GUI shows under a locked option — surfaced here too so agents
+            # / tests can read *why* a choice is locked headlessly, not just
+            # that it is. Empty for an enabled choice (omitted to keep the
+            # common case terse).
+            choices = []
+            for c in pres.choices:
+                row = {"id": c.id, "text": c.text, "enabled": c.enabled}
+                if not c.enabled and getattr(c, "reason", ""):
+                    row["reason"] = c.reason
+                choices.append(row)
+            d["choices"] = choices
         return d
 
     # ----- control: drive the full effect/condition vocabulary ----------
@@ -377,13 +387,79 @@ class HeadlessSession:
         from .core.story_graph import Condition
         return {"ok": True, "result": bool(self.state.evaluate(Condition(**condition)))}
 
+    # Keys an `assert` op may legitimately carry, per recognized form. ``op`` is
+    # the universal dispatch key. Any key on the op outside the matched form's
+    # allowed set is a typo/malformed assert (e.g. ``gtee`` for ``gte``,
+    # ``conditions`` for ``condition``) — and is reported as a FAILURE rather
+    # than silently degrading to a weaker check, so a malformed assertion can
+    # never pass and mask a regression. See ``_assert_invalid``.
+    _ASSERT_FORMS: ClassVar[dict[str, frozenset[str]]] = {
+        "flag": frozenset({"flag", "equals"}),
+        "affection": frozenset({"affection", "gte", "lt", "equals", "stat"}),
+        "scene_played": frozenset({"scene_played"}),
+        "ending": frozenset({"ending"}),
+        "condition": frozenset({"condition"}),
+    }
+    # The anchor keys, in match priority order, that select a form.
+    _ASSERT_ANCHORS: ClassVar[tuple[str, ...]] = (
+        "flag", "affection", "scene_played", "ending", "condition")
+
+    @staticmethod
+    def _assert_invalid(message: str, *, unrecognized: list[str] | None = None,
+                        cmd: dict | None = None) -> dict:
+        """A malformed/unrecognized ``assert`` op — a hard failure, not a no-op.
+
+        ``ok`` is False with ``invalid: True`` so callers (and the script
+        exit-code gate) treat a malformed assertion as a failed assert with a
+        clear, actionable message — never a silent pass.
+        """
+        out: dict = {"ok": False, "invalid": True, "error": message,
+                     "assert": message}
+        if unrecognized:
+            out["unrecognized"] = unrecognized
+        return out
+
+    def _assert_extra_keys(self, cmd: dict, form: str) -> list[str]:
+        """Keys on an assert op that the matched ``form`` does not recognize.
+
+        Excludes the universal ``op`` key and any private ``__`` bookkeeping.
+        A non-empty result means a typo'd / stray key (e.g. ``gtee``) the form
+        would otherwise ignore.
+        """
+        allowed = self._ASSERT_FORMS[form] | {"op"}
+        return sorted(k for k in cmd
+                      if k not in allowed and not str(k).startswith("__"))
+
     def assert_expect(self, cmd: dict) -> dict:
         """Check an expectation about current state. ``ok`` is the pass/fail.
 
         Forms: ``{flag, equals?}`` · ``{affection, gte|lt|equals, stat?}`` ·
-        ``{scene_played}`` · ``{condition: {...}}``.
+        ``{scene_played}`` · ``{ending}`` · ``{condition: {...}}``.
+
+        A malformed op — one matching no form, or carrying a key the matched
+        form does not recognize (a typo like ``gtee`` for ``gte`` or
+        ``conditions`` for ``condition``) — is a hard FAILURE (``ok: False``,
+        ``invalid: True``) naming the offending keys, never a silent no-op.
         """
-        if "flag" in cmd:
+        # Pick the form by its anchor key, then reject any unrecognized
+        # sibling key so a typo can't silently weaken the check.
+        form = next((a for a in self._ASSERT_ANCHORS if a in cmd), None)
+        if form is None:
+            present = sorted(k for k in cmd
+                             if k != "op" and not str(k).startswith("__"))
+            return self._assert_invalid(
+                "unknown assert form (no recognized key: expected one of "
+                "flag/affection/scene_played/ending/condition; "
+                f"got {present or ['<empty>']})",
+                unrecognized=present)
+        extra = self._assert_extra_keys(cmd, form)
+        if extra:
+            return self._assert_invalid(
+                f"malformed '{form}' assert: unrecognized key(s) {extra} "
+                f"(allowed: {sorted(self._ASSERT_FORMS[form])})",
+                unrecognized=extra)
+
+        if form == "flag":
             actual = self.state.events.get_flag(cmd["flag"])
             if "equals" in cmd:
                 return {"ok": actual == cmd["equals"],
@@ -391,7 +467,7 @@ class HeadlessSession:
                         "actual": actual}
             return {"ok": bool(actual),
                     "assert": f"flag {cmd['flag']} truthy", "actual": actual}
-        if "affection" in cmd:
+        if form == "affection":
             stat = cmd.get("stat", "affection")
             actual = self.state.affection.get(cmd["affection"], stat)
             if "gte" in cmd:
@@ -405,18 +481,28 @@ class HeadlessSession:
             return {"ok": ok,
                     "assert": f"affection[{cmd['affection']}.{stat}] {rel}",
                     "actual": actual}
-        if "scene_played" in cmd:
+        if form == "scene_played":
             actual = self.state.story.is_played(cmd["scene_played"])
             return {"ok": bool(actual),
                     "assert": f"scene_played {cmd['scene_played']}",
                     "actual": actual}
-        if "condition" in cmd:
-            from .core.story_graph import Condition
-            actual = bool(self.state.evaluate(Condition(**cmd["condition"])))
+        if form == "ending":
+            # An ending is "reached" when its tracker recorded it OR the
+            # conventional `ending_<id>` flag is set (packs that gate endings
+            # via flags rather than the EndingTracker).
+            eid = cmd["ending"]
+            unlocked = eid in getattr(self.state.endings, "unlocked", {})
+            flagged = bool(self.state.events.get_flag(f"ending_{eid}")) \
+                or bool(self.state.events.get_flag(eid))
+            actual = unlocked or flagged
             return {"ok": actual,
-                    "assert": f"condition {cmd['condition'].get('kind')}",
-                    "actual": actual}
-        return {"ok": False, "error": "unknown assert form"}
+                    "assert": f"ending {eid} reached", "actual": actual}
+        # form == "condition"
+        from .core.story_graph import Condition
+        actual = bool(self.state.evaluate(Condition(**cmd["condition"])))
+        return {"ok": actual,
+                "assert": f"condition {cmd['condition'].get('kind')}",
+                "actual": actual}
 
     # ----- branch exploration: snapshot / restore / diff ----------------
 
@@ -497,9 +583,13 @@ class HeadlessSession:
                 if blocked_by:
                     # A concise human-readable reason ("需要 與林青衣的好感度 ≥
                     # 40") alongside the structured blocked_by — the same string
-                    # the choice menu shows under a locked option.
-                    row["lock_reason"] = summarize_lock(
+                    # the choice menu shows under a locked option. Exposed as
+                    # ``reason`` (the key the choice presentation also uses) and
+                    # kept as ``lock_reason`` for back-compat.
+                    human = summarize_lock(
                         failed_requires, hit_forbids, self.state)
+                    row["reason"] = human
+                    row["lock_reason"] = human
                 choices.append(row)
 
         scenes = [h.scene_id for h in self.state.map.available_scenes(
@@ -830,9 +920,12 @@ def run_script(config: EngineConfig, script_path: str,
         output["final_state"] = sess.inspect()
     print(json.dumps(output, ensure_ascii=False, indent=2))
 
-    # Collect failures: an `assert` op whose result is not ok, or any op that
-    # errored. (`check` reports a boolean *result* and is not a gate — only
-    # `assert` is an expectation; an errored op of any kind is a hard failure.)
+    # Collect failures: an `assert` op whose result is not ok (a failed OR a
+    # malformed/`invalid` assert — both gate), or any op that errored. (`check`
+    # reports a boolean *result* and is not a gate — only `assert` is an
+    # expectation; an errored op of any kind is a hard failure.) A malformed
+    # assert (typo'd key / no recognized form) must NEVER slip through as exit
+    # 0, so it is counted here exactly like a failed expectation.
     failed_asserts: list[tuple[int, dict]] = []
     errored_ops: list[tuple[int, dict]] = []
     for i, r in enumerate(results):
@@ -843,14 +936,17 @@ def run_script(config: EngineConfig, script_path: str,
             errored_ops.append((i, r))
 
     if failed_asserts or errored_ops:
+        invalid_n = sum(1 for _, r in failed_asserts if r.get("invalid"))
+        suffix = f" ({invalid_n} malformed)" if invalid_n else ""
         print(f"[script] {script_path}: "
-              f"{len(failed_asserts)} assert(s) failed, "
+              f"{len(failed_asserts)} assert(s) failed{suffix}, "
               f"{len(errored_ops)} op(s) errored", file=sys.stderr)
         for i, r in failed_asserts:
             desc = r.get("assert") or r.get("error") or "unknown assert"
             actual = r.get("actual")
             tail = f" (actual={actual!r})" if "actual" in r else ""
-            print(f"  ✗ op #{i} assert: {desc}{tail}", file=sys.stderr)
+            tag = "invalid assert" if r.get("invalid") else "assert"
+            print(f"  ✗ op #{i} {tag}: {desc}{tail}", file=sys.stderr)
         for i, r in errored_ops:
             print(f"  ✗ op #{i} ({r.get('op')}) error: {r.get('error')}",
                   file=sys.stderr)

@@ -43,6 +43,7 @@ class MenuScene(Scene):
         self.on_character_profiles = None
         self.on_quest_log = None
         self.on_clues = None
+        self.on_credits = None
         self.on_save = None
         self.on_load = None
         self.on_settings = None
@@ -54,7 +55,8 @@ class MenuScene(Scene):
               on_cg_gallery=None, on_music_room=None, on_endings=None,
               on_scene_replay=None, on_flowchart=None, on_relationships=None,
               on_character_profiles=None, on_quest_log=None,
-              on_clues=None, on_save=None, on_load=None, on_settings=None,
+              on_clues=None, on_credits=None, on_save=None, on_load=None,
+              on_settings=None,
               on_quit_to_title=None, on_quit_app=None, **_) -> None:
         self.on_close = on_close
         self.on_map = on_map
@@ -71,6 +73,7 @@ class MenuScene(Scene):
         self.on_character_profiles = on_character_profiles
         self.on_quest_log = on_quest_log
         self.on_clues = on_clues
+        self.on_credits = on_credits
         self.on_save = on_save
         self.on_load = on_load
         self.on_settings = on_settings
@@ -130,6 +133,7 @@ class MenuScene(Scene):
                 (self.ctx.t("music_room", "音樂室"), self.on_music_room, "primary"),
                 (self.ctx.t("endings", "結局"), self.on_endings, "primary"),
                 (self.ctx.t("scene_replay", "場景重溫"), self.on_scene_replay, "primary"),
+                (self.ctx.t("credits", "鳴謝"), self.on_credits, "primary"),
             ]),
             ("系統", [
                 ("存檔", self.on_save, "ghost"),

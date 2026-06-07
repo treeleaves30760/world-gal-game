@@ -52,6 +52,7 @@ from .scenes.music_room_scene import MusicRoomScene
 from .scenes.endings_scene import EndingsScene
 from .scenes.scene_replay_scene import SceneReplayScene
 from .scenes.chapter_card_scene import ChapterCardScene
+from .scenes.credits_scene import CreditsScene
 from .ui.assets import AssetManager
 from .ui.fonts import FontRegistry
 from .ui.theme import default_theme
@@ -262,6 +263,7 @@ class GalGameApp:
             fonts=self.fonts, theme=self.theme,
             localization=self.localization,
             screen_size=self.config.screen_size,
+            meta=self.meta, pack=self.pack,
         )
         self.manager = SceneManager()
         self.manager.replace(TitleScene(self.ctx),
@@ -279,6 +281,7 @@ class GalGameApp:
                              on_music_room=self._open_music_room,
                              on_endings=self._open_endings,
                              on_flowchart=self._open_flowchart_browse,
+                             on_credits=self._open_credits,
                              on_settings=self._open_settings)
         self._running = True
         self._screenshot_pending: str | None = None
@@ -479,6 +482,7 @@ class GalGameApp:
             on_character_profiles=from_menu(self._open_character_profiles),
             on_quest_log=from_menu(self._open_quest_log),
             on_clues=from_menu(self._open_clues),
+            on_credits=from_menu(self._open_credits),
             on_save=from_menu(self._open_save_menu),
             on_load=from_menu(self._open_load_menu),
             on_settings=from_menu(self._open_settings),
@@ -547,6 +551,11 @@ class GalGameApp:
         self.manager.push(RelationshipsScene(self.ctx),
                           on_close=self.manager.pop)
 
+    def _open_credits(self) -> None:
+        """Open the credits / 鳴謝 overlay (pack-supplied attributions)."""
+        self.manager.push(CreditsScene(self.ctx),
+                          on_close=self.manager.pop)
+
     def _open_character_profiles(self) -> None:
         self.manager.push(CharacterProfileScene(self.ctx),
                           on_close=self.manager.pop)
@@ -596,6 +605,7 @@ class GalGameApp:
                               on_music_room=self._open_music_room,
                               on_endings=self._open_endings,
                               on_flowchart=self._open_flowchart_browse,
+                              on_credits=self._open_credits,
                               on_settings=self._open_settings)
 
     def _open_map(self) -> None:

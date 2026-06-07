@@ -9,8 +9,9 @@ SceneContext is the shared bag of services every scene needs.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 import pygame
 
@@ -38,10 +39,33 @@ class SceneContext:
     theme: "Theme"
     localization: "Localization"
     screen_size: tuple[int, int] = (1280, 720)
+    # The parsed pack meta.yaml dict and the pack identifier, so data-driven
+    # scenes (e.g. the credits overlay) can read pack-supplied content + locate
+    # the pack on disk. Both default empty so existing constructors (and tests)
+    # that don't pass them keep working.
+    meta: dict[str, Any] = field(default_factory=dict)
+    pack: str = ""
 
     def t(self, key: str, default: str | None = None, **fmt) -> str:
         """Shortcut for scenes that need a localized UI string."""
         return self.localization.t(key, default, **fmt)
+
+    def pack_root(self) -> "Path | None":
+        """Best-effort on-disk root of the running pack (the dir holding
+        ``content/``), or None if it can't be resolved.
+
+        Prefers the :class:`AssetManager`'s resolved root (always correct for
+        the live pack, including ``--pack <path>``); falls back to the config's
+        pack resolver. Never raises — a scene that can't find files degrades to
+        the meta/engine-default content.
+        """
+        root = getattr(self.assets, "_pack_root", None)
+        if root is not None:
+            return Path(root)
+        try:
+            return self.config.pack_root(self.pack or None)
+        except Exception:
+            return None
 
 
 class Scene:
