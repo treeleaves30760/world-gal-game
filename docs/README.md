@@ -3,8 +3,8 @@
 完整的「從零做出一款 Gal-Game」教學指引。引擎本身（`world_gal_game/`）只負責跑
 遊戲；遊戲內容打包成 **pack**，全部走 YAML。**99% 的遊戲開發不用碰一行 Python**。
 
-需要更高層的方向感 / 路線圖請看 [../ROADMAP.md](../ROADMAP.md)；
-AI 協作者進場速查 [../CLAUDE.md](../CLAUDE.md)。
+需要更高層的方向感 / 路線圖請看 [../ROADMAP.md](https://github.com/treeleaves30760/world-gal-game/blob/main/ROADMAP.md)；
+AI 協作者進場速查 [../CLAUDE.md](https://github.com/treeleaves30760/world-gal-game/blob/main/CLAUDE.md)。
 
 ---
 
@@ -60,7 +60,7 @@ AI 協作者進場速查 [../CLAUDE.md](../CLAUDE.md)。
 
 | 文件 | 用途 |
 |---|---|
-| [../AGENTS.md](../AGENTS.md) | **agent-中立進場速查**（任何 AI 工具）；機器地圖見 [../llms.txt](../llms.txt) |
+| [../AGENTS.md](https://github.com/treeleaves30760/world-gal-game/blob/main/AGENTS.md) | **agent-中立進場速查**（任何 AI 工具）；機器地圖見 [../llms.txt](https://github.com/treeleaves30760/world-gal-game/blob/main/llms.txt) |
 | [ai-developer-guide.md](ai-developer-guide.md) | **AI 協作者入門**：所有可用 API + CLI |
 | [ai-native-contract.md](ai-native-contract.md) | 動詞 / 參數 schema / trace / diff / 決定性 |
 | [ai-native-world-model.md](ai-native-world-model.md) | variables / dataflow / planner / coverage / rollback；`context` / `impact` 聚合端點 |
@@ -150,7 +150,7 @@ uv run world-gal-game inspect-pack my_game      # 看 pack 結構分析
 
 ## 路線
 
-階段路線、缺口、未完成功能：[../ROADMAP.md](../ROADMAP.md)。
+階段路線、缺口、未完成功能：[../ROADMAP.md](https://github.com/treeleaves30760/world-gal-game/blob/main/ROADMAP.md)。
 
 當前進度：
 - Phase 1：插件系統 MVP + Capability Manifest + PackEditor + dead-end 偵測 — ✅ 完成

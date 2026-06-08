@@ -636,4 +636,4 @@ Phase 3 預定加入：
 - 完整 LLM NPC v2（接 ClaudeBrain、DialogueEngine 動態驅動）
 - AI 自主從 spec 產出可玩 pack
 
-完整路線見 [ROADMAP.md](../ROADMAP.md)。
+完整路線見 [ROADMAP.md](https://github.com/treeleaves30760/world-gal-game/blob/main/ROADMAP.md)。

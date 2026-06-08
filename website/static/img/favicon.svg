@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="World Gal-Game">
+  <rect x="0" y="0" width="32" height="32" rx="7" fill="#4f5bd5"/>
+  <rect x="6.5" y="10" width="19" height="13" rx="2.5" fill="none" stroke="#ffffff" stroke-width="1.8"/>
+  <circle cx="12" cy="16.5" r="1.6" fill="#ffffff"/>
+  <circle cx="20" cy="16.5" r="1.6" fill="#ffffff"/>
+  <path d="M12 20c2.4 1.6 5.6 1.6 8 0" fill="none" stroke="#ffffff" stroke-width="1.6" stroke-linecap="round"/>
+</svg>

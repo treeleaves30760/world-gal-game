@@ -1,0 +1,52 @@
+/**
+ * Custom theming for the World Gal-Game docs.
+ * The engine's UI theme is a cold indigo-slate; we echo that here with a
+ * restrained indigo accent over neutral slate. Infima variables drive both
+ * light and dark modes.
+ */
+
+:root {
+  --ifm-color-primary: #4f5bd5;
+  --ifm-color-primary-dark: #3f4bcb;
+  --ifm-color-primary-darker: #3b47c0;
+  --ifm-color-primary-darkest: #313b9e;
+  --ifm-color-primary-light: #6470db;
+  --ifm-color-primary-lighter: #6f7bde;
+  --ifm-color-primary-lightest: #8c96e6;
+
+  --ifm-code-font-size: 95%;
+  --ifm-font-family-monospace: ui-monospace, SFMono-Regular, "SF Mono", Menlo,
+    Consolas, "Liberation Mono", monospace;
+  --docusaurus-highlighted-code-line-bg: rgba(79, 91, 213, 0.1);
+
+  --ifm-background-surface-color: #f7f8fc;
+}
+
+/* Dark mode: cooler slate background, brighter indigo accent for contrast. */
+[data-theme='dark'] {
+  --ifm-color-primary: #8b96f0;
+  --ifm-color-primary-dark: #6f7dec;
+  --ifm-color-primary-darker: #6171ea;
+  --ifm-color-primary-darkest: #3a4ce3;
+  --ifm-color-primary-light: #a7afF4;
+  --ifm-color-primary-lighter: #b5bcf6;
+  --ifm-color-primary-lightest: #dfe2fb;
+
+  --ifm-background-color: #14161f;
+  --ifm-background-surface-color: #1b1e2b;
+  --docusaurus-highlighted-code-line-bg: rgba(139, 150, 240, 0.18);
+}
+
+/* Slightly tighter, more "manual"-like reading column. */
+.markdown {
+  --ifm-h1-vertical-rhythm-top: 2;
+}
+
+.menu__link {
+  font-size: 0.92rem;
+}
+
+/* Category labels: a touch more presence so the mixed-language groups scan. */
+.menu__list-item-collapsible .menu__link--sublist {
+  font-weight: 600;
+}

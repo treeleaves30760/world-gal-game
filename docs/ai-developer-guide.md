@@ -1,7 +1,7 @@
 # AI Developer Guide
 
 > **學習路徑**：軌道 4a · AI 工具當開發者  
-> **前置條件**：讀過 [CLAUDE.md](../CLAUDE.md)（進場速查）+ [architecture.md](architecture.md)  
+> **前置條件**：讀過 [CLAUDE.md](https://github.com/treeleaves30760/world-gal-game/blob/main/CLAUDE.md)（進場速查）+ [architecture.md](architecture.md)  
 > **下一步**：想擴充引擎 → [plugins.md](plugins.md)；想做新 pack → [tutorial-build-a-game.md](tutorial-build-a-game.md)  
 > **完整索引**：[docs/README.md](README.md)
 
@@ -413,7 +413,7 @@ wgg --headless --pack <pack> --script smoke.json | jq '.commands[-1].result.flag
 
 ## 路線
 
-完整 Phase 路線見 [ROADMAP.md](../ROADMAP.md)。Phase 2 會加：
+完整 Phase 路線見 [ROADMAP.md](https://github.com/treeleaves30760/world-gal-game/blob/main/ROADMAP.md)。Phase 2 會加：
 - `world_gal_game/dev/self_check.py`：把 schema / refs / dead-end / smoke / visual
   五階段整合
 - `world_gal_game/dev/visual_check.py`：截圖 baseline 比對
