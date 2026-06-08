@@ -37,6 +37,12 @@ concurrency:
   group: pages
   cancel-in-progress: false
 
+# Run the JS-based actions (checkout / setup-node / configure-pages /
+# upload-artifact / deploy-pages) on the Node.js 24 runtime — Node.js 20 is
+# deprecated on GitHub runners (forced off by 2026-09). This opts in now.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   build:
     name: Build site
@@ -48,7 +54,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
           cache-dependency-path: package-lock.json
 
