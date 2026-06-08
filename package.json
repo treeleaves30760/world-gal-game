@@ -6,8 +6,8 @@
   "scripts": {
     "docusaurus": "docusaurus",
     "start": "docusaurus start",
-    "build": "docusaurus build",
-    "serve": "docusaurus serve",
+    "build": "docusaurus build --out-dir site",
+    "serve": "docusaurus serve --dir site",
     "clear": "docusaurus clear"
   },
   "dependencies": {

@@ -44,3 +44,10 @@ QA_REPORT*.md
 .codex_cache/
 
 # OS image caches under games/<pack>/assets — keep, they're game content
+
+# Docusaurus docs site (Node tooling lives at repo root; docs content is docs/).
+# Build output goes to site/ (not build/, which PyInstaller uses).
+node_modules/
+/site/
+.docusaurus/
+.cache-loader/
