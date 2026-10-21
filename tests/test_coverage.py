@@ -124,3 +124,23 @@ def test_report_from_is_session_free() -> None:
     # The choice's scene is folded into seen scenes even if not in `played`.
     assert "meet_heroine" not in report.scenes.missing
     assert "prologue" not in report.scenes.missing
+
+
+def test_all_smoke_script_union_is_deterministic_and_reaches_every_demo_ending() -> None:
+    from world_gal_game.dev.production_check import _run_coverage_union
+
+    first = _run_coverage_union(DEMO_PACK, seed=42)
+    second = _run_coverage_union(DEMO_PACK, seed=42)
+
+    assert first == second
+    assert first["ok"] is True
+    assert first["seed"] == 42
+    assert len(first["scripts"]) == 3
+    assert all(row["ok"] and row["errors"] == [] for row in first["scripts"])
+    assert all(len(row["sha256"]) == 64 for row in first["scripts"])
+    assert first["coverage"]["endings"] == {
+        "seen": 3,
+        "total": 3,
+        "pct": 100.0,
+        "missing": [],
+    }

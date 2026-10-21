@@ -26,6 +26,7 @@ class FontRegistry:
         self.scale = max(0.1, float(scale))
         self._resolved_path: Path | str | None = None
         self._cache: dict[tuple[str | None, int, bool], pygame.font.Font] = {}
+        self._revision = 0
         self._resolve()
 
     def _resolve(self) -> None:
@@ -42,6 +43,45 @@ class FontRegistry:
         # 3) last resort: pygame's default. CJK glyphs will tofu, but it
         # won't crash; the user will see boxes and notice the missing font.
         self._resolved_path = None
+
+    @property
+    def resolved_path(self) -> Path | str | None:
+        """The selected font source, exposed read-only for diagnostics."""
+        return self._resolved_path
+
+    @property
+    def revision(self) -> int:
+        """Monotonic identity for surfaces composed from this registry."""
+        return self._revision
+
+    def reconfigure(
+        self,
+        candidates: tuple[str, ...],
+        bundled: Path | None = None,
+    ) -> None:
+        """Atomically select a locale-specific source and invalidate fonts.
+
+        Widgets retain the registry itself, so replacing this object's source
+        lets a title-safe locale switch rebuild layouts without leaving old
+        pygame font instances in already-created scene contexts.
+        """
+        next_candidates = tuple(
+            candidate
+            for candidate in candidates
+            if isinstance(candidate, str) and candidate.strip()
+        )
+        next_bundled = Path(bundled) if bundled is not None else None
+        if (
+            next_candidates == self.candidates
+            and next_bundled == self.bundled
+        ):
+            return
+        self.candidates = next_candidates
+        self.bundled = next_bundled
+        self._resolved_path = None
+        self._cache.clear()
+        self._resolve()
+        self._revision += 1
 
     def get(self, size: int, *, bold: bool = False) -> pygame.font.Font:
         px = max(1, int(round(size * self.scale)))

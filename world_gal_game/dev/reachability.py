@@ -51,6 +51,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from .scene_transitions import field_value, iter_scene_transitions
+
 
 # Effect kinds that write a flag (mirrors dataflow's table; the liberal
 # "contains 'flag'" rule also catches plugin flag effects).
@@ -60,6 +62,33 @@ _FLAG_REQ = frozenset({"flag", "flag_eq"})
 _FLAG_FORBID = frozenset({"not_flag"})
 _CHAP_GE = frozenset({"chapter_at_or_after"})
 _CHAP_IS = frozenset({"chapter_is", "in_chapter"})
+
+
+def _truthy_flag_write_target(effect: Any) -> str | None:
+    """Return the flag that *could become truthy* from ``effect``.
+
+    The reachability closure models truth, not mere assignment.  In
+    particular, one-hot route choices commonly set the selected route to
+    ``true`` and explicitly clear every sibling route with ``value: false``.
+    Treating those clears as truth-writes makes choice exclusivity reject the
+    selected branch itself.
+
+    ``None`` retains the built-in set-flag default of ``True``.  Other explicit
+    falsy values are omitted for the same reason: a ``flag`` condition would
+    not pass after that assignment.  Increment effects and unknown plugin
+    set-flag effects remain conservative possible truth-writes.
+    """
+    kind = field_value(effect, "kind", "") or ""
+    target = field_value(effect, "target", "") or ""
+    if not target or not (
+        kind in _FLAG_WRITE or ("flag" in kind and "set" in kind)
+    ):
+        return None
+    if kind in {"set_flag", "set_flag_if_unset"}:
+        value = field_value(effect, "value", None)
+        if value is not None and not bool(value):
+            return None
+    return target
 
 
 @dataclass
@@ -133,7 +162,10 @@ class StrandFixpoint:
 
     @staticmethod
     def _cond(c: Any) -> tuple[str, str]:
-        return (getattr(c, "kind", "") or "", getattr(c, "target", "") or "")
+        return (
+            field_value(c, "kind", "") or "",
+            field_value(c, "target", "") or "",
+        )
 
     def _conds_to_gate(self, conds: Any) -> tuple[set[str], list[tuple[str, str]]]:
         """Split a condition list into (required flag names, chapter conds)."""
@@ -163,7 +195,9 @@ class StrandFixpoint:
                 out.setdefault(sid, []).append((req, chap))
         return out
 
-    def _collect_edges(self) -> dict[str, list[tuple[str, set[str], list]]]:
+    def _collect_edges(
+        self,
+    ) -> dict[str, list[tuple[str, set[str], list, set[str]]]]:
         """dst_scene -> list of (src_scene, required_flags, chapter_conds) for
         play_scene / next_scene transitions (so a scene reached only via a
         sequel chain is counted reachable once its source is). Each edge is
@@ -173,44 +207,56 @@ class StrandFixpoint:
         edge that belongs to a mutually-exclusive other-route choice."""
         into: dict[str, list[tuple[str, set[str], list, set[str]]]] = {}
 
-        def _target(eff: Any) -> str | None:
-            if (getattr(eff, "kind", "") or "") != "play_scene":
-                return None
-            t = getattr(eff, "target", "") or ""
-            if t:
-                return t
-            v = getattr(eff, "value", None)
-            return v if isinstance(v, str) and v else None
-
         for sid, scene in self.scenes.items():
             # scene.requires gates on_end / line edges originating here
             srq, schap = self._conds_to_gate(getattr(scene, "requires", None))
             for eff in getattr(scene, "on_end", None) or []:
-                dst = _target(eff)
-                if dst:
-                    into.setdefault(dst, []).append(
-                        (sid, set(srq), list(schap), set()))
+                for transition in iter_scene_transitions(eff):
+                    trq, tchap = self._conds_to_gate(transition.requires)
+                    into.setdefault(transition.target, []).append(
+                        (
+                            sid,
+                            set(srq) | set(trq),
+                            list(schap) + list(tchap),
+                            set(),
+                        )
+                    )
             for line in getattr(scene, "lines", None) or []:
                 lrq, lchap = self._conds_to_gate(getattr(line, "requires", None))
                 for eff in getattr(line, "effects", None) or []:
-                    dst = _target(eff)
-                    if dst:
-                        into.setdefault(dst, []).append(
-                            (sid, set(srq) | set(lrq),
-                             list(schap) + list(lchap), set()))
+                    for transition in iter_scene_transitions(eff):
+                        trq, tchap = self._conds_to_gate(transition.requires)
+                        into.setdefault(transition.target, []).append(
+                            (
+                                sid,
+                                set(srq) | set(lrq) | set(trq),
+                                list(schap) + list(lchap) + list(tchap),
+                                set(),
+                            )
+                        )
             for ch in getattr(scene, "choices", None) or []:
-                crq, _ = self._conds_to_gate(getattr(ch, "requires", None))
+                crq, cchap = self._conds_to_gate(
+                    getattr(ch, "requires", None)
+                )
                 gate = set(srq) | set(crq)
+                gate_chapters = list(schap) + list(cchap)
                 sets, _c, _a = self._eff_writes(getattr(ch, "effects", None))
                 ns = getattr(ch, "next_scene", None)
                 if isinstance(ns, str) and ns:
                     into.setdefault(ns, []).append(
-                        (sid, set(gate), list(schap), set(sets)))
+                        (sid, set(gate), list(gate_chapters), set(sets))
+                    )
                 for eff in getattr(ch, "effects", None) or []:
-                    dst = _target(eff)
-                    if dst:
-                        into.setdefault(dst, []).append(
-                            (sid, set(gate), list(schap), set(sets)))
+                    for transition in iter_scene_transitions(eff):
+                        trq, tchap = self._conds_to_gate(transition.requires)
+                        into.setdefault(transition.target, []).append(
+                            (
+                                sid,
+                                set(gate) | set(trq),
+                                list(gate_chapters) + list(tchap),
+                                set(sets),
+                            )
+                        )
         return into
 
     @staticmethod
@@ -223,10 +269,11 @@ class StrandFixpoint:
         for e in effs or []:
             k = getattr(e, "kind", "") or ""
             t = getattr(e, "target", "") or ""
-            # Only true flag-*setting* effects write a flag; 'flag'/'flag_eq'
-            # are read conditions, and a plugin write must look like set_*flag*.
-            if t and (k in _FLAG_WRITE or ("flag" in k and "set" in k)):
-                sf.add(t)
+            # The closure tracks flags that may become truthy, not targets that
+            # are merely assigned.  Explicit false clears therefore stay out.
+            truthy_target = _truthy_flag_write_target(e)
+            if truthy_target:
+                sf.add(truthy_target)
             if k == "set_chapter" and t:
                 sc.add(t)
             if k == "advance_chapter":
@@ -441,7 +488,7 @@ class EndingReachabilityChecker:
         """The route an ending belongs to, for lock-in seeding.
 
         Prefers the ending's own ``route_id`` (the heroine route, e.g.
-        ``qingyi``) — packs that converge several routes' terminal endings into a
+        ``ruoxue``) — packs that converge several routes' terminal endings into a
         shared *common* finale chapter tag the chapter ``route: common`` but keep
         each ending's ``route_id`` pointing at its heroine, so ``route_id`` is the
         more reliable lock-in signal. Falls back to the chapters.yaml chapter
@@ -503,10 +550,7 @@ class EndingReachabilityChecker:
             for ch in getattr(scene, "choices", None) or []:
                 effs = getattr(ch, "effects", None) or []
                 sets_flag = any(
-                    (getattr(e, "kind", "") in _FLAG_WRITE
-                     or ("flag" in (getattr(e, "kind", "") or "")
-                         and "set" in (getattr(e, "kind", "") or "")))
-                    and (getattr(e, "target", "") == lockin_flag)
+                    _truthy_flag_write_target(e) == lockin_flag
                     for e in effs)
                 if not sets_flag:
                     continue
@@ -518,8 +562,7 @@ class EndingReachabilityChecker:
             for bucket in ([getattr(scene, "on_end", None) or []]
                            + [getattr(ln, "effects", None) or []
                               for ln in (getattr(scene, "lines", None) or [])]):
-                if any((getattr(e, "kind", "") in _FLAG_WRITE)
-                       and getattr(e, "target", "") == lockin_flag
+                if any(_truthy_flag_write_target(e) == lockin_flag
                        for e in bucket):
                     for e in bucket:
                         if (getattr(e, "kind", "") or "") == "set_chapter" \

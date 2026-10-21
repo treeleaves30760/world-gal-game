@@ -85,6 +85,7 @@ class CharacterProfileScene(Scene):
             fonts=self.ctx.fonts, theme=self.ctx.theme,
             font_size=15, style="ghost",
             on_click=(lambda: on_close() if on_close else None),
+            motion=self.ctx.motion,
         )
         self._rail_w = 230
         detail_x = self._panel_rect.x + self._rail_w + 40

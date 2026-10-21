@@ -40,7 +40,7 @@ colour estimation / 去汙染 / defringe）**：把邊緣像素被汙染的 RGB
 uv run tools/imagegen_art.py --kind portrait \
     --character "余寧" --description "黑髮、眼鏡、白袍" \
     --native-transparent \
-    --output assets/characters/yuening/normal.png
+    --output assets/characters/qianqiu/normal.png
 ```
 
 - 走 OpenAI Images API（`gpt-image-1`，`background=transparent`），**每張圖計費**。
@@ -56,7 +56,7 @@ codex 在背景上畫完，再用 `cutout.py` 把背景挖掉並去汙染：
 uv run tools/imagegen_art.py --kind portrait \
     --character "余寧" --description "黑髮、眼鏡、白袍" \
     --auto-cutout \
-    --output assets/characters/yuening/normal.png
+    --output assets/characters/qianqiu/normal.png
 
 # 或分兩步：先生成，再自己跑 cutout
 uv run tools/imagegen_art.py --kind portrait ... --output out.png
@@ -171,7 +171,7 @@ uv run tools/cutout.py --solidify-only "assets/characters/**/*.png"
 
 ```bash
 uv run tools/fix_checker.py --preview "assets/characters/**/*.png"   # 先看遮罩
-uv run tools/fix_checker.py assets/characters/qingyi/worried.png      # 確認後實跑
+uv run tools/fix_checker.py assets/characters/ruoxue/worried.png      # 確認後實跑
 ```
 
 最乾淨的根治法仍是 **路徑 B 原生透明生成** —— 走真正的 alpha API，模型不會在

@@ -30,10 +30,17 @@ Everything mobile reuses the web work already in the engine:
 - **Async loop + responsive canvas** (`app.py`): the fixed 1280×720 logical
   canvas is letterboxed onto whatever viewport the device gives, and
   `run_async()` yields each frame so the tab/WebView never freezes.
-- **Touch input** (`ui/input.py`): `FINGERDOWN` maps to tap → click/advance;
-  a horizontal swipe sets `InputState.swipe` (left = advance, right = open the
-  backlog). Coordinates are inverse-mapped from screen space to logical space
-  so widget hit-testing is unchanged.
+- **Touch input** (`ui/input.py`): the persistent `InputRouter` tracks contacts
+  across frames and commits a tap on `FINGERUP`, at the release position.
+  Horizontal swipes, vertical drags, excursions outside the tap slop, and
+  multi-touch gestures never also become click/advance. Coordinates are
+  inverse-mapped from screen space to logical space so widget hit-testing is
+  unchanged.
+- **Controller input** (`ui/input.py`): D-pad and the left analogue stick
+  synthesize the same arrow-key actions used by keyboard navigation. The left
+  stick uses activation/release deadzones (`0.55`/`0.35`), a `0.36 s` initial
+  repeat delay, and `0.09 s` repeats; a stalled frame emits at most one action
+  so focus cannot skip several controls at once.
 - **Persistent saves** (`platform_web.flush_storage()`): saves live under the
   IDBFS mount (`/data/<app_data_name>`) and are flushed to IndexedDB after
   every write. See the iOS caveat below — this is exactly where iOS bites.
@@ -43,15 +50,38 @@ Everything mobile reuses the web work already in the engine:
 
 ### Touch-friendly UI mode
 
-`EngineConfig.touch_mode` (default **False**) is the flag intended to enable
-finger-friendly hit targets on mobile. The recommended minimum tap-target
-edge is `world_gal_game.config.MIN_TOUCH_TARGET_PX` (44 logical px, matching
-Apple HIG / Google Material guidance).
+`EngineConfig.touch_mode` (default **False**) enables finger-first runtime
+semantics and touch-aware layout sizing. The recommended minimum tap-target
+edge is `world_gal_game.config.MIN_TOUCH_TARGET_PX` (44 logical px). Core
+dialogue controls and map/destination controls honour that floor.
 
-Today the flag is a documented hook: desktop behaviour is byte-identical with
-it off, and actual hit-target enlargement is a deliberate follow-up so this
-milestone stays low-risk. When you wire enlargement, gate it strictly behind
-`touch_mode` so mouse layouts never change.
+Real `FINGER*` events work even when the flag is off, which keeps touchscreen
+laptops usable. With the flag on, a held primary finger is exposed as a held
+pointer and the router suppresses unmarked mouse clicks briefly after touch;
+this prevents SDL/WebView backends that emit both event families from
+activating a control twice. Mouse input resumes after the short suppression
+window, so hybrid devices remain usable. Layout enlargement remains strictly
+gated behind `touch_mode`, preserving desktop presentation.
+
+Touch classification is intentionally release-based:
+
+1. `FINGERDOWN` starts pointer capture but does not activate anything.
+2. A release within the movement slop becomes one click/advance at the release
+   coordinate.
+3. Horizontal movement over the swipe threshold sets `InputState.swipe`
+   without also clicking.
+4. A vertical drag, drag-out-and-back, second contact, focus loss, or missing
+   primary contact cancels the tap.
+
+The router also reports logical-canvas `touch_delta`. Shared `ScrollArea`
+widgets capture a vertical drag until release, and sliders begin tracking on
+touch-down instead of waiting for a click at the end of the gesture. This
+gives event logs, save lists, galleries, settings sliders, and other users of
+those shared widgets native finger-following behaviour.
+
+`InputState.collect(...)` remains a stateless compatibility helper and retains
+its historical one-batch `FINGERDOWN` click. Application and embedding
+runtimes that process multiple frames should retain one `InputRouter` instead.
 
 ---
 
@@ -92,7 +122,7 @@ uv sync --extra web        # pygbag (the [web] extra), same as the web build
 
 # Build the APK (wraps the web bundle in a WebView shell):
 uv run python build.py games/demo_pack --target android-apk
-# or:  wgg build games/demo_pack --target android-apk
+# or:  world-gal-game build games/demo_pack --target android-apk
 ```
 
 Output lands under `build/android/` (override with `--output`). The staging is
@@ -158,7 +188,7 @@ The pure generators and the staging are unit-tested in CI. The **device**
 behaviour can only be verified by hand:
 
 1. **Build + serve over HTTPS.** Build the web bundle
-   (`wgg build games/demo_pack --target web`) and host the output over HTTPS
+   (`world-gal-game build games/demo_pack --target web`) and host the output over HTTPS
    (a PWA requires a secure origin; `http://localhost` is treated as secure
    for desktop testing but a phone needs real HTTPS or a tunnel such as a
    dev TLS proxy).

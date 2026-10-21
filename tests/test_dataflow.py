@@ -7,7 +7,9 @@ edges, and the declared-flag reconciliation (undeclared / unused).
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
+from world_gal_game.core.story_graph import Condition, Effect, Scene
 from world_gal_game.dev.dataflow import DataflowAnalyzer, Edge, SymbolUsage
 
 
@@ -76,6 +78,34 @@ def test_references_filtered_by_symbol_type():
     assert refs["resources"] is None
 
 
+def test_plugin_flag_condition_is_a_conservative_reader() -> None:
+    """Plugin ``*flag*`` predicates keep custom state visible to dataflow."""
+    scenes = {
+        "start": Scene(
+            id="start",
+            requires=[
+                Condition(
+                    kind="days_since_flag_gte",
+                    target="repair_day",
+                    value=1,
+                ),
+            ],
+        ),
+    }
+    analyzer = DataflowAnalyzer(Path("."))
+    analyzer._state = SimpleNamespace(
+        story=SimpleNamespace(scenes=scenes),
+        map=SimpleNamespace(locations={}),
+    )
+
+    usage = analyzer.analyze().flags["repair_day"]
+
+    assert usage.writers == []
+    assert [(ref.kind, ref.role) for ref in usage.readers] == [
+        ("days_since_flag_gte", "read"),
+    ]
+
+
 # ----------------------------------------------------------------------
 # Conditioned edges
 
@@ -137,3 +167,101 @@ def test_edge_guard_logic_is_structured() -> None:
         logic_targets = {c["target"]
                          for c in e.guard_logic["all"] + e.guard_logic["none"]}
         assert flat_targets == logic_targets
+
+
+def test_play_scene_branch_edges_references_and_ordered_guards() -> None:
+    """Branch cases and default are references with first-match guard logic."""
+
+    branch = Effect(
+        kind="play_scene_branch",
+        target="fallback",
+        value=[
+            {
+                "when": {"kind": "flag", "target": "route_a"},
+                "target": "route_a_scene",
+            },
+            {
+                "when": {
+                    "kind": "scene_played",
+                    "target": "checkpoint",
+                },
+                "target": "route_b_scene",
+            },
+        ],
+    )
+    scenes = {
+        "start": Scene(
+            id="start",
+            requires=[Condition(kind="flag", target="outer_gate")],
+            lines=[],
+            on_end=[branch],
+        ),
+        "fallback": Scene(id="fallback"),
+        "route_a_scene": Scene(id="route_a_scene"),
+        "route_b_scene": Scene(id="route_b_scene"),
+        "checkpoint": Scene(id="checkpoint"),
+    }
+    analyzer = DataflowAnalyzer(Path("."))
+    analyzer._state = SimpleNamespace(
+        story=SimpleNamespace(scenes=scenes),
+        map=SimpleNamespace(locations={}),
+    )
+
+    report = analyzer.analyze()
+    branch_edges = {
+        edge.dst: edge
+        for edge in report.edges
+        if edge.src == "start"
+    }
+
+    assert set(branch_edges) == {
+        "fallback",
+        "route_a_scene",
+        "route_b_scene",
+    }
+    assert branch_edges["route_a_scene"].guard_logic == {
+        "all": [
+            {"kind": "flag", "target": "outer_gate", "value": None},
+            {"kind": "flag", "target": "route_a", "value": None},
+        ],
+        "none": [],
+    }
+    assert branch_edges["route_b_scene"].guard_logic == {
+        "all": [
+            {"kind": "flag", "target": "outer_gate", "value": None},
+            {
+                "kind": "scene_played",
+                "target": "checkpoint",
+                "value": None,
+            },
+        ],
+        "none": [
+            {"kind": "flag", "target": "route_a", "value": None},
+        ],
+    }
+    assert branch_edges["fallback"].guard_logic == {
+        "all": [
+            {"kind": "flag", "target": "outer_gate", "value": None},
+        ],
+        "none": [
+            {"kind": "flag", "target": "route_a", "value": None},
+            {
+                "kind": "scene_played",
+                "target": "checkpoint",
+                "value": None,
+            },
+        ],
+    }
+    for target in ("fallback", "route_a_scene", "route_b_scene"):
+        assert any(
+            ref.kind == "play_scene_branch"
+            for ref in report.scenes[target].writers
+        )
+    assert any(
+        ref.kind == "flag"
+        for ref in report.flags["route_a"].readers
+    )
+    assert any(
+        ref.kind == "scene_played"
+        for ref in report.scenes["checkpoint"].readers
+    )

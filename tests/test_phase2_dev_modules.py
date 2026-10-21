@@ -6,9 +6,6 @@ import os
 import shutil
 from pathlib import Path
 
-import pytest
-
-
 # ----------------------------------------------------------------------
 # SmokeRunner
 
@@ -75,7 +72,7 @@ def test_placeholder_image_writes_png(tmp_path: Path):
 
 def test_placeholder_image_same_label_same_color(tmp_path: Path):
     """Labels should produce stable colours (md5-derived)."""
-    from world_gal_game.dev.asset_studio import placeholder_image, _color_for_label
+    from world_gal_game.dev.asset_studio import _color_for_label
     c1 = _color_for_label("alpha")
     c2 = _color_for_label("alpha")
     c3 = _color_for_label("beta")
@@ -119,7 +116,7 @@ def test_stock_placeholder_pack_creates_assets(tmp_path: Path):
 # VisualCheck
 
 
-def test_visual_check_first_run_creates_baseline(tmp_path: Path):
+def test_visual_check_first_run_creates_baseline(tmp_path: Path, monkeypatch):
     """First-time scenarios promote candidate → baseline and pass."""
     os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
     os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
@@ -133,10 +130,29 @@ def test_visual_check_first_run_creates_baseline(tmp_path: Path):
 
     snap = snapshot()
     try:
+        from world_gal_game.app import GalGameApp
+
+        seen_packs: list[str] = []
+        visual_data_roots: list[Path] = []
+        real_init = GalGameApp.__init__
+
+        def recording_init(self, *args, **kwargs):
+            seen_packs.append(kwargs["pack"])
+            assert kwargs["config"].seen_intro is True
+            visual_data_roots.append(
+                Path(kwargs["config"].writable_root_override),
+            )
+            real_init(self, *args, **kwargs)
+
+        monkeypatch.setattr(GalGameApp, "__init__", recording_init)
         vc = VisualCheck(dst)
         scenarios = [{"name": "title", "dev_start": None, "autoplay": 0.3}]
         rep = vc.run(scenarios)
         assert rep.ok
+        assert seen_packs == [str(dst.resolve())]
+        assert len(visual_data_roots) == 1
+        assert visual_data_roots[0] != Path.cwd()
+        assert not visual_data_roots[0].exists()
         assert rep.results[0].created_baseline is True
         # Baseline file exists now
         assert (dst / "visual_baselines" / "title.png").is_file()
@@ -165,6 +181,29 @@ def test_visual_check_md5_match_passes(tmp_path: Path):
         assert rep2.results[0].md5_match
     finally:
         restore(snap)
+
+
+def test_visual_check_strict_mode_rejects_missing_baseline(tmp_path: Path):
+    """Release mode must not turn an unreviewed candidate into its own oracle."""
+    from world_gal_game.dev.visual_check import VisualCheck
+
+    baselines = tmp_path / "baselines"
+    candidates = tmp_path / "candidates"
+    candidates.mkdir()
+    (candidates / "title.png").write_bytes(b"candidate")
+
+    vc = VisualCheck(
+        tmp_path,
+        baselines_dir=baselines,
+        candidates_dir=candidates,
+        strict_baselines=True,
+    )
+    result = vc.compare(name="title")
+
+    assert result.ok is False
+    assert result.created_baseline is False
+    assert "required baseline PNG missing" in result.detail
+    assert not (baselines / "title.png").exists()
 
 
 # ----------------------------------------------------------------------
@@ -238,12 +277,12 @@ def test_self_check_report_serialises_to_json():
 
 
 def test_cli_self_check_returns_zero():
-    """Running `wgg self-check demo_pack` returns 0."""
+    """Running ``world-gal-game self-check demo_pack`` returns 0."""
     from world_gal_game.cli import self_check_main
     from world_gal_game.plugins import snapshot, restore
     snap = snapshot()
     try:
-        rc = self_check_main(["games/demo_pack"])
+        rc = self_check_main(["demo_pack"])
         assert rc == 0
     finally:
         restore(snap)
@@ -254,7 +293,7 @@ def test_cli_smoke_returns_zero():
     from world_gal_game.plugins import snapshot, restore
     snap = snapshot()
     try:
-        rc = smoke_main(["games/demo_pack"])
+        rc = smoke_main(["demo_pack"])
         assert rc == 0
     finally:
         restore(snap)

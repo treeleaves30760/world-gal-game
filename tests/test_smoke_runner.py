@@ -181,3 +181,17 @@ def test_to_dict_includes_assert_fields(tmp_path: Path):
     assert d["asserts_total"] == 2
     assert d["asserts_passed"] == 2
     assert d["failed_asserts"] == []
+
+
+def test_runner_defaults_to_authoritative_absolute_pack_path(tmp_path: Path):
+    """A same-named registered/sibling pack must never replace this fixture."""
+    pack = _write_pack(tmp_path / "duplicate_name", scenes=_SCENES)
+    _write_script(pack, "test_absolute.json", [
+        {"op": "start_scene", "scene": "s_start"},
+        {"op": "next", "count": 3},
+    ])
+
+    report = SmokeRunner(pack, seed=17).run()
+
+    assert report.ok is True
+    assert report.pack_root == str(pack.resolve())

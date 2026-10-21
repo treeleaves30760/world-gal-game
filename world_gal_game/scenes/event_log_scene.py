@@ -27,6 +27,7 @@ class EventLogScene(Scene):
             fonts=self.ctx.fonts, theme=self.ctx.theme,
             font_size=15, style="ghost",
             on_click=(lambda: on_close() if on_close else None),
+            motion=self.ctx.motion,
         )
         self._scroll = ScrollArea(
             pygame.Rect(self._panel_rect.x + 30, self._panel_rect.y + 70,

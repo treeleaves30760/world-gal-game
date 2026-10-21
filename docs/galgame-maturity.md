@@ -31,7 +31,7 @@ staging,`ui/portrait_anim.py`(fade/slide/bounce/pop)+ `ui/transitions.py` 做
 - **`@portrait_backend(name)`** —— 第 9 個擴充 decorator,比照既有八個的模式:
   `PortraitBackendEntry` / `PortraitBackendRegistry`,進 `plugin.yaml` 的
   `extends.portrait_backends`,`PluginManager` 比對宣告 vs 實際註冊並警告,
-  `wgg capabilities` 與 markup 都列出已註冊後端。
+  `world-gal-game capabilities` 與 markup 都列出已註冊後端。
 - **後端介面**(每槽實例化 `cls(spec, assets, fallback_size)`,見
   `world_gal_game/ui/portrait_backend.py`):`update(dt)` /
   `draw(surface, rect, *, flip, alpha)` / `base_surface()`。

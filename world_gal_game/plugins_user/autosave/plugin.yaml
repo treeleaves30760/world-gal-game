@@ -1,6 +1,6 @@
 id: autosave
 name: Autosave
-version: 0.1.0
+version: 0.2.0
 description: |
   Silently writes a rotating autosave whenever the player makes a dialogue
   choice (and optionally when time advances). Rotates across
@@ -14,7 +14,9 @@ entry_module: plugin
 extends:
   hooks:
     - kind: dialogue.choice_made
-      description: Write a rotating autosave after each dialogue choice.
+      description: Request a rotating autosave after each dialogue choice.
+    - kind: dialogue.presentation_ready
+      description: Flush a deferred save after state and UI commit together.
     - kind: time.advance
       description: Write a rotating autosave after time advances.
 

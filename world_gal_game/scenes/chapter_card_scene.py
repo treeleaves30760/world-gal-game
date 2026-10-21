@@ -19,6 +19,7 @@ from __future__ import annotations
 import pygame
 
 from .base import Scene, SceneContext
+from ..ui.motion import MotionKind
 
 
 class ChapterCardScene(Scene):
@@ -81,8 +82,12 @@ class ChapterCardScene(Scene):
         # black during the fade-in so the cut reads as an intentional beat. By
         # the time the grace window ends (and input can dismiss) the fill is
         # fully opaque, so nothing underneath is ever visible to the player.
-        if self.FADE_IN_S > 0:
-            t = max(0.0, min(1.0, self._elapsed / self.FADE_IN_S))
+        fade_duration = self.ctx.motion.duration(
+            self.FADE_IN_S,
+            MotionKind.OPACITY,
+        )
+        if fade_duration > 0:
+            t = max(0.0, min(1.0, self._elapsed / fade_duration))
         else:
             t = 1.0
         base = theme.bg_deep[:3]

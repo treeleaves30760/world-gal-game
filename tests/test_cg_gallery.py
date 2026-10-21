@@ -32,3 +32,22 @@ def test_round_trip_preserves_set():
     assert restored.unlocked == {"assets/cgs/a.png", "assets/cgs/b.png"}
     assert isinstance(restored.unlocked, set)
     assert restored.is_unlocked("assets/cgs/a.png")
+
+
+def test_legacy_blank_and_space_padded_paths_are_repaired():
+    g = CGGallery(unlocked={
+        "",
+        "   ",
+        " assets/cgs/a.png ",
+        "assets/cgs/./a.png",
+    })
+
+    assert g.unlocked == {"assets/cgs/a.png"}
+    assert g.unlock("") is False
+    assert g.unlock("   ") is False
+    assert g.is_unlocked(" assets/cgs/a.png ") is True
+    # Direct legacy mutation is still filtered at the persistence boundary.
+    g.unlocked.add("")
+    assert g.model_dump(mode="json")["unlocked"] == [
+        "assets/cgs/a.png",
+    ]

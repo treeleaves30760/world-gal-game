@@ -5,6 +5,7 @@ description = "A pygame Gal-Game engine: map exploration, multi-axis affection, 
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
+license-files = ["LICENSE"]
 authors = [{ name = "Hsu Po-Hsiang" }]
 keywords = ["gal-game", "visual-novel", "pygame", "engine", "yaml"]
 classifiers = [
@@ -36,6 +37,10 @@ dependencies = [
 # `world_gal_game/npc/llm_brain.py` but no provider ships in v0.1.
 dev = ["pytest>=8.0"]
 build = ["pyinstaller>=6.5"]
+# Cross-platform process RSS sampling and ready/ack descendant cleanup for the
+# independent `runtime-check` release gate. The engine itself does not need
+# psutil, but the gate fails closed without this extra on every platform.
+runtime = ["psutil>=5.9"]
 # Web (pygbag/WASM) packaging. OPTIONAL: nothing in the always-imported
 # engine path imports pygbag — it is shelled out to only by
 # `world_gal_game/build_web.py`. Pinned lower bound for FS-sync stability.

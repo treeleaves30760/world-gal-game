@@ -18,8 +18,8 @@ def init_pygame():
     pygame.quit()
 
 
-from world_gal_game.ui.fonts import FontRegistry
-from world_gal_game.ui.widgets.rich_text_view import RichText
+from world_gal_game.ui.fonts import FontRegistry  # noqa: E402
+from world_gal_game.ui.widgets.rich_text_view import RichText  # noqa: E402
 
 
 @pytest.fixture
@@ -90,6 +90,59 @@ def test_wrapping_creates_multiple_rows(fonts):
     # total_chars accounts for the implicit row breaks (glyphs + rows-1).
     glyphs = sum(len(run.text) for row in rt._rows for run in row)
     assert rt.total_chars() == glyphs + (len(rt._rows) - 1)
+
+
+def test_latin_wrap_prefers_whitespace_without_losing_cursor_positions(fonts):
+    font = fonts.get(24)
+    prefix = "A long "
+    word = "volunteers"
+    rt = _rt(fonts, prefix + word, width=font.size(word)[0])
+    rt._ensure_layout()
+
+    rows = ["".join(run.text for run in row) for row in rt._rows]
+    assert rows == [prefix, word]
+    assert "".join(rows) == prefix + word
+
+    boundary = len(prefix)
+    reveal = rt.reveal_cursor_for_plain(boundary)
+    assert rt.plain_cursor_for_reveal(reveal) == boundary
+
+
+def test_unspaced_text_keeps_glyph_wrap_fallback(fonts):
+    rt = _rt(fonts, "abcdefghij", width=fonts.get(24).size("abc")[0])
+    rt._ensure_layout()
+
+    rows = ["".join(run.text for run in row) for row in rt._rows]
+    assert len(rows) > 1
+    assert "".join(rows) == "abcdefghij"
+
+
+def test_word_wrap_can_move_a_word_across_style_and_wait_boundaries(fonts):
+    bold = fonts.get(24, bold=True)
+    regular = fonts.get(24)
+    word_width = bold.size("volun")[0] + regular.size("teers")[0]
+    markup = "Say [b]volun[/b][w=0.1]teers"
+    rt = _rt(fonts, markup, width=word_width)
+    rt._ensure_layout()
+
+    rows = ["".join(run.text for run in row) for row in rt._rows]
+    assert rows == ["Say ", "volunteers"]
+    assert [run.text for run in rt._rows[1]] == ["volun", "teers"]
+
+    wait_plain = len("Say volun")
+    wait_reveal = rt.reveal_cursor_for_plain(wait_plain)
+    assert rt.has_wait_at_plain(wait_plain)
+    assert rt.plain_cursor_for_reveal(wait_reveal) == wait_plain
+
+
+def test_cjk_wrap_does_not_strand_closing_punctuation(fonts):
+    font = fonts.get(24)
+    rt = _rt(fonts, "甲乙丙。丁", width=font.size("甲乙丙")[0])
+    rt._ensure_layout()
+
+    rows = ["".join(run.text for run in row) for row in rt._rows]
+    assert "".join(rows) == "甲乙丙。丁"
+    assert all(not row.startswith("。") for row in rows)
 
 
 def test_set_markup_reparses(fonts):

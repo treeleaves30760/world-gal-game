@@ -93,15 +93,38 @@ class DialogueHistory(BaseModel):
 
     def push(self, *, speaker: str | None, text: str,
              scene_id: str | None = None,
+             line_index: int | None = None,
+             loc_id: str | None = None,
+             locale: str | None = None,
+             locale_source_digest: str | None = None,
+             is_llm_generated: bool = False,
              portrait: str | None = None,
-             voice: str | None = None) -> None:
+             voice: str | None = None,
+             sound_captions: list[dict[str, str]] | None = None,
+             speaker_id: str | None = None) -> None:
         self.lines.append({
             "speaker": speaker, "text": text,
             "scene_id": scene_id, "portrait": portrait,
+            # Stable authored identity lets a later locale safely rebuild
+            # scrollback copy without replaying the line or its effects.
+            "line_index": line_index,
+            "loc_id": loc_id,
+            "locale": locale,
+            "locale_source_digest": locale_source_digest,
+            "is_llm_generated": is_llm_generated,
+            # Canonical NPC id for per-character voice settings and future
+            # localization-safe history tools. Additive and optional: legacy
+            # saves only contain the display-name speaker and remain valid.
+            "speaker_id": speaker_id,
             # Voice clip path (if the line was voiced) so the scrollback can
             # replay it. None for unvoiced lines; absent in pre-existing saves
             # (read with .get so old history stays valid).
             "voice": voice,
+            # Store only JSON-native authored cue text. Legacy history rows
+            # omit this additive key and remain valid through dict.get().
+            "sound_captions": [
+                dict(caption) for caption in (sound_captions or [])
+            ],
         })
         if len(self.lines) > self.max_lines:
             # Drop the oldest 10% so we don't churn on every push.

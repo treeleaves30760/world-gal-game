@@ -20,7 +20,7 @@ quests:
       - {id: find_book,    text: "找到那本古書"}
       - {id: read_book,    text: "讀完它", hidden: true}
       - {id: take_notes,   text: "抄下筆記", optional: true}
-    rewards_text: "解鎖：青衣對你的信任 + 5"
+    rewards_text: "解鎖：若雪對你的信任 + 5"
 ```
 
 在場景 YAML 啟動它：

@@ -116,6 +116,45 @@ def test_render_uses_per_character_override(driver):
     assert spy.last_volume == pytest.approx(0.25)
 
 
+def test_render_resolves_display_name_to_stable_character_id(driver):
+    driver.app.config.voice_volume = 0.8
+    driver.app.config.per_character_voice_volume.clear()
+    driver.app.config.per_character_voice_volume["heroine_1"] = 0.35
+
+    _scene, spy = _dialogue_scene_with_line(driver, speaker="林清雪")
+
+    assert spy.last_volume == pytest.approx(0.35)
+    assert driver.app.state.dialogue_history.lines[-1]["speaker_id"] == (
+        "heroine_1"
+    )
+
+
+def test_localized_speaker_keeps_identity_for_voice_color_portrait_and_slot(
+    driver,
+):
+    class _LocalizedSpeaker:
+        def story(self, key, source, **_):
+            if key == "voice_probe.line.0.speaker":
+                return "Haruka Lin"
+            return source
+
+    app = driver.app
+    app.dialogue.localization = _LocalizedSpeaker()
+    app.config.voice_volume = 0.8
+    app.config.per_character_voice_volume.clear()
+    app.config.per_character_voice_volume["heroine_1"] = 0.35
+    app.npcs.get("heroine_1").name_color = "#123456"
+
+    scene, spy = _dialogue_scene_with_line(driver, speaker="林清雪")
+
+    assert scene._current_line.speaker == "Haruka Lin"
+    assert scene._current_line.speaker_id == "heroine_1"
+    assert scene.box.speaker_color == (0x12, 0x34, 0x56)
+    assert spy.last_volume == pytest.approx(0.35)
+    assert scene._speaking_slot == "center"
+    assert scene.portrait.path == app.npcs.get("heroine_1").portrait
+
+
 def test_render_falls_back_to_global_for_unlisted_speaker(driver):
     driver.app.config.voice_volume = 0.6
     driver.app.config.per_character_voice_volume.clear()

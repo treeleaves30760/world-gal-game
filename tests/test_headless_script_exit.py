@@ -113,7 +113,7 @@ def test_malformed_assert_typo_operator_does_not_silently_pass(tmp_path: Path,
     degraded to a mere presence check and passed (exit 0). It must now FAIL as a
     malformed assert naming the stray key."""
     script = _write(tmp_path, [
-        {"op": "assert", "affection": "qingyi", "gtee": 9999},
+        {"op": "assert", "affection": "ruoxue", "gtee": 9999},
     ])
     code = run_script(EngineConfig(seed=1), script, pack="demo_pack",
                       inspect_after=False)
@@ -137,7 +137,7 @@ def test_valid_asserts_with_extra_op_key_still_pass(tmp_path: Path):
     script = _write(tmp_path, [
         {"op": "set_flag", "key": "probe", "value": True},
         {"op": "assert", "flag": "probe", "equals": True},
-        {"op": "assert", "affection": "qingyi", "gte": 0},
+        {"op": "assert", "affection": "ruoxue", "gte": 0},
     ])
     code = run_script(EngineConfig(seed=1), script, pack="demo_pack",
                       inspect_after=False)

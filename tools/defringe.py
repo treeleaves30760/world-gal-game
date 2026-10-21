@@ -33,7 +33,7 @@ alpha channel (silhouette and feather are preserved exactly):
      has G clearly above B, so it never matches the magenta test) are left
      untouched.
 
-The defaults were tuned on the "清華異聞錄" portrait set (green-key + unmix
+The defaults were tuned on a green-key anime portrait set (green-key + unmix
 residual). Run ``--dry-run`` first to see the per-image residual it would
 clear.
 

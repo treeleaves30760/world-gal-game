@@ -13,6 +13,7 @@ os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
 os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
 
 from world_gal_game.core.endings import Ending
+from world_gal_game.core.cg_gallery_spec import CGGalleryManifest
 from world_gal_game.core.game_state import GameState
 from world_gal_game.core.story_graph import Scene as StoryScene
 from world_gal_game.scenes.endings_scene import compute_completion
@@ -84,6 +85,31 @@ def test_completion_rounds_to_one_decimal():
     assert comp["overall_pct"] == 33.3
 
 
+def test_completion_ignores_retired_clear_data_ids_in_current_roster():
+    from world_gal_game.core.clear_data import ClearData
+
+    state = GameState()
+    state.story.add_scene(StoryScene(id="current", lines=[]))
+    state.endings.register(Ending(id="current_ending", title="Current"))
+    ClearData(
+        scenes_seen={"current", "retired_a", "retired_b"},
+        endings_seen={"retired_ending"},
+    ).apply_to_state(
+        state,
+        registered_endings={"current_ending"},
+    )
+    # Simulate a stale save key as well: completion must intersect definitions
+    # rather than merely clamping an impossible percentage.
+    state.endings.unlocked["retired_ending"] = ""
+
+    comp = compute_completion(state, total_cgs=None)
+
+    assert state.read_log.scenes == {"current", "retired_a", "retired_b"}
+    assert comp["scenes"] == {"done": 1, "total": 1, "pct": 100.0}
+    assert comp["endings"] == {"done": 0, "total": 1, "pct": 0.0}
+    assert comp["overall_pct"] == 50.0
+
+
 # --------------------------------------------------------------------------
 # Scene behaviour through the real app (GameDriver)
 # --------------------------------------------------------------------------
@@ -144,6 +170,87 @@ def test_endings_scene_opens_and_describes(driver):
     assert "end_misc" in all_listed
     assert "end_secret" not in all_listed
     _ = route
+
+
+def test_endings_completion_uses_visible_authored_cg_roster(driver):
+    state = driver.app.ctx.state
+    state.meta["__cg_gallery_manifest__"] = CGGalleryManifest.from_items([
+        {"asset": "assets/cgs/a.png", "title": "A", "order": 1},
+        {"asset": "assets/cgs/b.png", "title": "B", "order": 2},
+        {
+            "asset": "assets/cgs/hidden_locked.png",
+            "title": "Hidden locked",
+            "hidden": True,
+            "order": 3,
+        },
+        {
+            "asset": "assets/cgs/hidden_seen.png",
+            "title": "Hidden seen",
+            "hidden": True,
+            "order": 4,
+        },
+    ])
+    state.cg_gallery.unlocked.clear()
+    state.cg_gallery.unlock("assets/cgs/hidden_seen.png")
+    state.cg_gallery.unlock("assets/cgs/old_save.png")
+
+    driver.app._open_endings()
+    driver.advance_frames(2)
+    completion = driver.app.manager.current.describe()["completion"]
+
+    # a + b + unlocked hidden + old-save fallback; hidden_locked is secret.
+    assert completion["cgs"] == {
+        "done": 2,
+        "total": 4,
+        "pct": 50.0,
+    }
+
+
+@pytest.mark.parametrize(
+    ("size", "compact"),
+    [
+        ((640, 360), True),
+        ((1280, 720), False),
+    ],
+)
+def test_endings_summary_stays_inside_panel_at_responsive_sizes(
+    size,
+    compact,
+):
+    from world_gal_game.dev.driver import GameDriver
+
+    d = GameDriver(pack="demo_pack", screen_size=size)
+    try:
+        state = d.app.ctx.state
+        state.meta["__cg_gallery_manifest__"] = CGGalleryManifest.from_items([
+            {"asset": "assets/cgs/a.png", "title": "A"},
+        ])
+        d.app._open_endings()
+        d.advance_frames(2)
+        scene = d.app.manager.current
+
+        assert scene._summary_compact is compact
+        assert scene._panel_rect.contains(scene._summary_rect)
+        assert scene._panel_rect.contains(scene.close_btn.rect)
+        assert scene.close_btn.rect.width >= 44
+        assert scene.close_btn.rect.height >= 44
+        assert scene._summary_rect.bottom < scene._scroll.rect.top
+        assert all(
+            scene._summary_rect.contains(rect)
+            for rect in scene._summary_text_rects
+        )
+        assert scene._summary_texts[-1].startswith("完成度 ")
+        category_labels = scene._summary_texts[:-1]
+        assert {"劇情", "結局", "CG"} == {
+            label.split(maxsplit=1)[0]
+            for label in category_labels
+        }
+        if compact:
+            assert all("(" not in label for label in category_labels)
+        else:
+            assert all(label.endswith("%)") for label in category_labels)
+    finally:
+        d.quit()
 
 
 def test_endings_grouped_by_route(driver):

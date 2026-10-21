@@ -7,7 +7,15 @@ far, and silhouettes / placeholders for the rest.
 """
 from __future__ import annotations
 
-from pydantic import BaseModel, Field, field_serializer
+import posixpath
+
+from pydantic import BaseModel, Field, field_serializer, field_validator
+
+
+def canonical_cg_path(path: str) -> str:
+    """Normalize one pack-relative CG key without touching the filesystem."""
+    normalized = posixpath.normpath(path.strip().replace("\\", "/"))
+    return "" if normalized == "." else normalized
 
 
 class CGGallery(BaseModel):
@@ -19,21 +27,41 @@ class CGGallery(BaseModel):
 
     model_config = {"arbitrary_types_allowed": True}
 
+    @field_validator("unlocked", mode="before")
+    @classmethod
+    def _canonicalize_paths(cls, value):
+        """Repair blank/space-padded keys written by older engine builds."""
+        if not isinstance(value, (list, set, tuple, frozenset)):
+            return value
+        return {
+            canonical_cg_path(path) if isinstance(path, str) else path
+            for path in value
+            if not isinstance(path, str) or canonical_cg_path(path)
+        }
+
     # Pydantic v2 keeps set as set in model_dump(); we must serialise to list
     # so json.dumps works without a custom encoder.
     @field_serializer("unlocked")
     def _serialize_set(self, v: set[str]) -> list[str]:
-        return sorted(v)
+        return sorted({
+            canonical_cg_path(path)
+            for path in v
+            if isinstance(path, str) and canonical_cg_path(path)
+        })
 
     def unlock(self, path: str) -> bool:
         """Record that a CG has been seen. Returns True on first encounter."""
+        path = canonical_cg_path(path)
+        if not path:
+            return False
         is_new = path not in self.unlocked
         self.unlocked.add(path)
         return is_new
 
     def is_unlocked(self, path: str) -> bool:
         """Return True if this CG has been seen before."""
-        return path in self.unlocked
+        path = canonical_cg_path(path)
+        return bool(path) and path in self.unlocked
 
     @classmethod
     def model_validate(cls, obj, **kwargs):  # type: ignore[override]

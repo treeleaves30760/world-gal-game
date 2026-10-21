@@ -53,9 +53,21 @@ class Slider(Widget):
         hit = (self.rect.x - 8 <= mx <= self.rect.right + 8
                and self.rect.y - 10 <= my <= self.rect.bottom + 10)
         held = bool(inp.mouse_pressed[0])
-        if inp.mouse_clicked and hit:
+        touch_press = (
+            getattr(inp, "touch_started", False)
+            and getattr(inp, "touch_active", False)
+        )
+        if touch_press and hit:
             self._dragging = True
             self._set_from_x(mx)
+        elif inp.mouse_clicked and hit:
+            self._set_from_x(mx)
+            # Touch taps intentionally activate on release. Do not leave the
+            # slider captured for an extra frame after that release; a real
+            # mouse-down may remain held and continue into a drag.
+            self._dragging = (
+                held and not getattr(inp, "touch_released", False)
+            )
         elif self._dragging and held:
             self._set_from_x(mx)        # track the drag even outside the bar
         elif not held:

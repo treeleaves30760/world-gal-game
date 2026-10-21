@@ -25,7 +25,7 @@ ALWAYS preview first — this is a heuristic and art varies:
     uv run tools/fix_checker.py --preview "assets/characters/**/*.png"
 The preview writes <name>.checkmask.png next to each input with the detected
 region tinted red. Eyeball them, then run for real:
-    uv run tools/fix_checker.py "assets/characters/qingyi/worried.png"
+    uv run tools/fix_checker.py "assets/characters/ruoxue/worried.png"
     uv run tools/fix_checker.py "assets/characters/**/*.png"   # batch
 
 Tunables (raise to detect less, lower to detect more):

@@ -56,17 +56,23 @@ from world_gal_game.plugins import (
 )
 ```
 
-### CLI（裝完 engine 後 `world-gal-game` 或 `wgg`）
+視覺 capture 應以 `GameDriver(..., isolated_runtime=True)` 啟動，避免本機玩家設定、
+clear data、save 或使用者外掛悄悄改變候選圖；沙盒會在 `quit()` 與初始化失敗時清除。
+
+### CLI
+
+安裝 engine 後使用已註冊的 `world-gal-game`；在 source checkout 也可用
+`uv run python -m world_gal_game.cli <subcommand>`。
 
 ```bash
-wgg --pack <p>                     # 啟動 GUI
-wgg --headless --inspect --pack <p> # 印玩家狀態 JSON
-wgg --headless --script <json>     # 跑腳本（多步驟）
-wgg debug <repro.json>             # 注入點擊 + 截圖
-wgg check <pack>                   # 全套驗證（schema + refs + dead-ends）
-wgg inspect-pack <pack> [--format] # PackInspector CLI
-wgg edit <pack> <op> [--dry-run]   # PackEditor CLI
-wgg capabilities [--pack <p>]      # 印引擎能力 manifest
+world-gal-game --pack <p>                     # 啟動 GUI
+world-gal-game --headless --inspect --pack <p> # 印玩家狀態 JSON
+world-gal-game --headless --script <json>     # 跑腳本（多步驟）
+world-gal-game debug <repro.json>             # 注入點擊 + 截圖
+world-gal-game check <pack>                   # 全套驗證（schema + refs + dead-ends）
+world-gal-game inspect-pack <pack> [--format] # PackInspector CLI
+world-gal-game edit <pack> <op> [--dry-run]   # PackEditor CLI
+world-gal-game capabilities [--pack <p>]      # 印引擎能力 manifest
 ```
 
 ---
@@ -126,15 +132,15 @@ print(ins.summary())
 ### CLI
 
 ```bash
-wgg inspect-pack games/demo_pack
+world-gal-game inspect-pack games/demo_pack
 # pack: 小鎮的午後  (format v0.1)
 #   counts:      scenes=11, locations=4, characters=2, ..., endings=3
 #   reachable:   11 / 11 scenes
 #   endings:     reachable=[...] unreachable=[]
 #   dead-ends:   none
 
-wgg inspect-pack games/demo_pack --format mermaid > graph.mmd
-wgg inspect-pack games/demo_pack --format json | jq '.dead_ends'
+world-gal-game inspect-pack games/demo_pack --format mermaid > graph.mmd
+world-gal-game inspect-pack games/demo_pack --format json | jq '.dead_ends'
 ```
 
 PackInspector 操作 raw YAML（不會跑 plugin、不會載 GameState），純函式且快。
@@ -168,9 +174,9 @@ m = build_manifest()
 CLI：
 
 ```bash
-wgg capabilities                     # 純引擎能力（builtin）
-wgg capabilities --pack demo_pack    # 包含該 pack 載入的 plugins
-wgg capabilities --pack demo_pack --format json > caps.json
+world-gal-game capabilities                     # 純引擎能力（builtin）
+world-gal-game capabilities --pack demo_pack    # 包含該 pack 載入的 plugins
+world-gal-game capabilities --pack demo_pack --format json > caps.json
 ```
 
 **用法建議（給 AI 自己）**：在生成 pack YAML 之前先讀一次 manifest，知道
@@ -238,10 +244,10 @@ editor.commit()        # 確定要寫，呼叫 commit
 ### CLI
 
 ```bash
-wgg edit games/demo_pack add-npc \
+world-gal-game edit games/demo_pack add-npc \
     --payload '{"id":"rival","name":"競爭者","role":"antagonist"}' --dry-run
 
-wgg edit games/demo_pack add-scene \
+world-gal-game edit games/demo_pack add-scene \
     --payload-file new_scene.json --into-file scenes/extra.yaml
 ```
 
@@ -320,6 +326,12 @@ effects:
 - `@condition(kind)` — 新 condition 種類
 - `@hook(event)` — 訂閱 lifecycle 事件（`pack.after_load`、`effect.after_apply`…）
 - `@inspect_field(key)` — 加 inspect 欄位
+- `@widget(name)` — 新 pygame widget
+- `@scene(scene_id)` — 新 Scene 類別
+- `@brain(name)` — 新 LLM brain
+- `@dialogue_op(name)` — 新 inline dialogue op
+- `@portrait_backend(name)` — 新立繪渲染後端
+- `@ambient_backend(name)` — 新環境／天氣 overlay 後端
 
 ---
 
@@ -331,22 +343,22 @@ AI 從 spec 產出可玩 pack 的標準流程：
 1. 讀 spec / user request
         │
         ▼
-2. wgg capabilities --pack <existing_pack>     # 知道能用什麼 effect / condition
+2. world-gal-game capabilities --pack <existing_pack>     # 知道能用什麼 effect / condition
         │
         ▼
 3. PackEditor.add_scene / add_choice / ...     # 構建 pack
         │   (失敗時讀 PackEditError.hint 修 payload 重試)
         ▼
-4. wgg check <pack>                            # schema + refs + dead-ends 一次驗
+4. world-gal-game check <pack>                            # schema + refs + dead-ends 一次驗
         │   (有 error 修，warning 視情況)
         ▼
-5. wgg inspect-pack <pack>                     # 看拓樸對不對
+5. world-gal-game inspect-pack <pack>                     # 看拓樸對不對
         │   (reachability 看 ending 走得到嗎)
         ▼
-6. wgg --headless --pack <pack> --script test.json   # smoke 跑一輪
+6. world-gal-game --headless --pack <pack> --script test.json   # smoke 跑一輪
         │   (ending_* flag 對嗎)
         ▼
-7. wgg --pack <pack> --screenshot out.png      # 截圖檢查 UI
+7. world-gal-game --pack <pack> --screenshot out.png      # 截圖檢查 UI
         │
         ▼
 8. iterate
@@ -372,7 +384,7 @@ AI 從 spec 產出可玩 pack 的標準流程：
 跑：
 
 ```bash
-wgg --headless --pack <pack> --script smoke.json | jq '.commands[-1].result.flags'
+world-gal-game --headless --pack <pack> --script smoke.json | jq '.commands[-1].result.flags'
 ```
 
 ---
@@ -388,7 +400,7 @@ wgg --headless --pack <pack> --script smoke.json | jq '.commands[-1].result.flag
 - **以為 PackInspector 等同 `state.inspect()`** — 不等。前者是 pack 拓樸（檔案
   分析），後者是玩家狀態。
 - **改 `core/game_state.py` 加新 effect kind** — 不要。新 kind 走 plugin。
-- **沒讀 manifest 就寫 pack YAML** — 你不會知道 plugin 加了什麼 kind。先 `wgg
+- **沒讀 manifest 就寫 pack YAML** — 你不會知道 plugin 加了什麼 kind。先 `world-gal-game
   capabilities --pack <p>` 一次。
 
 ---
@@ -397,14 +409,14 @@ wgg --headless --pack <pack> --script smoke.json | jq '.commands[-1].result.flag
 
 寫一支新 pack 時，建議的 commit 順序：
 
-1. **骨架**：`tools/scaffold_pack.py --name <slug> --title "..."` 產出 skeleton
-2. **能力盤點**：`wgg capabilities` 看 effect / condition 都有什麼
+1. **骨架**：`tools/scaffold_pack.py --pack <slug> --title "..."` 產出 skeleton
+2. **能力盤點**：`world-gal-game capabilities` 看 effect / condition 都有什麼
 3. **核心 scene**：寫 intro_scene + 一條完整 route 通到一個 ending
-4. **跑 smoke**：`wgg --headless --script .../smoke.json` 確認跑得通
+4. **跑 smoke**：`world-gal-game --headless --script .../smoke.json` 確認跑得通
 5. **加分支**：另外的 ending、side quest
-6. **驗證**：`wgg check`、`wgg inspect-pack`
+6. **驗證**：`world-gal-game check`、`world-gal-game inspect-pack`
 7. **加插件**：有要加的特殊機制就寫 plugin
-8. **截圖 review**：`wgg --screenshot out.png`
+8. **截圖 review**：`world-gal-game --screenshot out.png`
 
 每一步都很短，每一步都可以 verify。AI 在這個 loop 裡的角色：把每個步驟自動化，
 讓人類只看 review。
@@ -413,9 +425,13 @@ wgg --headless --pack <pack> --script smoke.json | jq '.commands[-1].result.flag
 
 ## 路線
 
-完整 Phase 路線見 [ROADMAP.md](https://github.com/treeleaves30760/world-gal-game/blob/main/ROADMAP.md)。Phase 2 會加：
-- `world_gal_game/dev/self_check.py`：把 schema / refs / dead-end / smoke / visual
-  五階段整合
-- `world_gal_game/dev/visual_check.py`：截圖 baseline 比對
+完整 Phase 路線見 [ROADMAP.md](https://github.com/treeleaves30760/world-gal-game/blob/main/ROADMAP.md)。目前已有：
+- `world_gal_game/dev/self_check.py`：整合 schema / refs / dead-end / softlock /
+  reachability / smoke / visual 七階段
+- `world_gal_game/dev/visual_check.py`：截圖 baseline 比對；CI / release 應用
+  `--strict-baselines`，缺 baseline 時直接失敗。預設在 720p／1080p 各捕捉
+  `spatial_map_story_priority`、`spatial_map_all_reachable` 與
+  `travel_confirmation`；確認情境使用真實 `TravelPlan`，只顯示報價而不提交移動
 - `world_gal_game/dev/asset_studio.py`：placeholder 圖、resize、轉檔
-- 插件擴充點擴大到 widget / scene / brain
+- 插件擴充面共有十類：effect / condition / hook / inspect field / widget /
+  scene / brain / dialogue op / portrait backend / ambient backend

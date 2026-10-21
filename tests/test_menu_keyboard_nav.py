@@ -85,3 +85,36 @@ def test_mouse_click_still_works_when_keyboard_nav_disabled():
     inp = InputState(events=[], mouse_pos=(50, 50), mouse_clicked=True)
     menu.update(0.0, inp)
     assert fired == [True]
+
+
+def test_stationary_mouse_does_not_reclaim_keyboard_selection():
+    menu = _make_menu()
+    # The pointer remains over row zero while the player navigates down.
+    menu.update(
+        0.0,
+        InputState(
+            events=[_key_event(pygame.K_DOWN)],
+            mouse_pos=(50, 25),
+        ),
+    )
+    assert menu.selected == 1
+
+    # A later frame with the same polled position still preserves keyboard
+    # focus because no pointer motion occurred.
+    menu.update(0.0, InputState(mouse_pos=(50, 25)))
+    assert menu.selected == 1
+
+
+def test_mouse_motion_transfers_selection_to_hovered_row():
+    menu = _make_menu()
+    menu.selected = 2
+    target = (50, menu.row_h + 20)
+    motion = pygame.event.Event(
+        pygame.MOUSEMOTION,
+        {"pos": target, "rel": (4, 2), "buttons": (0, 0, 0)},
+    )
+    menu.update(
+        0.0,
+        InputState(events=[motion], mouse_pos=target),
+    )
+    assert menu.selected == 1

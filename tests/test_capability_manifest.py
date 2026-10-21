@@ -11,7 +11,7 @@ from world_gal_game.dev.capability_manifest import (
     build_manifest, find_condition, find_effect, line_field_schema,
     manifest_json, summary_table,
 )
-from world_gal_game.plugins import effect, condition, snapshot, restore
+from world_gal_game.plugins import effect, snapshot, restore
 
 
 @pytest.fixture
@@ -67,7 +67,6 @@ def test_plugin_added_kind_appears_in_manifest(clean_registry):
             description="just a test")
     def fn(state, eff): return {"ok": True}
 
-    m = build_manifest()
     entry = find_effect("__test_custom__")
     assert entry is not None
     assert entry["plugin_id"] == "testbed"
@@ -144,7 +143,38 @@ def test_markup_section_present():
 def test_manifest_content_schema_is_json_serializable():
     parsed = json.loads(manifest_json())
     assert "content_schema" in parsed
+    gallery_file = parsed["content_files"]["content/cg_gallery.yaml"]
+    assert [shape["type"] for shape in gallery_file["oneOf"]] == [
+        "object",
+        "array",
+        "object",
+    ]
     assert "markup" in parsed
+
+
+def test_schema_bundle_describes_all_cg_gallery_file_shapes():
+    from world_gal_game.dev.capability_manifest import schema_document
+
+    schema = schema_document()["content_files"][
+        "content/cg_gallery.yaml"
+    ]
+
+    assert len(schema["oneOf"]) == 3
+    wrapper, top_level_list, compact_mapping = schema["oneOf"]
+    assert "entries" in wrapper["properties"]
+    assert wrapper["required"] == ["entries"]
+    assert top_level_list["items"]["$ref"].endswith(
+        "CGGalleryEntrySpec"
+    )
+    assert compact_mapping["additionalProperties"]["$ref"].endswith(
+        "CGGalleryCompactEntry"
+    )
+    assert "asset" not in schema["$defs"][
+        "CGGalleryCompactEntry"
+    ]["required"]
+    assert compact_mapping["propertyNames"] == {
+        "not": {"const": "entries"},
+    }
 
 
 def test_manifest_with_pack_manager_includes_plugins():

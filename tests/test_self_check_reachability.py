@@ -22,8 +22,13 @@ from __future__ import annotations
 
 import textwrap
 from pathlib import Path
+from types import SimpleNamespace
 
-from world_gal_game.dev.reachability import EndingReachabilityChecker
+from world_gal_game.core.story_graph import Choice, Effect, Scene
+from world_gal_game.dev.reachability import (
+    EndingReachabilityChecker,
+    StrandFixpoint,
+)
 from world_gal_game.dev.self_check import SelfCheck
 
 
@@ -258,6 +263,113 @@ def _write_fixture(root: Path, *, strand: bool) -> Path:
 
 # ----------------------------------------------------------------------
 # Tests
+
+
+def test_strand_fixpoint_collects_play_scene_branch_targets() -> None:
+    branch = Effect(
+        kind="play_scene_branch",
+        target="fallback",
+        value=[
+            {
+                "when": {"kind": "flag", "target": "route_a"},
+                "target": "route_a_scene",
+            },
+            {
+                "when": {"kind": "flag", "target": "route_b"},
+                "target": "route_b_scene",
+            },
+        ],
+    )
+    scenes = {
+        "start": Scene(id="start", on_end=[branch]),
+        "fallback": Scene(id="fallback"),
+        "route_a_scene": Scene(id="route_a_scene"),
+        "route_b_scene": Scene(id="route_b_scene"),
+    }
+    state = SimpleNamespace(
+        story=SimpleNamespace(scenes=scenes),
+        map=SimpleNamespace(locations={}),
+        meta={"intro_scene": "start"},
+    )
+
+    incoming = StrandFixpoint(state)._edges_into
+
+    assert set(incoming) == {
+        "fallback",
+        "route_a_scene",
+        "route_b_scene",
+    }
+    assert incoming["fallback"][0][1] == set()
+    assert incoming["route_a_scene"][0][1] == {"route_a"}
+    assert incoming["route_b_scene"][0][1] == {"route_b"}
+
+
+def test_strand_fixpoint_one_hot_false_clears_do_not_block_selected_route() -> None:
+    """A one-hot choice may clear sibling routes without selecting them."""
+    scenes = {
+        "route_choice": Scene(
+            id="route_choice",
+            choices=[
+                Choice(
+                    id="pick_red",
+                    text="red",
+                    effects=[
+                        Effect(kind="set_flag", target="route_red", value=True),
+                        Effect(kind="set_flag", target="route_blue", value=False),
+                        Effect(kind="set_flag", target="red_cleared", value=False),
+                    ],
+                    next_scene="red_path",
+                ),
+                Choice(
+                    id="pick_blue",
+                    text="blue",
+                    effects=[
+                        Effect(kind="set_flag", target="route_red", value=False),
+                        Effect(kind="set_flag", target="route_blue", value=True),
+                        Effect(kind="set_flag", target="blue_cleared", value=False),
+                    ],
+                    next_scene="blue_path",
+                ),
+            ],
+        ),
+        "red_path": Scene(
+            id="red_path",
+            on_end=[
+                Effect(kind="set_flag", target="ending_red", value=True),
+            ],
+        ),
+        "blue_path": Scene(
+            id="blue_path",
+            on_end=[
+                Effect(kind="set_flag", target="ending_blue", value=True),
+            ],
+        ),
+    }
+    state = SimpleNamespace(
+        story=SimpleNamespace(scenes=scenes),
+        map=SimpleNamespace(locations={}),
+        meta={"intro_scene": "route_choice"},
+    )
+    fixpoint = StrandFixpoint(state)
+
+    red_flags, _, red_scenes = fixpoint.closure_with_scenes(
+        {"route_red"},
+        forbidden_flags={"route_blue"},
+    )
+    blue_flags, _, blue_scenes = fixpoint.closure_with_scenes(
+        {"route_blue"},
+        forbidden_flags={"route_red"},
+    )
+
+    assert "red_path" in red_scenes
+    assert "ending_red" in red_flags
+    assert "blue_path" not in red_scenes
+    assert "red_cleared" not in red_flags
+
+    assert "blue_path" in blue_scenes
+    assert "ending_blue" in blue_flags
+    assert "red_path" not in blue_scenes
+    assert "blue_cleared" not in blue_flags
 
 
 def test_checker_flags_blue_strand(tmp_path: Path):

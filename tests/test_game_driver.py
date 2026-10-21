@@ -1,7 +1,6 @@
 """Tests for the AI-friendly GameDriver headless harness."""
 import os
 import json
-from pathlib import Path
 
 import pygame
 import pytest
@@ -19,6 +18,22 @@ def driver():
     d.quit()
 
 
+def _open_picker_directly(driver) -> None:
+    """Open the secondary list surface for picker-specific regression tests."""
+    from world_gal_game.scenes.destination_picker import DestinationPickerScene
+
+    app = driver.app
+    app.manager.push(
+        DestinationPickerScene(app.ctx),
+        on_close=app.manager.pop,
+        on_move_to=app._move_from_map,
+        on_travel=app._travel_from_map_plan,
+        on_wait=app._advance_time,
+        on_world_map=app._open_world_map,
+    )
+    driver.advance_frames(5)
+
+
 def test_driver_boots_and_snapshot(driver):
     """Boot, take snapshot, verify basic fields populated."""
     snap = driver.snapshot()
@@ -26,6 +41,78 @@ def test_driver_boots_and_snapshot(driver):
     assert "scene_top" in snap
     assert isinstance(snap["flags"], dict)
     assert isinstance(snap["widgets"], list)
+    assert snap["asset_cache"] == driver.app.assets.cache_stats()
+
+
+def test_app_inspect_exposes_asset_cache_telemetry(driver):
+    stats = driver.app.inspect()["asset_cache"]
+
+    assert stats["image_budget_bytes"] == 256 * 1024 * 1024
+    assert stats["sound_budget_bytes"] == 64 * 1024 * 1024
+    assert stats["retained_audio_bytes"] >= 0
+
+
+def test_driver_threads_explicit_seed_into_runtime():
+    from world_gal_game.dev.driver import GameDriver
+
+    seeded = GameDriver(pack="demo_pack", seed=731)
+    try:
+        assert seeded.cfg.seed == 731
+        seeded.new_game()
+        assert seeded.app.state.meta["__seed__"] == 731
+    finally:
+        seeded.quit()
+
+
+def test_driver_can_isolate_runtime_state(tmp_path, monkeypatch):
+    from world_gal_game.dev.driver import GameDriver
+
+    prior_plugin_root = tmp_path / "prior-user-plugins"
+    monkeypatch.setenv("WGG_USER_PLUGIN_ROOT", str(prior_plugin_root))
+    isolated = GameDriver(pack="demo_pack", isolated_runtime=True)
+    sandbox = isolated.cfg.writable_root_override
+    try:
+        assert sandbox is not None
+        assert sandbox.name.startswith("wgg-game-driver-")
+        assert sandbox.is_dir()
+        resolved_sandbox = sandbox.resolve()
+        assert isolated.cfg.settings_path().is_relative_to(resolved_sandbox)
+        assert isolated.cfg.save_dir().is_relative_to(resolved_sandbox)
+        assert os.environ["WGG_USER_PLUGIN_ROOT"] == str(
+            sandbox / "user-plugins",
+        )
+    finally:
+        isolated.quit()
+
+    assert not sandbox.exists()
+    assert os.environ["WGG_USER_PLUGIN_ROOT"] == str(prior_plugin_root)
+
+
+def test_isolated_driver_restores_runtime_state_after_init_failure(
+    tmp_path,
+    monkeypatch,
+):
+    from world_gal_game.dev.driver import GameDriver
+
+    prior_plugin_root = tmp_path / "prior-user-plugins"
+    captured = {}
+
+    class FailingApp:
+        def __init__(self, *, config, headless):
+            assert headless is True
+            captured["sandbox"] = config.writable_root_override
+            raise RuntimeError("injected app construction failure")
+
+    monkeypatch.setenv("WGG_USER_PLUGIN_ROOT", str(prior_plugin_root))
+    monkeypatch.setattr("world_gal_game.app.GalGameApp", FailingApp)
+
+    with pytest.raises(RuntimeError, match="injected app construction failure"):
+        GameDriver(pack="demo_pack", isolated_runtime=True)
+
+    sandbox = captured["sandbox"]
+    assert sandbox is not None
+    assert not sandbox.exists()
+    assert os.environ["WGG_USER_PLUGIN_ROOT"] == str(prior_plugin_root)
 
 
 def test_driver_new_game_into_dialogue(driver):
@@ -38,20 +125,26 @@ def test_driver_new_game_into_dialogue(driver):
 
 
 def test_driver_click_advances_dialogue(driver):
-    """Clicking after typewriter finishes should advance line_index."""
+    """Clicks cross visual pages before advancing the authored line."""
     driver.new_game()
-    driver.advance_frames(60)   # let typewriter finish first line
+    scene = driver.app.manager.current
+    box = scene.box
     idx_before = driver.snapshot()["current_line_index"]
-    driver.click((640, 600))
-    driver.advance_frames(60)
-    driver.click((640, 600))
-    driver.advance_frames(10)
+    initial_page_count = box.page_count
+
+    # Begin each page in its completed state so every click owns exactly one
+    # page flip, and only the final page's click advances the logical line.
+    for _page in range(initial_page_count):
+        box.force_reveal()
+        driver.click((640, 600))
+        driver.advance_frames(2)
+
     idx_after = driver.snapshot()["current_line_index"]
     assert idx_after > idx_before
 
 
 def test_driver_typewriter_skip_via_space(driver):
-    """Pressing Space mid-typewriter should reveal full line (regression
+    """Pressing Space mid-typewriter should reveal the current page (regression
     for the force_reveal rollback bug)."""
     driver.new_game()
     driver.advance_frames(2)   # very early; typewriter not done
@@ -78,6 +171,22 @@ def test_driver_find_widget_by_label(driver):
     assert w["has_on_click"] is True
 
 
+def test_driver_skip_dialogue_stops_before_a_player_choice(driver):
+    """Presentation skipping must not silently decide an authored branch."""
+    driver.new_game()
+    driver.skip_dialogue(max_frames=800)
+    driver.app._start_dialogue("meet_heroine")
+    driver.app.manager.commit_pending()
+
+    driver.skip_dialogue(max_frames=800)
+
+    scene = driver.app.manager.current
+    assert type(scene).__name__ == "DialogueScene"
+    assert scene.choices is not None and scene.choices.visible
+    assert driver.app.state.story.current_scene == "meet_heroine"
+    assert driver.app.state.events.flags.get("met_heroine_1") is not True
+
+
 def test_driver_travel_to_moves_location(driver):
     """Travelling to '鎮中廣場' through the picker should change location."""
     driver.new_game()
@@ -88,6 +197,58 @@ def test_driver_travel_to_moves_location(driver):
     after = driver.snapshot()["location"]
     assert after != before
     assert after == "town_square"
+
+
+def test_driver_and_exploration_honour_live_map_rebinding(driver):
+    from world_gal_game.scenes.exploration import ExplorationScene
+    from world_gal_game.scenes.map_scene import MapScene
+    from world_gal_game.ui.input_bindings import (
+        InputAction,
+        rebind_action,
+    )
+
+    driver.new_game()
+    driver.skip_dialogue(max_frames=800)
+    driver.advance_frames(5)
+    assert isinstance(driver.app.manager.current, ExplorationScene)
+
+    result = rebind_action(
+        driver.app.config.input_bindings,
+        InputAction.OPEN_MAP,
+        pygame.K_F2,
+    )
+    assert result.success is True
+    driver.app.config.input_bindings = result.overrides
+
+    driver.press_key(pygame.K_m)
+    driver.advance_frames(2)
+    assert isinstance(driver.app.manager.current, ExplorationScene)
+
+    assert driver.press_action(InputAction.OPEN_MAP) is True
+    driver.advance_frames(2)
+    assert isinstance(driver.app.manager.current, MapScene)
+
+
+def test_driver_travel_to_resolves_formal_name_when_map_uses_short_label(
+    driver,
+) -> None:
+    driver.new_game()
+    driver.skip_dialogue(max_frames=800)
+    driver.app.state.events.set_flag("met_heroine_1", True)
+    driver.app.ctx.meta["travel"] = {
+        "guided_story": {
+            "future_horizon_phases": 4,
+            "max_primary": 3,
+        },
+        "spatial_map": {
+            "nodes": {
+                "town_square": {"label": "廣場"},
+            },
+        },
+    }
+
+    assert driver.travel_to("鎮中廣場")
+    assert driver.snapshot()["location"] == "town_square"
 
 
 def test_driver_screenshot_writes_file(driver, tmp_path):
@@ -136,7 +297,7 @@ def test_advance_time_fires_eligible_enter_hook(driver):
     advance — not require the player to leave and re-enter.
 
     This was the user-reported bug: "在總圖的深處呆了一整天也沒有任何反應"
-    — the qingyi route's library_stacks enter hook required evening/night
+    — the ruoxue route's library_stacks enter hook required evening/night
     but never fired if the player advanced time in place.
     """
     from world_gal_game.core.map_system import SceneHook
@@ -185,7 +346,6 @@ def test_dialogue_end_fires_eligible_enter_hook(driver):
     that newly satisfy an enter hook at the current location. The hook
     should fire when the dialogue ends, not wait for the player to leave."""
     from world_gal_game.core.map_system import SceneHook
-    from world_gal_game.core.time_system import TimeOfDay
 
     driver.new_game()
     driver.skip_dialogue(max_frames=800)
@@ -232,8 +392,7 @@ def test_picker_filter_persists_across_reopen(driver):
     driver.skip_dialogue(max_frames=800)
     driver.advance_frames(5)
     driver.app.state.events.set_flag("met_heroine_1", True)
-    driver.press_key(pygame.K_m)        # open picker
-    driver.advance_frames(5)
+    _open_picker_directly(driver)
     assert type(driver.app.manager.current).__name__ == "DestinationPickerScene"
     w = driver.find_widget(label="只看現在可去")
     assert w is not None
@@ -243,8 +402,7 @@ def test_picker_filter_persists_across_reopen(driver):
     # Close, then reopen — the filter must still be on.
     driver.press_key(pygame.K_ESCAPE)
     driver.advance_frames(3)
-    driver.press_key(pygame.K_m)
-    driver.advance_frames(5)
+    _open_picker_directly(driver)
     assert driver.app.manager.current.describe()["filters"]["reachable"] is True
 
 
@@ -257,8 +415,7 @@ def test_picker_region_collapse_hides_cards(driver):
     driver.app.state.events.set_flag("met_heroine_1", True)
     driver.app._move_to("town_square")   # 3 exits, one 小鎮 region header
     driver.advance_frames(6)
-    driver.press_key(pygame.K_m)
-    driver.advance_frames(5)
+    _open_picker_directly(driver)
     pk = driver.app.manager.current
     assert type(pk).__name__ == "DestinationPickerScene"
     assert driver.find_widget(label="湖畔公園") is not None

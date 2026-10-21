@@ -27,6 +27,7 @@ from typing import Any, TYPE_CHECKING
 if TYPE_CHECKING:
     from ..config import EngineConfig
     from ..core.game_state import GameState
+    from ..ui.motion import MotionPolicy
     from .manager import PluginManager
 
 
@@ -54,6 +55,7 @@ class HookEvent:
     SCENE_REPLACE                  SceneManager replaced the bottom Scene
     DIALOGUE_BEFORE_LINE           DialogueEngine about to present a line
     DIALOGUE_AFTER_LINE            DialogueEngine just presented a line
+    DIALOGUE_PRESENTATION_READY    DialogueScene finished rebuilding the UI
     DIALOGUE_CHOICE_MADE           player picked a choice
     PLAYER_MOVE                    player successfully moved to a location
     TIME_ADVANCE                   TimeSystem advanced by N phases
@@ -75,6 +77,7 @@ class HookEvent:
     - SCENE_REPLACE:       old (Scene | None), new (Scene)
     - DIALOGUE_BEFORE_LINE: scene_id (str), line_index (int)
     - DIALOGUE_AFTER_LINE: scene_id (str), line_index (int), line (LinePresentation)
+    - DIALOGUE_PRESENTATION_READY: presentation (ScenePresentation)
     - DIALOGUE_CHOICE_MADE: scene_id (str), choice_id (str)
     - PLAYER_MOVE:         from_location (str | None), to_location (str)
     - TIME_ADVANCE:        phases (int), day (int), time_of_day (str)
@@ -95,6 +98,7 @@ class HookEvent:
     SCENE_REPLACE = "scene.replace"
     DIALOGUE_BEFORE_LINE = "dialogue.before_line"
     DIALOGUE_AFTER_LINE = "dialogue.after_line"
+    DIALOGUE_PRESENTATION_READY = "dialogue.presentation_ready"
     DIALOGUE_CHOICE_MADE = "dialogue.choice_made"
     PLAYER_MOVE = "player.move"
     TIME_ADVANCE = "time.advance"
@@ -117,6 +121,7 @@ class HookEvent:
             cls.SCENE_REPLACE,
             cls.DIALOGUE_BEFORE_LINE,
             cls.DIALOGUE_AFTER_LINE,
+            cls.DIALOGUE_PRESENTATION_READY,
             cls.DIALOGUE_CHOICE_MADE,
             cls.PLAYER_MOVE,
             cls.TIME_ADVANCE,
@@ -153,6 +158,10 @@ class PluginContext:
     # Engine config (Engine-wide settings). Optional because some
     # callers (tests, low-level loaders) don't have one.
     config: "EngineConfig | None" = None
+    # Shared live presentation policy. It is unavailable during early
+    # pack-loading hooks, then bound by GalGameApp for runtime hooks. Plugins
+    # should read this object instead of copying config.reduce_motion.
+    motion: "MotionPolicy | None" = None
     # Per-context arbitrary scratch dict. Plugins should namespace keys
     # by their plugin id, e.g. ctx.scratch["step_counter:warmed_up"] = True
     scratch: dict[str, Any] = field(default_factory=dict)

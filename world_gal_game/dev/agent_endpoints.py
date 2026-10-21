@@ -33,7 +33,7 @@ from typing import Any
 
 
 # ----------------------------------------------------------------------
-# wgg context
+# world-gal-game context
 
 
 def build_context(pack_root: Path, *, script: list[dict] | None = None,
@@ -169,7 +169,7 @@ def analyze_impact(pack_root: Path, symbol_id: str, *,
 
     The analysis is read-only and conservative: it reports what *structurally
     depends* on the symbol. It does not simulate the edit — pair it with
-    ``wgg plan`` after editing to confirm a goal still has a path.
+    ``world-gal-game plan`` after editing to confirm a goal still has a path.
     """
     from .dataflow import DataflowAnalyzer
 

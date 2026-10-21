@@ -4,9 +4,8 @@ from __future__ import annotations
 import textwrap
 from pathlib import Path
 
-import pytest
 
-from world_gal_game.dev.pack_inspector import DeadEnd, PackInspector
+from world_gal_game.dev.pack_inspector import PackInspector
 
 
 # ----------------------------------------------------------------------
@@ -20,6 +19,8 @@ def test_demo_pack_summary():
     assert s["pack_format_version"] == "0.1"
     assert s["counts"]["scenes"] >= 10
     assert s["counts"]["endings"] == 3
+    assert s["counts"]["declared_endings"] == 3
+    assert s["counts"]["ending_scenes"] == 3
 
 
 def test_demo_pack_reachability_clean():
@@ -98,6 +99,33 @@ def test_orphan_scene_is_unreachable(tmp_path: Path):
     r = ins.reachability()
     assert "orphan" in r["unreachable"]
     assert "orphan" not in r["reachable"]
+
+
+def test_summary_prefers_declared_endings_over_scene_name_heuristic(
+    tmp_path: Path,
+):
+    pack = tmp_path / "p"
+    _write(pack / "content/meta.yaml", "intro_scene: ending_shared\n")
+    _write(pack / "content/scenes/all.yaml", """
+        scenes:
+          - id: ending_shared
+            title: Shared terminal
+            lines: [{text: done}]
+    """)
+    _write(pack / "content/endings.yaml", """
+        endings:
+          - id: ending_good
+            title: Good
+            requires: [{kind: flag, target: ending_good}]
+          - id: ending_bad
+            title: Bad
+            requires: [{kind: flag, target: ending_bad}]
+    """)
+
+    counts = PackInspector(pack).summary()["counts"]
+    assert counts["endings"] == 2
+    assert counts["declared_endings"] == 2
+    assert counts["ending_scenes"] == 1
 
 
 def test_dead_end_choice_detected(tmp_path: Path):
@@ -179,3 +207,50 @@ def test_reachability_via_play_scene_in_on_end(tmp_path: Path):
     ins = PackInspector(pack)
     r = ins.reachability()
     assert set(r["reachable"]) == {"start", "middle", "ending_z"}
+
+
+def test_reachability_via_play_scene_branch_default_and_cases(
+    tmp_path: Path,
+):
+    """Every static branch destination is an edge, not an orphan scene."""
+
+    pack = tmp_path / "p"
+    _write(pack / "content/meta.yaml", "intro_scene: start\n")
+    _write(pack / "content/scenes/all.yaml", """
+        scenes:
+          - id: start
+            title: S
+            lines: [{text: choose at runtime}]
+            on_end:
+              - kind: play_scene_branch
+                target: fallback
+                value:
+                  - when: {kind: flag, target: route_a}
+                    target: route_a_scene
+                  - when: {kind: flag, target: route_b}
+                    target: route_b_scene
+          - id: fallback
+            title: Fallback
+            lines: [{text: done}]
+          - id: route_a_scene
+            title: A
+            lines: [{text: done}]
+          - id: route_b_scene
+            title: B
+            lines: [{text: done}]
+    """)
+
+    inspector = PackInspector(pack)
+
+    assert set(inspector.reachability()["reachable"]) == {
+        "start",
+        "fallback",
+        "route_a_scene",
+        "route_b_scene",
+    }
+    assert {
+        target for _origin, target in inspector.scenes_by_id["start"].outgoing
+    } == {"fallback", "route_a_scene", "route_b_scene"}
+    assert not any(
+        issue.kind == "unreachable" for issue in inspector.dead_ends()
+    )

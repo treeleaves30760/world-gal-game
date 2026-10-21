@@ -196,7 +196,7 @@ class GameState(BaseModel):
                                 out: list[dict[str, Any]]) -> None:
         """Enqueue affection feedback for this batch: a lightweight per-change
         "好感度 +N" beat AND a relationship toast for every NAMED threshold just
-        crossed (e.g. "林青衣 ·「在意你」").
+        crossed (e.g. "白若雪 ·「在意你」").
 
         Driven purely off the data model (``crossed_thresholds`` + a plain
         before/after diff): for each tracked character we diff the pre-batch

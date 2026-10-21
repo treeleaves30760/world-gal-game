@@ -10,6 +10,7 @@ import pygame
 
 from .base import Widget
 from ..fonts import FontRegistry
+from ..input_bindings import InputAction
 from ..theme import Theme
 
 
@@ -46,8 +47,18 @@ class MenuList(Widget):
     def update(self, dt: float, inp) -> None:
         if not self.items:
             return
-        # Mouse hover -> selection
-        if self.rect.collidepoint(inp.mouse_pos):
+        # Pointer motion transfers focus to the hovered row. Merely polling a
+        # stationary cursor must not overwrite a selection the player just
+        # moved with the keyboard/gamepad.
+        pointer_active = bool(
+            inp.mouse_clicked
+            or getattr(inp, "touch_active", False)
+            or any(
+                event.type == pygame.MOUSEMOTION
+                for event in getattr(inp, "events", ())
+            )
+        )
+        if pointer_active and self.rect.collidepoint(inp.mouse_pos):
             local_y = inp.mouse_pos[1] - self.rect.y
             idx = local_y // self.row_h
             if 0 <= idx < len(self.items):
@@ -58,20 +69,16 @@ class MenuList(Widget):
                 return
         if not self.keyboard_nav:
             return
-        for e in inp.events:
-            if e.type == pygame.KEYDOWN:
-                if e.key in (pygame.K_UP, pygame.K_w):
-                    self.selected = (self.selected - 1) % len(self.items)
-                    while not self.items[self.selected].enabled:
-                        self.selected = (self.selected - 1) % len(self.items)
-                elif e.key in (pygame.K_DOWN, pygame.K_s):
-                    self.selected = (self.selected + 1) % len(self.items)
-                    while not self.items[self.selected].enabled:
-                        self.selected = (self.selected + 1) % len(self.items)
-                elif e.key in (pygame.K_RETURN, pygame.K_KP_ENTER,
-                               pygame.K_SPACE, pygame.K_z):
-                    if self.items[self.selected].enabled:
-                        self.items[self.selected].on_select()
+        if inp.pressed(InputAction.NAV_UP):
+            self.selected = (self.selected - 1) % len(self.items)
+            while not self.items[self.selected].enabled:
+                self.selected = (self.selected - 1) % len(self.items)
+        elif inp.pressed(InputAction.NAV_DOWN):
+            self.selected = (self.selected + 1) % len(self.items)
+            while not self.items[self.selected].enabled:
+                self.selected = (self.selected + 1) % len(self.items)
+        elif inp.confirm and self.items[self.selected].enabled:
+            self.items[self.selected].on_select()
 
     def draw(self, surface: pygame.Surface) -> None:
         if not self.visible:

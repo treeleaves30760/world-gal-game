@@ -17,7 +17,6 @@ and fire the hook event through ``fire_event`` to assert:
 import os
 from pathlib import Path
 
-import pytest
 
 os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
 os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
@@ -81,6 +80,36 @@ def test_autosave_rotates_across_slots(tmp_path):
     _fire_choice(state, 4)
     names = sorted(p.name for p in tmp_path.glob("*.json"))
     assert names == ["autosave_1.json", "autosave_2.json", "autosave_3.json"]
+
+
+def test_dialogue_autosave_waits_for_committed_presentation(tmp_path):
+    """Never persist a line/choice effect half-way through its transaction."""
+    from world_gal_game.dialogue.dialogue_engine import DIALOGUE_TRANSACTION_KEY
+    from world_gal_game.plugins import fire_event
+    from world_gal_game.plugins.context import HookEvent
+
+    state, _cfg, _pm = _build(tmp_path, enabled=True)
+    resume = {
+        "version": 1,
+        "screen": "dialogue",
+        "story_scene": "scene",
+        "story_line_index": 2,
+    }
+    state.meta["__autosave_config__"]["get_resume"] = lambda: resume
+    state.meta[DIALOGUE_TRANSACTION_KEY] = 1
+
+    _fire_choice(state, 1)
+    assert not (tmp_path / "autosave_1.json").exists()
+
+    state.meta.pop(DIALOGUE_TRANSACTION_KEY)
+    fire_event(
+        state,
+        HookEvent.DIALOGUE_PRESENTATION_READY,
+        presentation=None,
+    )
+    assert (tmp_path / "autosave_1.json").exists()
+    from world_gal_game.core.save_manager import SaveManager
+    assert SaveManager(tmp_path).load("autosave_1")["_resume"] == resume
 
 
 def test_autosave_no_bridge_is_noop(tmp_path):

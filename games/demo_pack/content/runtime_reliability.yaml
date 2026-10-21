@@ -1,0 +1,40 @@
+schema_version: 1
+name: demo-pack-headless-calibration
+claim_scope: dummy-sdl-source-runtime-calibration
+notes: >-
+  Portable CI policy. Process/protocol, semantic determinism, plugin health and
+  configured cache bounds are blocking. Host-sensitive time and RSS values are
+  evidence only until a pinned target fingerprint and owner-approved budgets
+  are supplied.
+
+profile:
+  screen_size: [640, 360]
+  seed: 731
+  fixed_dt_ms: 16.6666666667
+  warmup_frames: 3
+  frames_per_view: 20
+  views: [title, new_game]
+  cold_runs: 3
+  soak_runs: 2
+  rss_sample_interval_frames: 5
+  timeout_s: 90
+
+limits:
+  require_finite_metrics: true
+  require_rss: true
+  require_determinism: true
+  require_within_configured_cache_budgets: true
+  require_plugin_errors_zero: true
+  require_ui_chrome_active: false
+  max_bgm_slots: 2
+  cold_start_p95_ms: null
+  first_frame_p95_ms: null
+  current_rss_max_bytes: null
+  peak_rss_max_bytes: null
+  rss_growth_max_bytes: null
+  frame_p95_ms: null
+  frame_p99_ms: null
+  frame_budget_ms: null
+  max_over_budget_frames: null
+
+calibrated_fingerprint: null

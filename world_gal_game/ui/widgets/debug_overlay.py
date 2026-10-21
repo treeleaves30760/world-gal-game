@@ -37,15 +37,33 @@ class DebugOverlay(Widget):
 
     # ------------------------------------------------------------------
 
-    def set_state(self, state) -> None:
+    def set_state(
+        self,
+        state,
+        *,
+        cache_stats: dict[str, int] | None = None,
+    ) -> None:
         """Rebuild the text lines from current GameState each frame."""
         lines: list[str] = []
 
         # --- FPS ---
         lines.append(f"FPS: {self._fps:.1f}")
 
-        # --- Scene stack: best-effort; state doesn't own the manager ---
-        # Caller may pass a richer container; we just show what we can.
+        if cache_stats is not None:
+            mib = 1024 * 1024
+            image_bytes = cache_stats.get("image_bytes", 0) / mib
+            image_budget = cache_stats.get("image_budget_bytes", 0) / mib
+            short_bytes = cache_stats.get("sound_bytes", 0) / mib
+            short_budget = cache_stats.get("sound_budget_bytes", 0) / mib
+            live_bytes = cache_stats.get("retained_audio_bytes", 0) / mib
+            lines.append(
+                f"Images: {image_bytes:.1f}/{image_budget:.0f} MiB"
+            )
+            lines.append(
+                f"Audio: {short_bytes:.1f}/{short_budget:.0f} MiB "
+                f"(live {live_bytes:.1f})"
+            )
+
         lines.append("")
 
         # --- Location ---
@@ -60,7 +78,7 @@ class DebugOverlay(Widget):
         if t is not None:
             try:
                 lines.append(
-                    f"Time: Day {t.day} {t.day_of_week.label} {t.time_of_day.label}"
+                    f"Time: Day {t.day} {t.weekday_label()} {t.time_label()}"
                 )
             except Exception:
                 lines.append(f"Time: {t!r}")

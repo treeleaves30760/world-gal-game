@@ -38,6 +38,7 @@ from .effect_args import (
     SetWeatherArgs, ClearWeatherArgs, PortraitEmoteArgs, PlayMovieArgs,
 )
 from ..core.inventory import evaluate_gift
+from ..core.cg_gallery import canonical_cg_path
 
 if TYPE_CHECKING:
     from ..core.game_state import GameState
@@ -194,7 +195,7 @@ def _set_chapter(state: "GameState", chapter_id: str, eff: "Effect", *,
                title=spec.title, route=spec.route, order=spec.order)
     if show_card:
         # Subtitle is the pack-authored human line only — never the raw route/act
-        # tag (which reads as machine jargon, e.g. "common"/"qingyi", on the
+        # tag (which reads as machine jargon, e.g. "common"/"ruoxue", on the
         # eyecatch). Packs that want a subtitle populate ChapterSpec.subtitle.
         _queue_visual_fx(state, {"fx": "chapter_card", "chapter": chapter_id,
                                  "title": spec.title,
@@ -458,6 +459,12 @@ def handle_sell_item(state: "GameState", eff: "Effect") -> dict[str, Any]:
         return {"kind": eff.kind, "error": "missing item", "item": item_id}
     currency = eff.stat or "money"
     item = state.items.get(item_id)
+    if item is not None and item.locked:
+        return {
+            "kind": eff.kind,
+            "error": "item is locked",
+            "item": item_id,
+        }
     price = int(eff.value if eff.value is not None
                 else (item.value if item else 0))
     state.inventory.remove(item_id, 1)
@@ -480,11 +487,23 @@ def handle_sell_item(state: "GameState", eff: "Effect") -> dict[str, Any]:
 def handle_gift(state: "GameState", eff: "Effect") -> dict[str, Any]:
     item_id = eff.stat or ""
     n = int(eff.value) if eff.value is not None else 1
+    if n < 1:
+        return {
+            "kind": eff.kind,
+            "error": "gift count must be positive",
+            "item": item_id,
+        }
     if not item_id or not state.inventory.has(item_id, n):
         return {"kind": eff.kind, "error": "missing item", "item": item_id}
     item = state.items.get(item_id)
     if item is None:
         return {"kind": eff.kind, "error": "unknown item", "item": item_id}
+    if item.locked:
+        return {
+            "kind": eff.kind,
+            "error": "item is locked",
+            "item": item_id,
+        }
     # NPCRegistry sits on state.meta under a private key (see content_loader);
     # the gift heuristic needs the NPC to compute a tailored delta. If no
     # registry is around (e.g. a unit test with bare GameState), fall back
@@ -746,17 +765,29 @@ def handle_set_background(state: "GameState", eff: "Effect") -> dict[str, Any]:
 
 
 @effect("show_cg", plugin_id=BUILTIN, args=ShowCgArgs,
-        description="Show a full-screen CG, with an optional transition. "
-                    "target=image path; value={style,duration,easing,color,"
-                    "mask}. Queued for the scene.",
+        description="Show and gallery-unlock a full-screen CG, with an "
+                    "optional transition. target=image path; "
+                    "value={style,duration,easing,color,mask}. Queued for "
+                    "the scene.",
         signature={"target": "image_path",
                    "value": "dict {style:str?, duration:float?, easing:str?, "
                             "color:[r,g,b]?, mask:str?}"})
 def handle_show_cg(state: "GameState", eff: "Effect") -> dict[str, Any]:
+    path = canonical_cg_path(eff.target)
+    if not path:
+        return {
+            "kind": eff.kind,
+            "error": "show_cg requires a non-blank target",
+        }
     tr = _coerce_transition(eff.value)
-    _queue_visual_fx(state, {"fx": "show_cg", "path": eff.target,
+    _queue_visual_fx(state, {"fx": "show_cg", "path": path,
                              "transition": tr})
-    return {"kind": eff.kind, "path": eff.target, "transition": tr["style"]}
+    # ``show_cg`` is another authored way to present a CG, equivalent to a
+    # scene/line ``cg`` field from the player's perspective.  Keep the gallery
+    # unlock contract consistent so effect-only illustrations are not
+    # permanently missing from the collection.
+    state.cg_gallery.unlock(path)
+    return {"kind": eff.kind, "path": path, "transition": tr["style"]}
 
 
 @effect("hide_cg", plugin_id=BUILTIN, args=HideCgArgs,

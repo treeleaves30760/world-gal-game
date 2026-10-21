@@ -26,6 +26,7 @@ reveal contract exactly so auto/skip behave identically.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import pygame
 
@@ -33,7 +34,12 @@ from .widgets.base import Widget
 from .widgets.rich_text_view import RichText
 from .widgets.panel import Panel
 from .fonts import FontRegistry
+from .motion import MotionKind, MotionPolicy, coerce_motion_policy
+from .system_chrome import ChromeRequest
 from .theme import Theme
+
+if TYPE_CHECKING:
+    from .system_chrome import SystemChromeHost
 
 
 @dataclass
@@ -51,25 +57,59 @@ class NVLBox(Widget):
     """
 
     def __init__(self, rect: pygame.Rect, *, fonts: FontRegistry, theme: Theme,
-                 text_speed: float = 45.0):
+                 text_speed: float = 45.0,
+                 chrome: "SystemChromeHost | None" = None,
+                 density: float = 1.0,
+                 text_scale: float = 1.0,
+                 body_font_size: int = 22,
+                 speaker_font_size: int = 28,
+                 continue_hint: str = "按 Space / 點擊 繼續",
+                 motion: MotionPolicy | None = None):
         super().__init__(rect)
         self.fonts = fonts
         self.theme = theme
         self.text_speed = text_speed   # chars/sec; 0 = instant
+        self.chrome = chrome
+        self.density = max(0.01, float(density))
+        self.text_scale = max(1.0, min(1.4, float(text_scale)))
+        self.continue_hint = continue_hint
+        self.motion = coerce_motion_policy(motion)
+        scale = self.density
         # A large translucent panel fills most of the screen in NVL mode.
         self.panel = Panel(rect, theme,
                            fill=(*theme.bg_panel[:3], 225),
                            border=theme.border_strong,
-                           radius=theme.radius_l,
-                           border_width=2)
+                           radius=max(
+                               1,
+                               int(round(theme.radius_l * scale)),
+                           ),
+                           border_width=max(1, int(round(2 * scale))),
+                           chrome=chrome,
+                           screen="dialogue",
+                           role="main_nvl",
+                           density=self.density)
         self._entries: list[_Entry] = []
         self._hint_t = 0.0
         # Body geometry: a single column inset inside the panel; each entry is
         # laid out into a slice of it at draw time.
-        self._pad = theme.pad_l
-        self._line_gap = 14            # vertical gap between transcript entries
-        self._speaker_size = theme.pad_l + 6
-        self._body_size = 22
+        self._pad = max(1, int(round(theme.pad_l * scale)))
+        self._line_gap = max(
+            1,
+            int(round(14 * scale)),
+        )                              # gap between transcript entries
+        self._speaker_size = max(
+            1,
+            int(round(speaker_font_size * self.text_scale)),
+        )
+        self._body_size = max(
+            1,
+            int(round(body_font_size * self.text_scale)),
+        )
+        self._body_line_spacing = max(1, int(round(6 * scale)))
+        # DialogueScene may reserve a measured header for semantic sound
+        # captions and persistent chrome. The panel stays fixed; only transcript
+        # content moves, avoiding private rect mutation and preserving teardown.
+        self._header_inset = 0
 
     # ------------------------------------------------------------------
     # DialogueBox-compatible API
@@ -88,8 +128,10 @@ class NVLBox(Widget):
             self._entries[-1].body.force_reveal()
         body = RichText(self._body_rect(), text,
                         fonts=self.fonts, size=self._body_size,
-                        color=self.theme.text, line_spacing=6,
-                        text_speed=self.text_speed)
+                        color=self.theme.text,
+                        line_spacing=self._body_line_spacing,
+                        text_speed=self.text_speed,
+                        motion=self.motion)
         body.text_speed = self.text_speed
         body.set_text(text, reveal_chars=0)
         self._entries.append(_Entry(speaker=speaker, body=body))
@@ -114,15 +156,26 @@ class NVLBox(Widget):
             return
         body.update(dt, inp)
 
+    def _hint_alpha(self) -> int:
+        if not self.motion.allows(MotionKind.CONTINUOUS):
+            return 200
+        t = self._hint_t * 2
+        return 120 + int(80 * abs((t % 2) - 1))
+
     def draw(self, surface: pygame.Surface) -> None:
         if not self.visible:
             return
+        high_contrast = (
+            getattr(self.theme, "visual_profile", "standard")
+            == "high_contrast"
+        )
         self.panel.draw(surface)
         pad = self._pad
-        x = self.rect.x + pad
-        col_w = self.rect.width - pad * 2
-        y = self.rect.y + pad
-        bottom = self.rect.bottom - pad
+        content = self.content_rect
+        x = content.x
+        col_w = content.width
+        y = content.y
+        bottom = content.bottom
         # Lay out entries top→bottom. Each entry: optional speaker label, then a
         # wrapped body sized to its content. We measure body height by laying it
         # out at the column width. When the stack would overflow the panel the
@@ -130,7 +183,7 @@ class NVLBox(Widget):
         rendered: list[tuple[str | None, RichText, int]] = []
         total_h = 0
         for entry in self._entries:
-            entry.body.rect = pygame.Rect(x, 0, col_w, self.rect.height)
+            entry.body.rect = pygame.Rect(x, 0, col_w, content.height)
             speaker_h = (self._speaker_line_height() if entry.speaker else 0)
             body_h = self._body_height(entry.body)
             h = speaker_h + body_h + self._line_gap
@@ -161,18 +214,47 @@ class NVLBox(Widget):
                                        self.theme.accent, bold=True)
                 surface.blit(sp, (x, y))
                 y += sp_h
-            body.rect = pygame.Rect(x, y, col_w, self.rect.height)
+            body.rect = pygame.Rect(x, y, col_w, content.height)
+            # Accumulated entries may have been created before the player
+            # toggled the live visual profile.  Re-resolve only inherited text
+            # colour; explicit rich-text colours and reading progress remain.
+            body.set_color_policy(
+                self.theme.text,
+                allow_overrides=not high_contrast,
+            )
             body.draw(surface)
             y += self._body_height(body) + self._line_gap
 
         # Advance hint on the active (last) entry, like the ADV box.
         if self._entries and self._entries[-1].body.fully_revealed():
-            t = self._hint_t * 2
-            alpha = 120 + int(80 * abs((t % 2) - 1))
-            hint = self.fonts.render("按 Space / 點擊 繼續", 16,
+            alpha = self._hint_alpha()
+            hint = self.fonts.render(self.continue_hint, 16,
                                      (*self.theme.text_mute[:3], alpha))
-            surface.blit(hint, (self.rect.right - hint.get_width() - pad,
-                                self.rect.bottom - hint.get_height() - 8))
+            hint_pos = (
+                self.rect.right - hint.get_width() - pad,
+                self.rect.bottom - hint.get_height()
+                - max(1, int(round(8 * self.density))),
+            )
+            if self.chrome is not None:
+                hint_pad_x = max(4, int(round(6 * self.density)))
+                hint_pad_y = max(2, int(round(3 * self.density)))
+                hint_rect = pygame.Rect(hint_pos, hint.get_size()).inflate(
+                    hint_pad_x * 2,
+                    hint_pad_y * 2,
+                )
+                self.chrome.paint(
+                    surface,
+                    hint_rect,
+                    ChromeRequest(
+                        part="footer",
+                        screen="dialogue",
+                        variant="advance",
+                        size=hint_rect.size,
+                        density=self.density,
+                    ),
+                )
+            # Functional copy is always engine-owned and painted after chrome.
+            surface.blit(hint, hint_pos)
 
     # ------------------------------------------------------------------
     # NVL-specific
@@ -201,10 +283,51 @@ class NVLBox(Widget):
     # Geometry helpers
     # ------------------------------------------------------------------
 
+    @property
+    def header_inset(self) -> int:
+        return self._header_inset
+
+    @property
+    def base_content_top(self) -> int:
+        """Top of the transcript column before any reserved header."""
+        return self.rect.y + self._pad
+
+    @property
+    def minimum_content_height(self) -> int:
+        """Smallest transcript viewport that retains one readable body row."""
+        return max(1, self.fonts.get(self._body_size).get_linesize())
+
+    @property
+    def content_rect(self) -> pygame.Rect:
+        pad = self._pad
+        top = self.rect.y + pad + self._header_inset
+        bottom = self.rect.bottom - pad
+        return pygame.Rect(
+            self.rect.x + pad,
+            top,
+            max(1, self.rect.width - pad * 2),
+            max(1, bottom - top),
+        )
+
+    def set_header_inset(self, value: int) -> None:
+        """Reserve panel-top space while keeping one readable body line."""
+        maximum = max(
+            0,
+            self.rect.height - self._pad * 2 - self.minimum_content_height,
+        )
+        inset = max(0, min(int(value), maximum))
+        if inset == self._header_inset:
+            return
+        self._header_inset = inset
+        body_rect = self._body_rect()
+        for entry in self._entries:
+            entry.body.rect = body_rect.copy()
+
     def _body_rect(self) -> pygame.Rect:
-        pad = self.theme.pad_l
-        return pygame.Rect(self.rect.x + pad, self.rect.y + pad,
-                           self.rect.width - pad * 2, self.rect.height)
+        # Use the same density-scaled inset as draw(). A mismatched width can
+        # leave RichText's cached 4K wrapping based on a wider column than the
+        # one actually painted.
+        return self.content_rect.copy()
 
     def _speaker_line_height(self) -> int:
         return self.fonts.get(self._speaker_size, bold=True).get_linesize() + 2

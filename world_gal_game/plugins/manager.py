@@ -36,6 +36,7 @@ from __future__ import annotations
 import importlib
 import importlib.util
 import logging
+import os
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -109,7 +110,10 @@ def _engine_plugin_root() -> Path:
 
 
 def _user_plugin_root() -> Path:
-    """Per-user plugin root (``~/.world-gal-game/plugins/``)."""
+    """Per-user plugin root, redirectable by isolated developer tooling."""
+    override = os.environ.get("WGG_USER_PLUGIN_ROOT")
+    if override:
+        return Path(override).expanduser().resolve()
     return Path.home() / ".world-gal-game" / "plugins"
 
 

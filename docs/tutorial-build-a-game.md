@@ -1169,7 +1169,10 @@ uv run python main.py --pack cafe_afternoon
 
 Headless 模式讓引擎在無視窗、無音效的環境下執行——CI 伺服器、終端機、沒有顯示器的機器都能跑。每次跑到場景的 `on_end`，effects 一樣會套用；成就一樣會觸發；存檔一樣寫進去。
 
-所有 op 的行為跟玩家親自玩完全一樣，只是用 JSON 指令取代了滑鼠點擊。
+`move`、`examine`、`gift`、`next`、`choose`、`advance_time` 可以重播玩家
+實際可做的操作，並在執行時重驗地點、時間、NPC 與物品等限制。
+`start_scene`、`apply`、`set_flag`、`adjust_affection` 則是開發者控制，方便
+建立聚焦測試狀態，不代表玩家能自然走到相同狀態。
 
 ### 完整腳本
 
@@ -1241,7 +1244,13 @@ uv run python main.py \
 }
 ```
 
-> **注意**：`adjust_affection` 是 headless 專用 op，只能在腳本裡用——它會直接設好感，不經過場景。適合測試「假設玩家已刷到特定好感，接下來的場景是否正確分支」。
+> **注意**：`adjust_affection` 是 headless 專用 op，只能在腳本裡用——它會直接
+> 調整好感，不經過場景。適合測試「假設玩家已刷到特定好感，接下來的場景是否正確
+> 分支」。
+>
+> 若要驗證完整玩家路徑，先讀 `affordances`，再用其中 structured
+> `examine`／`gift` action；兩者會像 GUI 一樣檢查當前地點、時段、NPC presence、
+> inventory 與 item lock，對話開啟時也不會出現在 affordances。
 
 ### 讓測試失敗也有意義
 

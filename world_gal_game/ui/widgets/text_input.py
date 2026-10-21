@@ -9,6 +9,7 @@ import pygame
 
 from .base import Widget
 from ..fonts import FontRegistry
+from ..motion import MotionKind, MotionPolicy, coerce_motion_policy
 from ..theme import Theme
 
 
@@ -17,7 +18,8 @@ class TextInput(Widget):
                  placeholder: str = "", initial: str = "",
                  max_length: int = 64,
                  font_size: int | None = None,
-                 on_submit=None):
+                 on_submit=None,
+                 motion: MotionPolicy | None = None):
         super().__init__(rect)
         self.fonts = fonts
         self.theme = theme
@@ -26,6 +28,7 @@ class TextInput(Widget):
         self.max_length = max_length
         self.font_size = font_size or theme.pad_m + 14
         self.on_submit = on_submit
+        self.motion = coerce_motion_policy(motion)
         self.focused = False
         self.cursor_t = 0.0
         self._caret = len(initial)
@@ -80,6 +83,15 @@ class TextInput(Widget):
                     if self.on_submit is not None:
                         self.on_submit(self.text)
 
+    def _caret_visible(self) -> bool:
+        return (
+            self.focused
+            and (
+                not self.motion.allows(MotionKind.CONTINUOUS)
+                or int(self.cursor_t * 2) % 2 == 0
+            )
+        )
+
     def draw(self, surface: pygame.Surface) -> None:
         if not self.visible:
             return
@@ -102,7 +114,7 @@ class TextInput(Widget):
                                  self.rect.y + (self.rect.height
                                                 - text_surf.get_height()) // 2))
         # cursor
-        if self.focused and int(self.cursor_t * 2) % 2 == 0:
+        if self._caret_visible():
             pre = font.render(self.text[:self._caret], True, color)
             cx = self.rect.x + self.theme.pad_m + pre.get_width()
             cy = self.rect.y + 6

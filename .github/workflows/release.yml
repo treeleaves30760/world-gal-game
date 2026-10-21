@@ -18,8 +18,46 @@ env:
   APP_NAME: WorldGalGameDemo
 
 jobs:
+  runtime-preflight:
+    name: runtime preflight (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      SDL_VIDEODRIVER: dummy
+      SDL_AUDIODRIVER: dummy
+      PYGAME_HIDE_SUPPORT_PROMPT: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install Python
+        run: uv python install 3.12
+
+      - name: Sync dependencies + runtime evidence extra
+        run: uv sync --extra runtime
+
+      - name: Run source-runtime reliability preflight
+        run: >-
+          uv run python -m world_gal_game.cli runtime-check ${{ env.PACK_PATH }}
+          --policy ${{ env.PACK_PATH }}/content/runtime_reliability.yaml
+          --report artifacts/runtime-reliability/${{ runner.os }}.json
+
+      - name: Upload runtime reliability evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: runtime-reliability-${{ runner.os }}
+          path: artifacts/runtime-reliability/${{ runner.os }}.json
+          if-no-files-found: error
+
   desktop:
     name: desktop (${{ matrix.os }})
+    needs: [runtime-preflight]
     strategy:
       fail-fast: false
       matrix:
@@ -49,6 +87,7 @@ jobs:
 
   web:
     name: web (pygbag/WASM)
+    needs: [runtime-preflight]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -75,7 +114,7 @@ jobs:
 
   release:
     name: attach artifacts to release
-    needs: [desktop, web]
+    needs: [runtime-preflight, desktop, web]
     runs-on: ubuntu-latest
     permissions:
       contents: write

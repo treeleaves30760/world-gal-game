@@ -88,8 +88,8 @@ from typing import Iterable
 _HOUSE_STYLE = """
 === HOUSE VISUAL STYLE (this game) ===
 - Genre: 日系視覺小說 / Japanese visual-novel artwork.
-- Tone: gentle, slightly melancholic, with a touch of unease — this is a
-  campus ghost-story dating sim set at National Tsing Hua University.
+- Tone: gentle, slightly melancholic, with a touch of unease — a campus
+  romance with a quiet supernatural undercurrent.
 - Brushwork: soft anime/visual-novel illustration; clean linework with a
   light watercolor wash; subtle film-grain; never flat-vector / never 3D.
 - Palette: deep indigo + sakura pink + lantern amber accents; muted
@@ -101,8 +101,8 @@ _HOUSE_STYLE = """
   be blank or illegible suggestion only.
 - Composition: cinematic, painterly, with intentional depth-of-field and
   one clear focal subject. Avoid centred-symmetric posters.
-- Mood: subtle Taiwanese campus atmosphere — old red-brick buildings,
-  banyan trees, wet stone after rain, sodium-orange lamplight.
+- Mood: subtle East-Asian campus atmosphere — old red-brick buildings,
+  broad shade trees, wet stone after rain, sodium-orange lamplight.
 """
 
 

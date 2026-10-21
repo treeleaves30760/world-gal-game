@@ -1,7 +1,7 @@
 """Warm headless session server: load the pack once, stream NDJSON ops forever.
 
 This is the engine's *fast control plane* — the deliberate answer to "why not
-just expose this over MCP / a JSON-RPC server?" A cold ``wgg --headless
+just expose this over MCP / a JSON-RPC server?" A cold ``world-gal-game --headless
 --script`` invocation pays the pack-load tax (parse YAML, build the
 :class:`~world_gal_game.core.game_state.GameState`, register plugins) on every
 call, and a network RPC adds a per-op round-trip on top. For an agent that
@@ -49,6 +49,11 @@ The op vocabulary includes the warm structural-edit loop: ``edit.*`` ops
 and return a YAML ``diff`` plus an ``impact`` delta (new dead-ends / unreachable
 endings / undeclared flags), so an agent can *understand, edit, and verify* a
 pack without leaving the warm process.
+
+Runtime presentation language is also session-local: send
+``{"op":"locale","locale":"en"}`` only while no dialogue is active. The op
+does not mutate narrative state and an unsupported language fails back through
+the pack's declared locale authority.
 
 Control ops
 -----------

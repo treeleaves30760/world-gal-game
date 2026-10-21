@@ -154,6 +154,14 @@ def stage_web_build(
     plugins_src = pack_path / "plugins"
     if plugins_src.is_dir():
         shutil.copytree(plugins_src, pack_dst / "plugins", ignore=_ENGINE_IGNORE)
+    # Runtime locale catalogs are canonically stored below content/i18n and
+    # therefore already travel with content/.  Preserve the extractor's legacy
+    # pack-root i18n/ shape as well when a manifest names it explicitly; desktop
+    # builds collect the whole pack, so omitting it here would create a
+    # platform-only missing-catalog failure.
+    i18n_src = pack_path / "i18n"
+    if i18n_src.is_dir():
+        shutil.copytree(i18n_src, pack_dst / "i18n", ignore=_ENGINE_IGNORE)
 
     # 3) Write the templated entry point at the staging root.
     main_py = staging_dir / "main.py"

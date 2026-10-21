@@ -24,10 +24,10 @@ def init_pygame():
     pygame.quit()
 
 
-from world_gal_game.ui.fonts import FontRegistry
-from world_gal_game.ui.theme import Theme
-from world_gal_game.ui.nvl_box import NVLBox
-from world_gal_game.ui.widgets.dialogue_box import DialogueBox
+from world_gal_game.ui.fonts import FontRegistry  # noqa: E402
+from world_gal_game.ui.theme import Theme  # noqa: E402
+from world_gal_game.ui.nvl_box import NVLBox  # noqa: E402
+from world_gal_game.ui.widgets.dialogue_box import DialogueBox  # noqa: E402
 
 
 @pytest.fixture
@@ -150,3 +150,28 @@ def test_draw_many_lines_overflow_does_not_raise(fonts, theme):
     box.update(0.016, None)
     box.draw(surf)
     assert box.line_count == 40
+
+
+def test_4k_body_layout_uses_the_same_scaled_inset_as_draw(theme):
+    fonts = FontRegistry(("Arial", "DejaVu Sans"), scale=3.0)
+    rect = pygame.Rect(60, 60, 3720, 1800)
+    box = NVLBox(
+        rect,
+        fonts=fonts,
+        theme=theme,
+        text_speed=0.0,
+        density=3.0,
+    )
+    box.set_line("A", "甲乙丙丁" * 180)
+    body = box.entries[-1].body
+    expected_width = rect.width - box._pad * 2
+
+    assert box._body_rect().width == expected_width
+    assert body.rect.width == expected_width
+    body._ensure_layout()
+    rows_before = len(body._rows)
+
+    box.draw(pygame.Surface((3840, 2160)))
+
+    assert body.rect.width == expected_width
+    assert len(body._rows) == rows_before

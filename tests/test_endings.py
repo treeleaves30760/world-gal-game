@@ -1,8 +1,12 @@
 """Ending evaluation (mirrors tests/test_achievements.py)."""
 from world_gal_game.core.clear_data import ClearData
-from world_gal_game.core.endings import Ending, EndingTracker
+from world_gal_game.core.endings import (
+    Ending,
+    EndingTracker,
+    rebind_authored_ending_catalog,
+)
 from world_gal_game.core.game_state import GameState
-from world_gal_game.core.story_graph import Condition, Effect
+from world_gal_game.core.story_graph import Condition, Effect, Line, Scene
 
 
 def test_ending_unlocks_when_flag_set():
@@ -36,6 +40,34 @@ def test_hidden_ending_invisible_until_unlocked():
     t.unlocked["b"] = "2026-01-01"
     visible_ids = [e.id for e in t.visible_to_player()]
     assert "b" in visible_ids
+
+
+def test_rebind_uses_current_catalog_and_preserves_saved_progress():
+    authored = EndingTracker()
+    authored.register(Ending(
+        id="new_current",
+        title="Current title",
+        hidden=True,
+    ))
+    saved = EndingTracker()
+    saved.register(Ending(id="retired", title="Stale title"))
+    saved.unlocked.update({
+        "new_current": "2026-01-01",
+        "retired": "2025-01-01",
+    })
+    saved.seen.add("retired")
+
+    rebound = rebind_authored_ending_catalog(authored, saved)
+
+    assert set(rebound.endings) == {"new_current"}
+    assert rebound.endings["new_current"].title == "Current title"
+    assert rebound.unlocked == saved.unlocked
+    assert rebound.seen == {"retired"}
+    assert [ending.id for ending in rebound.visible_to_player()] == [
+        "new_current",
+    ]
+    rebound.endings["new_current"].title = "runtime"
+    assert authored.endings["new_current"].title == "Current title"
 
 
 def test_ending_with_forbids():
@@ -75,27 +107,79 @@ def test_ending_tracker_get_returns_registered_ending():
 def test_clear_data_records_route_from_unlocked_ending():
     """Clearing a route's ending records its route_id into cleared_routes."""
     s = GameState()
-    s.endings.register(Ending(id="ending_qingyi_lover", title="湖畔",
-                              route_id="qingyi"))
-    s.endings.unlocked["ending_qingyi_lover"] = "2026-01-01T00:00:00"
+    s.endings.register(Ending(id="ending_ruoxue_lover", title="湖畔",
+                              route_id="ruoxue"))
+    s.endings.unlocked["ending_ruoxue_lover"] = "2026-01-01T00:00:00"
     cd = ClearData()
     changed = cd.record_from_state(s)
     assert changed is True
-    assert "qingyi" in cd.cleared_routes
-    assert "ending_qingyi_lover" in cd.endings_seen
+    assert "ruoxue" in cd.cleared_routes
+    assert "ending_ruoxue_lover" in cd.endings_seen
 
 
 def test_cleared_route_condition_true_on_ng_plus():
     """End-to-end: an ending cleared in a prior run satisfies the
     cleared_route gate on a fresh New Game+ state."""
     prev = GameState()
-    prev.endings.register(Ending(id="ending_qingyi", title="戀人",
-                                 route_id="qingyi"))
-    prev.endings.unlocked["ending_qingyi"] = "2026-01-01T00:00:00"
+    prev.endings.register(Ending(id="ending_ruoxue", title="戀人",
+                                 route_id="ruoxue"))
+    prev.endings.unlocked["ending_ruoxue"] = "2026-01-01T00:00:00"
     cd = ClearData()
     cd.record_from_state(prev)
 
     fresh = GameState()
     fresh.meta["__clear_data__"] = cd
-    assert fresh.evaluate(Condition(kind="cleared_route", target="qingyi"))
+    assert fresh.evaluate(Condition(kind="cleared_route", target="ruoxue"))
     assert not fresh.evaluate(Condition(kind="cleared_route", target="other"))
+
+
+def test_clear_data_applies_union_to_live_trackers_without_reunlock_notice():
+    """Global completion is visible live without replacing save progress."""
+    state = GameState()
+    state.story.add_scene(
+        # Use the real authored model so apply_to_state can also seed lines.
+        Scene(
+            id="prior_scene",
+            lines=[Line(text="already read")],
+        ),
+    )
+    state.read_log.mark_scene_done("save_scene")
+    state.cg_gallery.unlock("assets/cgs/save-only.png")
+    state.endings.register(Ending(
+        id="ending_current",
+        title="Current",
+        hidden=True,
+    ))
+    state.endings.register(Ending(
+        id="ending_save",
+        title="Save",
+    ))
+    state.endings.unlocked["ending_save"] = "2026-01-01T00:00:00"
+    state.endings.seen.add("ending_save")
+
+    clear_data = ClearData(
+        scenes_seen={"prior_scene"},
+        endings_seen={"ending_current", "ending_removed"},
+        cgs_seen={"assets/cgs/global.png"},
+    )
+
+    assert clear_data.apply_to_state(state) is True
+    assert state.read_log.scenes == {"save_scene", "prior_scene"}
+    assert state.read_log.is_read("prior_scene", 0)
+    assert state.cg_gallery.is_unlocked("assets/cgs/save-only.png")
+    assert state.cg_gallery.is_unlocked("assets/cgs/global.png")
+
+    # The hidden, still-registered ending is now actually unlocked and visible.
+    assert state.endings.is_unlocked("ending_current")
+    assert "ending_current" in {
+        ending.id for ending in state.endings.visible_to_player()
+    }
+    # Removed clear-data entries are historical only and stay out of the live
+    # tracker. Existing save progress remains untouched.
+    assert not state.endings.is_unlocked("ending_removed")
+    assert state.endings.unlocked["ending_save"] == "2026-01-01T00:00:00"
+    assert state.endings.newly_unlocked() == []
+    assert state.meta["__clear_data__"] is clear_data
+
+    # The union operation is idempotent.
+    assert clear_data.apply_to_state(state) is False

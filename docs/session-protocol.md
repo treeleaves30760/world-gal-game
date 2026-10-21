@@ -48,7 +48,7 @@ An object whose `op` is a `__dunder__` verb. These manage the session itself.
 | op | response |
 |---|---|
 | `{"op":"__ping__"}` | `{"ok":true,"seq":n,"pong":true}` — liveness |
-| `{"op":"__inspect__"}` | `{"ok":true,"seq":n,"snapshot":<inspect()>}` — full state view |
+| `{"op":"__inspect__"}` | `{"ok":true,"seq":n,"snapshot":<inspect()>}` — full state view, including `locale.requested/effective/source/default` |
 | `{"op":"__affordances__"}` | `{"ok":true,"seq":n,"affordances":<affordances()>}` — current action space |
 | `{"op":"__reset__"}` | rebuild a fresh session: `{"ok":true,"seq":n,"reset":true}` (error if no opener configured) |
 | `{"op":"__quit__"}` | `{"ok":true,"seq":n,"bye":true}`, then the serve loop stops |
@@ -84,6 +84,15 @@ Any other object is treated as a one-op batch.
 {"op": "move", "location": "cafe"}
 ```
 
+遠距 schedule-map 行程需明確 opt in：
+
+```json
+{"op": "move", "location": "far_library", "distant": true}
+```
+
+它會重新驗證先前 affordances／UI 所依據的路徑與抵達狀態，原子套用總
+`travel_cost`，中繼地點不會變成 visited，也不會觸發中途事件。
+
 Response: `{"ok": <bool>, "seq": n, "result": {…}, "transcript": [ … ]}` — same
 as a batch but with a single `result` instead of a `results` array.
 
@@ -94,14 +103,57 @@ The same vocabulary as `HeadlessSession.run_script`.
 **Runtime** (act on the live `GameState`):
 
 ```
-move · start_scene · next · choose · chat · advance_time · set_flag ·
-adjust_affection · inspect · apply · check · assert · affordances ·
-snapshot · restore
+move · examine · gift · start_scene · next · choose · chat · advance_time ·
+set_flag · adjust_affection · inspect · apply · check · assert ·
+affordances · snapshot · restore · locale
 ```
 
-`apply` runs any registered effect; `check` / `assert` evaluate conditions /
-expectations; `snapshot` / `restore` checkpoint and branch. Every runtime result
-carries a `changed` boolean (and a structured `diff` when it changed state).
+`locale` takes a `locale` language id and changes only the current session's
+presentation authority:
+
+```json
+{"op": "locale", "locale": "en"}
+```
+
+It succeeds only when no dialogue scene is active (`current_scene` is `null`).
+On success the result contains `requested` and `effective`; subsequent scene
+titles, lines, speakers, sound captions, choices/cards, and localized time or
+affection labels use that effective locale. During dialogue it returns
+`ok:false`, retains the previous effective locale, and never replays line
+effects. Unsupported or rejected locales fall back through the manifest's
+validated default/source rather than selecting a file from user input.
+
+This op is intentionally session-local: it does not write the per-pack
+`locale_preferences` entry in `settings.json`, and `__reset__` rebuilds the
+session from the opener's configuration. IDs, conditions, effects,
+transitions, flags, numeric state, and asset paths are source-pack authority
+and are never changed by `locale`.
+
+`examine` takes `scene` and only opens an available `trigger: examine` hook at
+the current location. `gift` takes `npc`, `item`, and optional `count` (which
+must equal 1), and only gives an owned, unlocked item to an NPC present at the
+current location, weekday, and time. Both are player-equivalent operations:
+they revalidate conditions at execution time, reject while dialogue is open,
+and appear as structured rows under `affordances.examine` /
+`affordances.gift`; those arrays are empty during dialogue.
+
+`move` is player-equivalent too and rejects while dialogue is open. At that
+boundary `affordances.map.available` is false, exits are marked unavailable,
+and `travel_options` / `guided_destinations` are empty.
+
+`advance_time` takes optional `phases` (default 1), advances one phase at a
+time, and stops at the first eligible `enter` / `auto` hook. Its result reports
+the actual `phases_advanced` and may therefore be less than requested.
+
+`start_scene` and `apply` are developer controls: the former opens a scene
+without player hook/location/time validation, and the latter runs any
+registered effect directly. `set_flag` and `adjust_affection` likewise mutate
+test state directly. Do not use those controls as evidence that a player can
+naturally reach the same state.
+
+`check` / `assert` evaluate conditions / expectations; `snapshot` / `restore`
+checkpoint and branch. Every runtime result carries a `changed` boolean (and a
+structured `diff` when it changed state).
 
 **Structural edit** (act on the pack on disk — the warm authoring loop):
 

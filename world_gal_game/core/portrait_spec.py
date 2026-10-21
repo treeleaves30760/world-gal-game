@@ -36,7 +36,7 @@ class PortraitSpec(BaseModel):
 
     # ``populate_by_name`` lets the canonical names still work while the
     # author-friendly aliases below (``id`` for expression, ``position`` for
-    # slot) are also accepted — so ``portrait: {character: qingyi, id: smile,
+    # slot) are also accepted — so ``portrait: {character: ruoxue, id: smile,
     # position: left}`` is just a friendlier spelling of the full spec.
     model_config = ConfigDict(populate_by_name=True)
 

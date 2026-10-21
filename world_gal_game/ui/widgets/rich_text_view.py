@@ -33,6 +33,8 @@ import pygame
 
 from .base import Widget
 from ..fonts import FontRegistry
+from ..motion import MotionKind, MotionPolicy, coerce_motion_policy
+from ..text_breaking import hard_break_before_latest, legal_soft_break
 from ...dialogue.richtext import RichDocument, SegmentStyle, parse
 
 
@@ -44,7 +46,6 @@ _RUBY_GAP = 1
 # fadein ramp duration (seconds) for a single glyph, measured from the moment it
 # is first revealed.
 _FADEIN_DUR = 0.25
-
 
 @dataclass
 class _Run:
@@ -70,21 +71,41 @@ class _Run:
     ruby_surf: pygame.Surface | None = None
 
 
+@dataclass(frozen=True)
+class RichTextPage:
+    """One vertically bounded row window inside a laid-out rich document.
+
+    ``start_reveal`` / ``end_reveal`` use the same global reveal-unit space as
+    :meth:`RichText.set_reveal`.  A caller can therefore page a long authored
+    line without reparsing markup, losing inline waits, or inventing a second
+    typewriter timeline.
+    """
+
+    start_row: int
+    end_row: int
+    start_reveal: int
+    end_reveal: int
+    height: int
+
+
 class RichText(Widget):
     def __init__(self, rect: pygame.Rect, markup: str = "", *,
                  fonts: FontRegistry, size: int,
                  color=(255, 255, 255), line_spacing: int = 6,
                  reveal_chars: int | None = None,
-                 text_speed: float = 0.0):
+                 text_speed: float = 0.0,
+                 motion: MotionPolicy | None = None):
         super().__init__(rect)
         self.fonts = fonts
         self.base_size = size
         self.base_color = color
+        self._allow_color_overrides = True
         self.line_spacing = line_spacing
         self.reveal_chars = reveal_chars
         # Base typewriter rate (chars/sec) used by update(); 0 disables the
         # internal cursor (caller drives set_reveal directly, e.g. tests).
         self.text_speed = text_speed
+        self.motion = coerce_motion_policy(motion)
         self._doc: RichDocument = parse(markup, base_color=color, base_size=size)
         self._rows: list[list[_Run]] = []
         self._dirty = True
@@ -100,6 +121,10 @@ class RichText(Widget):
         # reveal timestamps (keyed by reveal-unit index) for fadein.
         self._clock: float = 0.0
         self._reveal_time: dict[int, float] = {}
+        # Optional vertical row window. None renders the complete document,
+        # preserving the historical behaviour for every caller except the ADV
+        # dialogue viewport that explicitly opts into pagination.
+        self._row_window: tuple[int, int] | None = None
 
     # ----- text + parsing ------------------------------------------------
 
@@ -108,11 +133,46 @@ class RichText(Widget):
                           base_size=self.base_size)
         self.reveal_chars = reveal_chars
         self._dirty = True
+        self._row_window = None
         self._reset_reveal_state(reveal_chars)
 
     # WrappedText-compatible alias: DialogueBox historically called set_text.
     def set_text(self, markup: str, *, reveal_chars: int | None = None) -> None:
         self.set_markup(markup, reveal_chars=reveal_chars)
+
+    def set_base_color(self, color: tuple) -> None:
+        """Change inherited text colour without resetting reading progress.
+
+        Rich-text segments store only explicit ``[color]`` overrides; their
+        inherited colour is resolved while laying out runs.  Invalidating that
+        layout is therefore enough for a live accessibility-profile switch,
+        and deliberately leaves reveal cursors, inline waits, row windows, and
+        parsed markup untouched.
+        """
+        if color == self.base_color:
+            return
+        self.base_color = color
+        self._dirty = True
+
+    def set_color_policy(
+        self,
+        color: tuple,
+        *,
+        allow_overrides: bool,
+    ) -> None:
+        """Apply a live reading-colour policy without resetting the document.
+
+        High-contrast reading mode suppresses arbitrary authored ``[color]``
+        spans because their contrast against the accessibility text plane is
+        unknowable.  Bold, size, ruby, waits, reveal speed, and effects remain
+        intact, so the mode changes legibility rather than narrative timing.
+        """
+        allow = bool(allow_overrides)
+        if color == self.base_color and allow == self._allow_color_overrides:
+            return
+        self.base_color = color
+        self._allow_color_overrides = allow
+        self._dirty = True
 
     def _reset_reveal_state(self, reveal_chars: int | None) -> None:
         self._reveal_f = float(reveal_chars or 0)
@@ -127,8 +187,213 @@ class RichText(Widget):
         if n is not None:
             self._reveal_f = float(n)
 
+    def export_wait_timeline(self) -> dict[str, object]:
+        """Return a layout-independent snapshot of inline-wait progress.
+
+        Wait controls are authored in plain-text space, while the live widget
+        tracks them in layout-dependent reveal space.  Persisting authored
+        positions keeps the snapshot valid when a load changes resolution,
+        font fallback, or text scale.
+        """
+        self._ensure_layout()
+        plain_length = len(self.plain_text())
+        waits = {
+            position: duration
+            for position, duration in self._doc.waits().items()
+            if position < plain_length
+        }
+        consumed = sorted(
+            plain_pos
+            for plain_pos in waits
+            if self._plain_to_reveal(plain_pos) in self._waits_done
+        )
+        active = None
+        if self._wait_left > 0.0:
+            if not math.isfinite(self._wait_left):
+                raise ValueError("active rich-text wait must be finite")
+            reveal_pos = int(self._reveal_f)
+            candidates = [
+                plain_pos
+                for plain_pos in waits
+                if (
+                    self._plain_to_reveal(plain_pos) == reveal_pos
+                    and reveal_pos in self._waits_done
+                )
+            ]
+            if len(candidates) != 1:
+                raise RuntimeError(
+                    "active rich-text wait has no unique authored position"
+                )
+            active = {
+                "plain_position": candidates[0],
+                "remaining_seconds": float(self._wait_left),
+            }
+        return {
+            "consumed_plain_positions": consumed,
+            "active": active,
+        }
+
+    def has_wait_at_plain(self, plain_position: int) -> bool:
+        """Return whether a wait can fire before this authored character."""
+        return (
+            type(plain_position) is int
+            and 0 <= plain_position < len(self.plain_text())
+            and plain_position in self._doc.waits()
+        )
+
+    def restore_reveal(
+        self,
+        n: int,
+        *,
+        wait_timeline: dict[str, object] | None = None,
+    ) -> None:
+        """Restore a persisted cursor without replaying elapsed animation.
+
+        A current save supplies ``wait_timeline`` so an in-progress inline
+        pause resumes with its exact remaining duration.  Legacy saves omit
+        it; for those, waits strictly before the cursor are treated as elapsed
+        while a wait exactly at the cursor remains pending, matching the old
+        v1 behaviour.  Per-glyph fade clocks are still settled fully opaque.
+        """
+        self._ensure_layout()
+        bounded = max(0, min(int(n), self.total_chars()))
+        self.reveal_chars = bounded
+        self._reveal_f = float(bounded)
+        self._wait_left = 0.0
+        self._waits_done.clear()
+        plain_length = len(self.plain_text())
+        waits = {
+            position: duration
+            for position, duration in self._doc.waits().items()
+            if position < plain_length
+        }
+        if wait_timeline is None:
+            for plain_pos in waits:
+                reveal_pos = self._plain_to_reveal(plain_pos)
+                # A wait exactly at the cursor may be the first event on the
+                # next visual page (or an active wait from a legacy save).
+                if reveal_pos < bounded:
+                    self._waits_done.add(reveal_pos)
+        else:
+            if set(wait_timeline) != {"consumed_plain_positions", "active"}:
+                raise ValueError("invalid rich-text wait timeline shape")
+            consumed = wait_timeline.get("consumed_plain_positions")
+            if not isinstance(consumed, list) or any(
+                    type(position) is not int for position in consumed):
+                raise ValueError("invalid consumed rich-text wait positions")
+            if consumed != sorted(set(consumed)):
+                raise ValueError(
+                    "consumed rich-text wait positions must be canonical"
+                )
+            known_positions = set(waits)
+            if any(position not in known_positions for position in consumed):
+                raise ValueError("unknown consumed rich-text wait position")
+            plain_cursor = self.plain_cursor_for_reveal(bounded)
+            if any(position > plain_cursor for position in consumed):
+                raise ValueError("consumed rich-text wait is ahead of cursor")
+            if any(
+                    position not in consumed
+                    for position in waits
+                    if position < plain_cursor):
+                raise ValueError("elapsed rich-text wait is not consumed")
+            self._waits_done.update(
+                self._plain_to_reveal(position) for position in consumed
+            )
+
+            active = wait_timeline.get("active")
+            if active is not None:
+                if (
+                    not isinstance(active, dict)
+                    or set(active) != {"plain_position", "remaining_seconds"}
+                ):
+                    raise ValueError("invalid active rich-text wait shape")
+                plain_position = active.get("plain_position")
+                remaining = active.get("remaining_seconds")
+                if (
+                    type(plain_position) is not int
+                    or type(remaining) not in (int, float)
+                ):
+                    raise ValueError("invalid active rich-text wait values")
+                remaining_f = float(remaining)
+                duration = waits.get(plain_position)
+                if (
+                    duration is None
+                    or plain_position != plain_cursor
+                    or plain_position not in consumed
+                    or not math.isfinite(remaining_f)
+                    or remaining_f <= 0.0
+                    or remaining_f > duration
+                ):
+                    raise ValueError("active rich-text wait is inconsistent")
+                self._wait_left = remaining_f
+        stamp = self._clock - _FADEIN_DUR
+        for reveal_pos in range(bounded):
+            self._reveal_time[reveal_pos] = stamp
+
     def plain_text(self) -> str:
         return self._doc.plain_text()
+
+    def plain_cursor_for_reveal(self, reveal_pos: int | None = None) -> int:
+        """Translate a layout-dependent reveal cursor to plain-text space.
+
+        Implicit wrap breaks are reveal units but not authored characters.
+        Persisting this companion cursor lets a save resume at the same glyph
+        after switching between 720p, 1080p, 4K, or text-size profiles.
+        """
+        self._ensure_layout()
+        position = (
+            self.total_chars()
+            if reveal_pos is None and self.reveal_chars is None
+            else int(self.reveal_chars or 0)
+            if reveal_pos is None
+            else int(reveal_pos)
+        )
+        position = max(0, min(position, self.total_chars()))
+        plain_length = len(self.plain_text())
+        previous_plain = 0
+        previous_reveal = 0
+        for row in self._rows:
+            for run in row:
+                if position <= run.start_reveal:
+                    # Gaps between runs are either authored newlines (one
+                    # plain and reveal unit each) or an implicit wrap (a
+                    # reveal unit with no authored character).  Interpolating
+                    # from the previous run avoids jumping across explicit
+                    # blank lines while keeping wrap-only gaps on the same
+                    # plain-text cursor.
+                    gap_plain = max(0, run.start_plain - previous_plain)
+                    gap_offset = max(0, position - previous_reveal)
+                    return min(
+                        run.start_plain,
+                        previous_plain + min(gap_offset, gap_plain),
+                    )
+                run_end_reveal = run.start_reveal + len(run.text)
+                if position < run_end_reveal:
+                    return run.start_plain + (position - run.start_reveal)
+                previous_plain = run.start_plain + len(run.text)
+                previous_reveal = run_end_reveal
+
+        # The document tail can consist entirely of explicit newlines and
+        # therefore have no run to anchor it (for example ``"甲\n\n"`` or
+        # ``"\n"``).  Map those remaining reveal units one-for-one.
+        tail_offset = max(0, position - previous_reveal)
+        return min(
+            plain_length,
+            previous_plain
+            + min(tail_offset, max(0, plain_length - previous_plain)),
+        )
+
+    def reveal_cursor_for_plain(self, plain_pos: int) -> int:
+        """Translate a persisted authored-character cursor into this layout."""
+        # Public callers may ask immediately after construction/set_text.
+        # Wrapping contributes reveal units, so an unlaid-out empty _rows list
+        # would silently return the plain cursor and resume too early.
+        self._ensure_layout()
+        plain_length = len(self.plain_text())
+        bounded = max(0, min(int(plain_pos), plain_length))
+        if bounded == plain_length:
+            return self.total_chars()
+        return max(0, min(self._plain_to_reveal(bounded), self.total_chars()))
 
     # ----- layout --------------------------------------------------------
 
@@ -141,79 +406,124 @@ class RichText(Widget):
             return
         max_width = self.rect.width
         rows: list[list[_Run]] = []
-        # Current row state.
-        row: list[_Run] = []
-        # The run currently being filled (same style as the tail char).
-        cur_text = ""
-        cur_style: SegmentStyle | None = None
-        cur_font: pygame.font.Font | None = None
-        cur_color: tuple = self.base_color
-        # Plain-char index where the current run started.
-        cur_start_plain = 0
-        # Running plain-char index (counts every base char incl. newlines).
+        # Each entry is (glyph, style, font, colour, authored plain index).
+        # Keeping glyph identity until a row is committed lets overflow move a
+        # complete Latin word across style/control boundaries without split(),
+        # strip(), or any loss of save/reveal cursor coordinates.
+        glyph_row: list[
+            tuple[str, SegmentStyle, pygame.font.Font, tuple, int]
+        ] = []
         plain_idx = 0
-        # Running reveal-unit index assigned to runs as they are committed.
         reveal_idx = 0
-        # Accumulated pixel width of the row so far (committed runs + cur run).
-        committed_w = 0
 
-        def finish_run() -> None:
-            nonlocal cur_text, committed_w, reveal_idx
-            if cur_text and cur_style is not None and cur_font is not None:
-                w, _ = cur_font.size(cur_text)
-                run = _Run(cur_text, cur_style, cur_font, cur_color,
-                           cur_font.get_linesize(),
-                           start_plain=cur_start_plain,
-                           start_reveal=reveal_idx)
-                row.append(run)
-                committed_w += w
-                reveal_idx += len(cur_text)
-            cur_text = ""
+        def row_width(
+            glyphs: list[
+                tuple[str, SegmentStyle, pygame.font.Font, tuple, int]
+            ],
+        ) -> int:
+            width = 0
+            run_text = ""
+            run_style: SegmentStyle | None = None
+            run_font: pygame.font.Font | None = None
+            for char, style, font, _color, _index in glyphs:
+                if run_style is not None and style != run_style:
+                    assert run_font is not None
+                    width += run_font.size(run_text)[0]
+                    run_text = ""
+                run_style = style
+                run_font = font
+                run_text += char
+            if run_text and run_font is not None:
+                width += run_font.size(run_text)[0]
+            return width
 
-        def finish_row(*, implicit_break: bool) -> None:
-            nonlocal row, committed_w, reveal_idx
-            finish_run()
+        def finish_row(
+            glyphs: list[
+                tuple[str, SegmentStyle, pygame.font.Font, tuple, int]
+            ],
+            *,
+            implicit_break: bool,
+        ) -> None:
+            nonlocal reveal_idx
+            row: list[_Run] = []
+            index = 0
+            while index < len(glyphs):
+                char, style, font, color, start_plain = glyphs[index]
+                text = char
+                index += 1
+                while index < len(glyphs) and glyphs[index][1] == style:
+                    text += glyphs[index][0]
+                    index += 1
+                row.append(
+                    _Run(
+                        text,
+                        style,
+                        font,
+                        color,
+                        font.get_linesize(),
+                        start_plain=start_plain,
+                        start_reveal=reveal_idx,
+                    )
+                )
+                reveal_idx += len(text)
             rows.append(row)
-            row = []
-            committed_w = 0
             # Every row boundary (explicit \n or wrap) costs one reveal unit,
             # matching WrappedText's glyphs + (rows-1) accounting.
             if implicit_break:
                 reveal_idx += 1
 
+        def latest_soft_break(
+            glyphs: list[
+                tuple[str, SegmentStyle, pygame.font.Font, tuple, int]
+            ],
+        ) -> int | None:
+            # Boundary ``index`` divides glyphs[:index] / glyphs[index:].  The
+            # full row is already too wide, so its terminal boundary cannot
+            # resolve overflow and is deliberately excluded.
+            for index in range(len(glyphs) - 1, 0, -1):
+                if legal_soft_break(
+                    glyphs[index - 1][0],
+                    glyphs[index][0],
+                ):
+                    return index
+            return None
+
         for seg in self._doc.segments:
             style = seg.style
             font = self._font_for(style)
-            color = style.color if style.color is not None else self.base_color
+            color = (
+                style.color
+                if self._allow_color_overrides and style.color is not None
+                else self.base_color
+            )
             for ch in seg.text:
                 if ch == "\n":
-                    finish_row(implicit_break=True)
-                    cur_style, cur_font, cur_color = None, None, color
+                    finish_row(glyph_row, implicit_break=True)
+                    glyph_row = []
                     plain_idx += 1   # the newline is a plain char
-                    cur_start_plain = plain_idx
                     continue
-                # Style change within a row -> close the current run.
-                if cur_style is not None and (style != cur_style):
-                    finish_run()
-                    cur_start_plain = plain_idx
-                if cur_style is None:
-                    cur_start_plain = plain_idx
-                cur_style, cur_font, cur_color = style, font, color
-                test = cur_text + ch
-                # Width of committed runs + this run's tentative width.
-                run_w, _ = font.size(test)
-                if max_width > 0 and (committed_w + run_w) > max_width \
-                        and (row or cur_text):
-                    # Wrap: commit what we have, start a fresh row with ch.
-                    finish_row(implicit_break=True)
-                    cur_style, cur_font, cur_color = style, font, color
-                    cur_start_plain = plain_idx
-                    cur_text = ch
-                else:
-                    cur_text = test
+                glyph_row.append((ch, style, font, color, plain_idx))
                 plain_idx += 1
+                while (
+                    max_width > 0
+                    and len(glyph_row) > 1
+                    and row_width(glyph_row) > max_width
+                ):
+                    boundary = latest_soft_break(glyph_row)
+                    if boundary is None:
+                        # One unspaced token is wider than the row.  Preserve
+                        # every glyph and fall back to the historical boundary
+                        # immediately before the newest glyph.
+                        boundary = hard_break_before_latest(
+                            "".join(glyph[0] for glyph in glyph_row),
+                        )
+                    finish_row(
+                        glyph_row[:boundary],
+                        implicit_break=True,
+                    )
+                    glyph_row = glyph_row[boundary:]
         # Final row never adds a trailing break (matches WrappedText [""]).
-        finish_row(implicit_break=False)
+        finish_row(glyph_row, implicit_break=False)
         self._rows = rows
         # reveal_idx now equals glyphs + (rows-1) (the final row added no break);
         # total_chars() recomputes this, so we don't cache it here.
@@ -243,6 +553,175 @@ class RichText(Widget):
         # typewriter pacing and force_reveal math are unchanged.
         return glyphs + max(0, len(self._rows) - 1)
 
+    def _row_height(self, index: int) -> int:
+        """Return one laid-out row's visible height, excluding row spacing."""
+        self._ensure_layout()
+        default_h = self.fonts.get(self.base_size).get_linesize()
+        row = self._rows[index]
+        band = self._row_bands[index] if index < len(self._row_bands) else 0
+        return band + max((run.height for run in row), default=default_h)
+
+    def _row_reveal_units(self, index: int) -> int:
+        """Reveal units owned by one row, including its implicit line break."""
+        self._ensure_layout()
+        glyphs = sum(len(run.text) for run in self._rows[index])
+        return glyphs + (1 if index < len(self._rows) - 1 else 0)
+
+    @staticmethod
+    def _row_has_visible_glyph(row: list[_Run]) -> bool:
+        """Return whether a row paints anything beyond terminal whitespace.
+
+        Newlines are represented by row boundaries rather than runs. Unicode
+        whitespace retains its authored cursor units, but does not make a
+        trailing row visible. A ruby annotation is visible even when its base
+        happens to be whitespace, so it deliberately keeps the row in page
+        geometry.
+        """
+        return any(
+            bool(run.style.ruby)
+            or any(
+                not char.isspace()
+                for char in run.text
+            )
+            for run in row
+        )
+
+    def terminal_visible_end_reveal(self) -> int:
+        """Return the cursor immediately after the final visible glyph.
+
+        This does not alter the document's reveal space. Terminal spaces,
+        tabs, and newline row boundaries remain addressable for save/resume and
+        inline-wait timing; the value only identifies when the player has seen
+        all painted content.
+        """
+        self._ensure_layout()
+        for row in reversed(self._rows):
+            for run in reversed(row):
+                if run.style.ruby and run.text:
+                    return run.start_reveal + len(run.text)
+                for index in range(len(run.text) - 1, -1, -1):
+                    if not run.text[index].isspace():
+                        return run.start_reveal + index + 1
+        return 0
+
+    def terminal_tail_ready(
+        self,
+        reveal_cursor: int,
+        end_reveal: int,
+    ) -> bool:
+        """Return whether an invisible terminal tail may stop gating input.
+
+        Pending or active waits in that tail remain authoritative. Consumed
+        waits and whitespace reveal units stay in their original cursor space;
+        callers merely gain a visual-completion predicate and never rewrite
+        authored progress.
+        """
+        self._ensure_layout()
+        document_end = self.total_chars()
+        bounded_end = max(0, min(int(end_reveal), document_end))
+        if bounded_end != document_end:
+            return False
+        bounded_cursor = max(0, min(int(reveal_cursor), document_end))
+        visible_end = self.terminal_visible_end_reveal()
+        if bounded_cursor < visible_end:
+            return False
+        if self._wait_left > 0.0:
+            return False
+        for plain_position in self._doc.waits():
+            wait_reveal = self._plain_to_reveal(plain_position)
+            if (
+                visible_end <= wait_reveal < document_end
+                and wait_reveal not in self._waits_done
+            ):
+                return False
+        return True
+
+    def paginate(self, max_height: int) -> tuple[RichTextPage, ...]:
+        """Partition laid-out rows into stable pages no taller than ``max_height``.
+
+        A single unusually tall ruby/effect row is retained as its own page;
+        drawing is still clipped by the owning viewport.  Normal rows include
+        spacing only *between* rows, matching their visible composition.
+        """
+        self._ensure_layout()
+        if not self._rows:
+            return (
+                RichTextPage(
+                    start_row=0,
+                    end_row=0,
+                    start_reveal=0,
+                    end_reveal=0,
+                    height=0,
+                ),
+            )
+
+        limit = max(1, int(max_height))
+        # A YAML literal block normally contributes one terminal ``\n`` and a
+        # hand-edited/localised value may leave spaces or tabs after it. Layout
+        # retains every authored character for reveal/save cursors, but those
+        # synthetic terminal whitespace rows must not become blank visual
+        # pages. Keep matching rows inside the document; only trim the tail
+        # from rendered page geometry. Internal blank rows remain untouched.
+        render_row_count = len(self._rows)
+        while (
+            render_row_count > 1
+            and not self._row_has_visible_glyph(
+                self._rows[render_row_count - 1],
+            )
+        ):
+            render_row_count -= 1
+        pages: list[RichTextPage] = []
+        reveal_at_row = 0
+        start_row = 0
+        start_reveal = 0
+        page_height = 0
+
+        for index in range(render_row_count):
+            row_height = self._row_height(index)
+            candidate = (
+                row_height
+                if index == start_row
+                else page_height + self.line_spacing + row_height
+            )
+            if index > start_row and candidate > limit:
+                pages.append(
+                    RichTextPage(
+                        start_row=start_row,
+                        end_row=index,
+                        start_reveal=start_reveal,
+                        end_reveal=reveal_at_row,
+                        height=page_height,
+                    ),
+                )
+                start_row = index
+                start_reveal = reveal_at_row
+                page_height = row_height
+            else:
+                page_height = candidate
+            reveal_at_row += self._row_reveal_units(index)
+
+        pages.append(
+            RichTextPage(
+                start_row=start_row,
+                end_row=render_row_count,
+                start_reveal=start_reveal,
+                end_reveal=self.total_chars(),
+                height=page_height,
+            ),
+        )
+        return tuple(pages)
+
+    def set_row_window(self, start: int, end: int) -> None:
+        """Render only ``[start, end)`` rows while retaining global reveal state."""
+        self._ensure_layout()
+        row_count = len(self._rows)
+        bounded_start = max(0, min(int(start), row_count))
+        bounded_end = max(bounded_start, min(int(end), row_count))
+        self._row_window = (bounded_start, bounded_end)
+
+    def clear_row_window(self) -> None:
+        self._row_window = None
+
     def fully_revealed(self) -> bool:
         if self.reveal_chars is None:
             return True
@@ -256,18 +735,34 @@ class RichText(Widget):
         Wait controls are keyed in plain-text space (no implicit row breaks);
         the reveal cursor counts breaks. This walks runs to translate.
         """
-        result = plain   # default for the tagless / no-wrap case (they match)
+        bounded = max(0, min(int(plain), len(self.plain_text())))
+        previous_plain = 0
+        previous_reveal = 0
         for row in self._rows:
             for run in row:
+                if bounded < run.start_plain:
+                    # Only authored newlines consume plain positions between
+                    # runs.  They also consume one reveal unit each.
+                    return previous_reveal + min(
+                        bounded - previous_plain,
+                        run.start_reveal - previous_reveal,
+                    )
+                if bounded == run.start_plain:
+                    # Prefer the downstream side of an implicit wrap.  Saves
+                    # also retain the raw reveal cursor, which disambiguates
+                    # the exact side when the current layout is unchanged.
+                    return run.start_reveal
                 end_plain = run.start_plain + len(run.text)
-                if run.start_plain <= plain < end_plain:
-                    return run.start_reveal + (plain - run.start_plain)
-                if plain == end_plain:
-                    # Sits exactly at the run boundary; the reveal position is
-                    # just past this run (a following break, if any, is handled
-                    # by the next run's start_reveal).
-                    result = run.start_reveal + len(run.text)
-        return result
+                if bounded < end_plain:
+                    return run.start_reveal + (bounded - run.start_plain)
+                previous_plain = end_plain
+                previous_reveal = run.start_reveal + len(run.text)
+
+        # As above, a trailing authored newline has no following run.
+        return min(
+            self.total_chars(),
+            previous_reveal + max(0, bounded - previous_plain),
+        )
 
     def _speed_at(self, reveal_pos: int) -> float:
         """Reveal rate (chars/sec) for the glyph at ``reveal_pos``.
@@ -282,7 +777,13 @@ class RichText(Widget):
                     return self.text_speed
         return self.text_speed
 
-    def update(self, dt: float, inp=None) -> None:
+    def update(
+        self,
+        dt: float,
+        inp=None,
+        *,
+        reveal_limit: int | None = None,
+    ) -> None:
         """Advance the internal typewriter clock and reveal cursor.
 
         Honours per-span speed and inline waits. Disabled (no auto-advance)
@@ -294,7 +795,12 @@ class RichText(Widget):
         self._clock += dt
         if self.reveal_chars is None:
             return
-        total = self.total_chars()
+        document_total = self.total_chars()
+        total = (
+            document_total
+            if reveal_limit is None
+            else max(0, min(int(reveal_limit), document_total))
+        )
         if self.reveal_chars >= total:
             self._record_reveal_times(total)
             return
@@ -397,18 +903,29 @@ class RichText(Widget):
         to total, the active wait is dropped, and all waits are marked consumed
         so a subsequent update() won't re-park.
         """
+        self.force_reveal_to(self.total_chars())
+
+    def force_reveal_to(self, limit: int) -> None:
+        """Reveal through ``limit`` and clear waits already crossed.
+
+        Unlike :meth:`force_reveal`, this keeps waits at the next page boundary
+        pending.  It is the primitive used by the ADV dialogue paginator.
+        """
         self._ensure_layout()
         total = self.total_chars()
-        self.reveal_chars = total
-        self._reveal_f = float(total)
+        bounded = max(0, min(int(limit), total))
+        self.reveal_chars = bounded
+        self._reveal_f = float(bounded)
         self._wait_left = 0.0
-        # Mark every wait position as done.
+        # A wait exactly at a non-final page boundary belongs to the next page.
         for p in self._doc.waits():
-            self._waits_done.add(self._plain_to_reveal(p))
+            reveal_pos = self._plain_to_reveal(p)
+            if reveal_pos < bounded or bounded == total:
+                self._waits_done.add(reveal_pos)
         # A forced reveal completes instantly: stamp every unit's reveal time
         # in the past so any fadein is already fully opaque (no lingering ramp).
         stamp = self._clock - _FADEIN_DUR
-        for i in range(total):
+        for i in range(bounded):
             self._reveal_time[i] = stamp
 
     # ----- per-glyph rendering helpers (A5/A6) ---------------------------
@@ -444,6 +961,14 @@ class RichText(Widget):
                             ) -> tuple[int, int, int]:
         """Return (dx, dy, alpha) for an animated glyph (already revealed)."""
         eff = run.style.effect
+        if (
+            eff
+            and eff != "none"
+            and not self.motion.allows(MotionKind.CONTINUOUS)
+        ):
+            # Preserve the authored text and reveal cursor, but settle every
+            # decorative glyph effect into a fully readable static frame.
+            return (0, 0, 255)
         t = self._clock
         dx = dy = 0
         alpha = 255
@@ -475,7 +1000,18 @@ class RichText(Widget):
         remaining = self.reveal_chars if self.reveal_chars is not None else None
         default_h = self.fonts.get(self.base_size).get_linesize()
         y = self.rect.y
+        start_row, end_row = (
+            self._row_window
+            if self._row_window is not None
+            else (0, len(self._rows))
+        )
         for ri, row in enumerate(self._rows):
+            if ri < start_row:
+                if remaining is not None:
+                    remaining -= self._row_reveal_units(ri)
+                continue
+            if ri >= end_row:
+                break
             if remaining is not None and remaining <= 0:
                 break
             band = self._row_bands[ri] if ri < len(self._row_bands) else 0

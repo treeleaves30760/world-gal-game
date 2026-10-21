@@ -5,7 +5,7 @@ the UI only greys it out: the player cannot tell *why* it is locked or how close
 they are. This module turns the structured condition data the affordances /
 dialogue path already computes into one concise Chinese phrase — e.g.::
 
-    affection_gte target=qingyi value=40  ->  "需要 與林青衣的好感度 ≥ 40"
+    affection_gte target=ruoxue value=40  ->  "需要 與白若雪的好感度 ≥ 40"
     has_item      target=charm  value=2   ->  "需要 護身符 ×2"
     not_flag      target=angered_her      ->  "需要 尚未發生：angered_her"
 
@@ -76,7 +76,7 @@ def _resource_name(state: "GameState | None", rid: str) -> str:
 def _flag_label(state: "GameState | None", fid: str) -> str | None:
     """A human label for a flag id, from the variable manifest's description.
 
-    A raw flag id (``qingyi_copyroom_done``) is meaningless to a player, so the
+    A raw flag id (``ruoxue_copyroom_done``) is meaningless to a player, so the
     lock caption must never leak it. When the pack's ``variables.yaml`` declares
     the flag with a ``description`` (e.g. "影印室劇情已完成"), that reads as the
     label. Returns ``None`` when no description is available — the caller then
@@ -165,7 +165,7 @@ def _describe_condition_inner(cond: "Condition", state: "GameState | None",
     # Flags are internal ids, meaningless to a player. Prefer a human label
     # from the variable manifest's description; otherwise phrase generically
     # WITHOUT ever echoing the raw id (the old behaviour leaked e.g.
-    # "qingyi_copyroom_done").
+    # "ruoxue_copyroom_done").
     if kind == "flag":
         # A bare flag-truthy gate. When negated (it sits in forbids) it means
         # "this must not have happened yet".
@@ -285,7 +285,7 @@ def summarize_lock(requires, forbids, state: "GameState | None" = None,
     Prefers the *meaningful* gates: when a choice fails both a generic
     label-less flag gate and a richer one (affection / chapter / time / item /
     resource), the bare flag reason is dropped so the caption reads e.g. "需要
-    與林青衣的好感度 ≥ 40" rather than a vague "先完成某些前置劇情". A flag with
+    與白若雪的好感度 ≥ 40" rather than a vague "先完成某些前置劇情". A flag with
     a manifest description still reads (it is not label-less) and is kept.
 
     Joins up to ``max_reasons`` reasons with a comma; if more gates fail it

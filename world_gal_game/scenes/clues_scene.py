@@ -10,6 +10,7 @@ from __future__ import annotations
 import pygame
 
 from .base import Scene, SceneContext
+from ..ui.input_bindings import BindingProfile, InputAction
 from ..ui.widgets import Button, Panel, ClueLog
 
 
@@ -32,10 +33,14 @@ class CluesScene(Scene):
         self.close_btn = Button(
             pygame.Rect(self._panel_rect.right - 120 - 16,
                         self._panel_rect.y + 16, 120, 36),
-            self.ctx.localization.t("close", "關閉 (Esc)"),
+            (
+                f"{self.ctx.localization.t('close', '關閉')} "
+                f"({BindingProfile(getattr(self.ctx.config, 'input_bindings', {})).primary_display(InputAction.BACK)})"
+            ),
             fonts=self.ctx.fonts, theme=self.ctx.theme,
             font_size=15, style="ghost",
             on_click=(lambda: self.on_close() if self.on_close else None),
+            motion=self.ctx.motion,
         )
         # Mark-all-read sweep so the badge dot clears as soon as the
         # player opens the journal at all. Per-entry mark_read still
@@ -55,12 +60,10 @@ class CluesScene(Scene):
         if inp.cancel and self.on_close:
             self.on_close()
             return
-        # Hotkey J also closes the panel (toggle behaviour).
-        for e in inp.events:
-            if e.type == pygame.KEYDOWN and e.key == pygame.K_j \
-                    and self.on_close:
-                self.on_close()
-                return
+        # The same semantic action that opens the journal closes it again.
+        if inp.pressed(InputAction.OPEN_CLUES) and self.on_close:
+            self.on_close()
+            return
         self.close_btn.update(dt, inp)
         self._clue_log.update(dt, inp)
 

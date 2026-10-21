@@ -142,6 +142,37 @@ def test_status_hud_resolves_chapter_title(driver):
     assert state.time.label()
 
 
+def test_status_hud_supports_authored_date_without_mutating_world_clock(driver):
+    """Flash-forwards can label narrative time while the simulation clock and
+    its save-compatible state remain unchanged."""
+    from world_gal_game.core.story_graph import Scene
+    from world_gal_game.scenes.dialogue_scene import DialogueScene
+
+    state = driver.app.ctx.state
+    live_clock = state.time.model_dump()
+    state.story.add_scene(Scene(
+        id="authored_epilogue",
+        tags=["hud-date:畢業後約一年 · 初夏午後"],
+    ))
+    state.story.start("authored_epilogue")
+    scene = DialogueScene(driver.app.ctx)
+
+    assert scene._status_date_label() == "畢業後約一年 · 初夏午後"
+    assert state.time.model_dump() == live_clock
+
+    state.story.add_scene(Scene(
+        id="timeless_memory",
+        tags=["hud-hide-date"],
+    ))
+    state.story.start("timeless_memory")
+    assert scene._status_date_label() is None
+    assert state.time.model_dump() == live_clock
+
+    state.story.add_scene(Scene(id="ordinary_scene"))
+    state.story.start("ordinary_scene")
+    assert scene._status_date_label() == state.time.label()
+
+
 def test_status_hud_toggle_default_on(driver):
     assert driver.app.config.show_status_hud is True
 

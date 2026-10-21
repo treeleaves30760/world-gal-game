@@ -13,7 +13,8 @@ The :class:`PluginContext` handed to hooks is built by ``content_loader``
 carries no save directory. Rather than touch the loader or the dialogue
 scene, ``GalGameApp.__init__`` parks a small bridge dict on
 ``state.meta["__autosave_config__"]`` holding the live config and the
-resolved save dir. The double-underscore prefix means :class:`SaveManager`
+resolved save dir, screen grabber, and dialogue-resume grabber. The
+double-underscore prefix means :class:`SaveManager`
 strips it from serialised saves, so it never bloats a save file. This hook
 reads that bridge; if it is absent (e.g. a bare headless load with no app),
 autosave is simply a no-op.
@@ -37,11 +38,15 @@ from world_gal_game.plugins import hook, HookEvent
 _log = logging.getLogger("world_gal_game.plugins.autosave")
 
 # Bridge key set by GalGameApp.__init__ — holds {"config": EngineConfig,
-# "save_dir": Path, "get_screen": Callable|None}. Private (``__``) so it is
-# stripped from saves.
+# "save_dir": Path, "get_screen": Callable|None,
+# "get_resume": Callable|None}. Private (``__``) so it is stripped from saves.
 BRIDGE_KEY = "__autosave_config__"
 # Private rotation cursor (also stripped from saves).
 _STATE_KEY = "__plugin:autosave__"
+# One coalesced write requested by a dialogue hook while its state/presentation
+# transaction is still open. DialogueScene flushes it through
+# DIALOGUE_PRESENTATION_READY.
+_DEFERRED_KEY = "__plugin:autosave:deferred__"
 
 
 def _cursor(state) -> dict:
@@ -105,6 +110,13 @@ def _write_autosave(state) -> None:
                 thumbnail = get_screen()
             except Exception:
                 thumbnail = None
+        resume_context = None
+        get_resume = bridge.get("get_resume")
+        if callable(get_resume):
+            try:
+                resume_context = get_resume()
+            except Exception:
+                resume_context = None
 
         # Let plugins patch the payload before write (mirrors save_scene).
         from world_gal_game.plugins import fire_event
@@ -118,15 +130,39 @@ def _write_autosave(state) -> None:
             summary=summary,
             thumbnail=thumbnail,
             pack_meta=state.meta.get("__pack_meta__", {}),
+            resume_context=resume_context,
         )
     except Exception as exc:  # never let an autosave failure crash the game
         _log.warning("autosave skipped: %s", exc)
+
+
+def _defer_during_dialogue_transaction(state) -> bool:
+    """Return True after coalescing a mid-presentation autosave request."""
+    bridge = state.meta.get(BRIDGE_KEY)
+    # Bare/headless tests have no live UI resume provider, so there is no later
+    # presentation-ready signal to wait for; keep their immediate behavior.
+    has_live_presentation = (
+        isinstance(bridge, dict) and callable(bridge.get("get_resume"))
+    )
+    try:
+        from world_gal_game.dialogue.dialogue_engine import (
+            DIALOGUE_TRANSACTION_KEY,
+        )
+        in_transaction = bool(state.meta.get(DIALOGUE_TRANSACTION_KEY))
+    except Exception:
+        in_transaction = False
+    if not (has_live_presentation and in_transaction):
+        return False
+    state.meta[_DEFERRED_KEY] = True
+    return True
 
 
 @hook(HookEvent.DIALOGUE_CHOICE_MADE,
       description="Write a rotating autosave after each dialogue choice.")
 def on_choice_made(ctx, scene_id=None, choice_id=None):
     if ctx.state is None:
+        return
+    if _defer_during_dialogue_transaction(ctx.state):
         return
     _write_autosave(ctx.state)
 
@@ -135,5 +171,19 @@ def on_choice_made(ctx, scene_id=None, choice_id=None):
       description="Write a rotating autosave after time advances.")
 def on_time_advance(ctx, phases=None, day=None, time_of_day=None):
     if ctx.state is None:
+        return
+    if _defer_during_dialogue_transaction(ctx.state):
+        return
+    _write_autosave(ctx.state)
+
+
+@hook(
+    HookEvent.DIALOGUE_PRESENTATION_READY,
+    description="Flush a dialogue autosave after state and UI commit together.",
+)
+def on_presentation_ready(ctx, presentation=None):
+    if ctx.state is None:
+        return
+    if not ctx.state.meta.pop(_DEFERRED_KEY, False):
         return
     _write_autosave(ctx.state)

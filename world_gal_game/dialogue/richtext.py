@@ -21,6 +21,7 @@ and :class:`SegmentStyle` (``w``/``s`` wait+speed control tokens, ``ruby``,
 """
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass, field, replace
 from typing import Any
@@ -44,6 +45,9 @@ _MAX_SIZE = 200
 
 # Default pause for a bare ``[w]`` (seconds).
 _DEFAULT_WAIT = 0.4
+# Persistence and runtime share this generous upper bound. Invalid authoring
+# degrades to the default pause at runtime and is rejected by lint/validation.
+MAX_INLINE_WAIT_SECONDS = 86_400.0
 
 # Known animated-effect names for ``[fx=...]``. Anything else degrades to
 # ``"none"`` (the static fast path), mirroring the unknown-tag philosophy.
@@ -242,12 +246,18 @@ def parse(markup: str, *, base_color: Color = (255, 255, 255),
                         if raw:
                             try:
                                 parsed = float(raw)
-                                if parsed > 0:
+                                if (
+                                    math.isfinite(parsed)
+                                    and 0 < parsed <= MAX_INLINE_WAIT_SECONDS
+                                ):
                                     dur = parsed
                             except ValueError:
                                 pass   # malformed -> default pause
                         # Multiple waits at the same point accumulate.
-                        waits[char_index] = waits.get(char_index, 0.0) + dur
+                        waits[char_index] = min(
+                            MAX_INLINE_WAIT_SECONDS,
+                            waits.get(char_index, 0.0) + dur,
+                        )
                     i = m.end()
                     continue
                 if closing:
@@ -308,8 +318,9 @@ def lint_markup(markup: str) -> list[str]:
       in :data:`RICHTEXT_TAGS` (skips the ``[[`` directive-escape case);
     - **unbalanced tags** — an open tag with no matching close, or a close
       with no matching open;
-    - **malformed attributes** — a ``[color=...]`` that doesn't parse to a
-      colour, or a ``[size=...]`` whose value isn't an integer.
+    - **malformed attributes** — invalid colour/size values, or a ``[w=...]``
+      duration that is non-finite, non-positive, individually/cumulatively over
+      :data:`MAX_INLINE_WAIT_SECONDS`.
 
     Each problem is one string. The validator pairs unknown-tag problems with
     a closest-match suggestion against :data:`RICHTEXT_TAGS`.
@@ -317,6 +328,8 @@ def lint_markup(markup: str) -> list[str]:
     issues: list[str] = []
     # Track open style tags for balance checking. ``w`` is self-contained.
     open_stack: list[str] = []
+    plain_index = 0
+    wait_totals: dict[int, float] = {}
 
     i = 0
     n = len(markup)
@@ -324,12 +337,14 @@ def lint_markup(markup: str) -> list[str]:
         ch = markup[i]
         # Backslash escape "\[" -> literal, skip both.
         if ch == "\\" and i + 1 < n and markup[i + 1] == "[":
+            plain_index += 1
             i += 2
             continue
         if ch == "[":
             # "[[" is an intentional directive escape / dialogue-op prefix —
             # never a rich-text tag, so don't lint it as a typo.
             if i + 1 < n and markup[i + 1] == "[":
+                plain_index += 2
                 i += 2
                 continue
             m = _LINT_TAG_RE.match(markup, i)
@@ -339,6 +354,7 @@ def lint_markup(markup: str) -> list[str]:
                 attr = m.group(3)
                 if name not in RICHTEXT_TAGS:
                     issues.append(f"未知標記 [{name}]。")
+                    plain_index += len(m.group(0))
                     i = m.end()
                     continue
                 # Known tag: attribute + balance checks.
@@ -355,6 +371,34 @@ def lint_markup(markup: str) -> list[str]:
                             except ValueError:
                                 issues.append(
                                     f"標記 [size={attr}] 的尺寸不是整數。")
+                    elif name == "w":
+                        duration = _DEFAULT_WAIT
+                        raw = (attr or "").strip()
+                        invalid = False
+                        if raw:
+                            try:
+                                parsed = float(raw)
+                                invalid = (
+                                    not math.isfinite(parsed)
+                                    or parsed <= 0
+                                    or parsed > MAX_INLINE_WAIT_SECONDS
+                                )
+                                if not invalid:
+                                    duration = parsed
+                            except ValueError:
+                                invalid = True
+                        if invalid:
+                            issues.append(
+                                "標記 [w] 的停頓秒數必須是有限正數，且不得超過 "
+                                f"{MAX_INLINE_WAIT_SECONDS:g}。"
+                            )
+                        total = wait_totals.get(plain_index, 0.0) + duration
+                        wait_totals[plain_index] = total
+                        if total > MAX_INLINE_WAIT_SECONDS:
+                            issues.append(
+                                "同一文字位置累積的 [w] 停頓不得超過 "
+                                f"{MAX_INLINE_WAIT_SECONDS:g} 秒。"
+                            )
                     if name not in _SELF_CONTAINED_TAGS:
                         open_stack.append(name)
                 else:
@@ -374,8 +418,10 @@ def lint_markup(markup: str) -> list[str]:
                 i = m.end()
                 continue
             # A "[" that isn't a tag at all — literal, ignore.
+            plain_index += 1
             i += 1
             continue
+        plain_index += 1
         i += 1
 
     # Any tags still open at end are unbalanced.

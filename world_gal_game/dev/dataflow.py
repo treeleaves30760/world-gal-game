@@ -39,6 +39,12 @@ from typing import Any, Iterable, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from .scene_transitions import (
+    field_value,
+    iter_branch_conditions,
+    iter_scene_transitions,
+)
+
 
 # ----------------------------------------------------------------------
 # Symbol -> kind tables
@@ -53,7 +59,9 @@ _FLAG_WRITE: frozenset[str] = frozenset(
 )
 _FLAG_READ: frozenset[str] = frozenset({"flag", "not_flag", "flag_eq"})
 
-_SCENE_WRITE: frozenset[str] = frozenset({"play_scene"})
+_SCENE_WRITE: frozenset[str] = frozenset(
+    {"play_scene", "play_scene_branch"}
+)
 _SCENE_READ: frozenset[str] = frozenset({"scene_played"})
 
 _ITEM_WRITE: frozenset[str] = frozenset({"give_item", "take_item", "use_item"})
@@ -195,6 +203,11 @@ class DataflowAnalyzer:
     def _flag_writes(kind: str) -> bool:
         """A kind that writes a flag (declared writers + any plugin "*flag*")."""
         return kind in _FLAG_WRITE or "flag" in kind
+
+    @staticmethod
+    def _flag_reads(kind: str) -> bool:
+        """A kind that reads a flag (declared readers + any plugin "*flag*")."""
+        return kind in _FLAG_READ or "flag" in kind
 
     # ------------------------------------------------------------------
     # Public API
@@ -344,15 +357,26 @@ class DataflowAnalyzer:
                 self._write_effect(
                     eff, line_site, flags, scenes, items, resources
                 )
-                dst = self._scene_target(eff)
-                if dst is not None:
+                self._read_branch_conditions(
+                    eff, line_site, flags, scenes, items, resources
+                )
+                for transition in iter_scene_transitions(eff):
+                    edge_requires = [
+                        *line_requires,
+                        *transition.requires,
+                    ]
+                    edge_forbids = list(transition.forbids)
                     edges.append(
                         Edge(
                             src=sid,
-                            dst=dst,
+                            dst=transition.target,
                             via="line",
-                            guard=self._guard_from_requires(line_requires),
-                            guard_logic=self._logic_from_requires(line_requires),
+                            guard=self._guard_from_choice(
+                                edge_requires, edge_forbids
+                            ),
+                            guard_logic=self._logic_from_choice(
+                                edge_requires, edge_forbids
+                            ),
                         )
                     )
 
@@ -362,16 +386,27 @@ class DataflowAnalyzer:
             self._write_effect(
                 eff, f"scene_end:{sid}", flags, scenes, items, resources
             )
-            dst = self._scene_target(eff)
-            if dst is not None:
-                scene_requires = getattr(scene, "requires", None) or []
+            self._read_branch_conditions(
+                eff, f"scene_end:{sid}", flags, scenes, items, resources
+            )
+            scene_requires = getattr(scene, "requires", None) or []
+            for transition in iter_scene_transitions(eff):
+                edge_requires = [
+                    *scene_requires,
+                    *transition.requires,
+                ]
+                edge_forbids = list(transition.forbids)
                 edges.append(
                     Edge(
                         src=sid,
-                        dst=dst,
+                        dst=transition.target,
                         via="on_end",
-                        guard=self._guard_from_requires(scene_requires),
-                        guard_logic=self._logic_from_requires(scene_requires),
+                        guard=self._guard_from_choice(
+                            edge_requires, edge_forbids
+                        ),
+                        guard_logic=self._logic_from_choice(
+                            edge_requires, edge_forbids
+                        ),
                     )
                 )
 
@@ -394,15 +429,29 @@ class DataflowAnalyzer:
                 self._write_effect(
                     eff, choice_site, flags, scenes, items, resources
                 )
-                dst = self._scene_target(eff)
-                if dst is not None:
+                self._read_branch_conditions(
+                    eff, choice_site, flags, scenes, items, resources
+                )
+                for transition in iter_scene_transitions(eff):
+                    edge_requires = [
+                        *requires,
+                        *transition.requires,
+                    ]
+                    edge_forbids = [
+                        *forbids,
+                        *transition.forbids,
+                    ]
                     edges.append(
                         Edge(
                             src=sid,
-                            dst=dst,
+                            dst=transition.target,
                             via="choice",
-                            guard=self._guard_from_choice(requires, forbids),
-                            guard_logic=self._logic_from_choice(requires, forbids),
+                            guard=self._guard_from_choice(
+                                edge_requires, edge_forbids
+                            ),
+                            guard_logic=self._logic_from_choice(
+                                edge_requires, edge_forbids
+                            ),
                         )
                     )
             next_scene = getattr(choice, "next_scene", None)
@@ -498,13 +547,35 @@ class DataflowAnalyzer:
         if self._flag_writes(kind) and target:
             self._add(flags, target, "write", site, kind)
         if kind in _SCENE_WRITE:
-            dst = self._scene_target(eff)
-            if dst:
-                self._add(scenes, dst, "write", site, kind)
+            for transition in iter_scene_transitions(eff):
+                self._add(
+                    scenes, transition.target, "write", site, kind
+                )
         if kind in _ITEM_WRITE and target:
             self._add(items, target, "write", site, kind)
         if kind in _RESOURCE_WRITE and target:
             self._add(resources, target, "write", site, kind)
+
+    def _read_branch_conditions(
+        self,
+        eff: Any,
+        site: str,
+        flags: dict[str, SymbolUsage],
+        scenes: dict[str, SymbolUsage],
+        items: dict[str, SymbolUsage],
+        resources: dict[str, SymbolUsage],
+    ) -> None:
+        """Record each ``play_scene_branch.value[*].when`` as a real read."""
+
+        for index, cond in iter_branch_conditions(eff):
+            self._read_condition(
+                cond,
+                f"{site}#branch{index}",
+                flags,
+                scenes,
+                items,
+                resources,
+            )
 
     def _read_condition(
         self,
@@ -515,11 +586,11 @@ class DataflowAnalyzer:
         items: dict[str, SymbolUsage] | None,
         resources: dict[str, SymbolUsage] | None,
     ) -> None:
-        kind = getattr(cond, "kind", "") or ""
-        target = getattr(cond, "target", "") or ""
+        kind = field_value(cond, "kind", "") or ""
+        target = field_value(cond, "target", "") or ""
         if not target:
             return
-        if flags is not None and kind in _FLAG_READ:
+        if flags is not None and self._flag_reads(kind):
             self._add(flags, target, "read", site, kind)
         if scenes is not None and kind in _SCENE_READ:
             self._add(scenes, target, "read", site, kind)
@@ -556,32 +627,21 @@ class DataflowAnalyzer:
     # Edge / guard construction
 
     @staticmethod
-    def _scene_target(eff: Any) -> str | None:
-        """Resolve the destination scene id of a ``play_scene`` effect."""
-        if (getattr(eff, "kind", "") or "") not in _SCENE_WRITE:
-            return None
-        target = getattr(eff, "target", "") or ""
-        if target:
-            return target
-        value = getattr(eff, "value", None)
-        return value if isinstance(value, str) and value else None
-
-    @staticmethod
     def _cond_dict(cond: Any, role_key: str) -> dict:
         """Render a gating condition as a ``{role_key: kind, target, value}``."""
         return {
-            role_key: getattr(cond, "kind", "") or "",
-            "target": getattr(cond, "target", "") or "",
-            "value": getattr(cond, "value", None),
+            role_key: field_value(cond, "kind", "") or "",
+            "target": field_value(cond, "target", "") or "",
+            "value": field_value(cond, "value"),
         }
 
     @staticmethod
     def _cond_entry(cond: Any) -> dict:
         """Render a condition role-free, as ``{kind, target, value}``."""
         return {
-            "kind": getattr(cond, "kind", "") or "",
-            "target": getattr(cond, "target", "") or "",
-            "value": getattr(cond, "value", None),
+            "kind": field_value(cond, "kind", "") or "",
+            "target": field_value(cond, "target", "") or "",
+            "value": field_value(cond, "value"),
         }
 
     @classmethod

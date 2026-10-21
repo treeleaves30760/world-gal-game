@@ -18,13 +18,42 @@ import pygame
 from .config import EngineConfig, resolve_asset, writable_root
 from .content_loader import load_pack
 from .core.game_state import GameState
+from .core.map_system import rebind_authored_map_catalog
+from .core.endings import rebind_authored_ending_catalog
+from .core.cg_gallery_spec import CGGalleryManifest
+from .core.music_room_spec import MusicRoomManifest
+from .core.media_authority import (
+    MediaAuthority,
+    build_media_authority,
+    rebind_authorized_media_progress,
+)
+from .core.story_graph import (
+    rebind_authored_audio_meta,
+    rebind_authored_dialogue_history_voices,
+    rebind_authored_story_catalog,
+)
+from .core.action_policy import action_availability
+from .core.guided_destinations import guided_story_should_auto_reopen
+from .core.travel import (
+    TravelPlan,
+    TravelResult,
+    TravelService,
+    graph_travel_enabled,
+    minimum_travel_cost,
+)
 from .core.save_manager import SaveManager
 from .core.localization import Localization
-from .core.story_graph import Effect
-from .core.time_system import bind_localization as bind_time_localization
-from .dialogue.dialogue_engine import DialogueEngine
-from .npc.llm_brain import default_brain, LLMBrain, EchoBrain
-from .npc.npc_base import NPCRegistry
+from .core.title_screen_spec import (
+    TitleScreenSpec,
+    parse_title_screen_spec,
+)
+from .core.ui_skin_spec import UISkinSpec, parse_ui_skin_spec
+from .dialogue.dialogue_engine import (
+    DialogueEngine,
+    rebind_dialogue_history_localization,
+    rebind_resume_choice_presentations,
+)
+from .npc.llm_brain import default_brain, LLMBrain
 from .scenes.base import SceneManager, SceneContext
 from .scenes.title import TitleScene
 from .scenes.exploration import ExplorationScene
@@ -37,6 +66,7 @@ from .scenes.event_log_scene import EventLogScene
 from .scenes.save_scene import SaveScene
 from .scenes.npc_action_scene import NPCActionScene
 from .scenes.settings_scene import SettingsScene
+from .scenes.controls_scene import ControlsScene
 from .scenes.achievements_scene import AchievementsScene
 from .scenes.inventory_scene import InventoryScene
 from .scenes.scrollback_scene import ScrollbackScene
@@ -55,8 +85,10 @@ from .scenes.chapter_card_scene import ChapterCardScene
 from .scenes.credits_scene import CreditsScene
 from .ui.assets import AssetManager
 from .ui.fonts import FontRegistry
-from .ui.theme import default_theme
-from .ui.input import InputState
+from .ui.input import InputRouter
+from .ui.input_bindings import InputAction
+from .ui.system_chrome import build_system_chrome
+from .ui.visual import VisualPolicy, VisualTheme
 from .ui.widgets.toast import Toast, ToastStack
 
 
@@ -113,7 +145,8 @@ class GalGameApp:
                 # Fine in CI / no-audio environments.
                 pass
             # Gamepad: open every connected controller so its JOY* events flow
-            # (InputState maps A→advance/confirm, B→cancel, D-pad→menu nav).
+            # (InputRouter maps A→advance/confirm, B→cancel, and D-pad/left
+            # analogue stick→menu navigation).
             # Steam Deck / Steam Input present as a virtual pad here.
             try:
                 pygame.joystick.init()
@@ -135,6 +168,11 @@ class GalGameApp:
         self._view_scale: float = 1.0
         self._view_offset: tuple[int, int] = (0, 0)
         self._view_size: tuple[int, int] = tuple(config.screen_size)
+        # Device input has cross-frame state: left-stick repeat timing and
+        # touch down/up contacts cannot be reconstructed from one event batch.
+        self._input_router = InputRouter(touch_mode=config.touch_mode)
+        # Retained for the compatibility helper ``_update_touch_gesture``;
+        # production touch classification lives in ``InputRouter``.
         self._touch_start: tuple[float, float] | None = None
         if not headless:
             display_flags = 0
@@ -154,6 +192,24 @@ class GalGameApp:
         if not content_root.exists():
             raise FileNotFoundError(f"Game pack not found: {content_root}")
         self.state, self.npcs, self.meta = load_pack(content_root)
+        # Saves retain map *progress*, never an obsolete copy of the pack's
+        # location catalogue. Keep an immutable-in-practice baseline to
+        # rebind current coordinates, exits, hooks, and presentation data on
+        # every load.
+        self._authored_map_catalog = self.state.map.model_copy(deep=True)
+        self._authored_ending_catalog = self.state.endings.model_copy(deep=True)
+        self._authored_story_catalog = self.state.story.model_copy(deep=True)
+        self._authored_media_authority = self._build_media_authority(
+            self.state,
+        )
+        (
+            self.state.cg_gallery,
+            self.state.music_room,
+        ) = rebind_authorized_media_progress(
+            self.state.cg_gallery,
+            self.state.music_room,
+            self._authored_media_authority,
+        )
         # Pin the pack identity on the config *before* any save_dir() call so
         # every save path (clear_data, autosave bridge, save scene) lands in this
         # pack's own namespace. Mirrors SaveManager's pack_id stamping
@@ -167,7 +223,27 @@ class GalGameApp:
         from .core.clear_data import ClearData
         self._clear_data_path = self.config.save_dir() / "clear_data.json"
         self.clear_data = ClearData.load(self._clear_data_path)
-        self.state.meta["__clear_data__"] = self.clear_data
+        # Ending definitions belong to the currently installed pack, not to a
+        # save file.  Keep their ids as a transient authority so loading an old
+        # save cannot cause clear data to resurrect an ending the pack removed.
+        self._pack_ending_ids = frozenset(self.state.endings.endings)
+        self.state.meta["__pack_ending_ids__"] = self._pack_ending_ids
+        self.state.meta["__pack_ending_catalog__"] = (
+            self._authored_ending_catalog
+        )
+        self.state.meta["__pack_map_catalog__"] = self._authored_map_catalog
+        self.state.meta["__pack_story_catalog__"] = (
+            self._authored_story_catalog
+        )
+        self.state.meta["__pack_media_authority__"] = (
+            self._authored_media_authority
+        )
+        self.clear_data.apply_to_state(
+            self.state,
+            registered_endings=self._pack_ending_ids,
+            authored_cg_ids=self._authored_media_authority.cg_ids,
+            authored_music_ids=self._authored_media_authority.music_ids,
+        )
         # Apply pack title/subtitle to config so the title screen reflects them.
         if "title" in self.meta:
             self.config.title = self.meta["title"]
@@ -175,6 +251,12 @@ class GalGameApp:
                 pygame.display.set_caption(self.meta["title"])
         if "subtitle" in self.meta:
             self.config.subtitle = self.meta["subtitle"]
+        self.title_screen_spec: TitleScreenSpec | None = (
+            parse_title_screen_spec(self.meta)
+            if "title_screen" in self.meta
+            else None
+        )
+        self.ui_skin_spec: UISkinSpec | None = parse_ui_skin_spec(self.meta)
         if "text_speed" in self.meta:
             self.config.text_speed = float(self.meta["text_speed"])
         # Pack-provided typewriter blip asset (played softly while text reveals).
@@ -226,23 +308,66 @@ class GalGameApp:
         ui_scale = max(1.0, self.config.screen_size[1] / 720.0)
         self.fonts = FontRegistry(self.config.font_candidates,
                                   bundled=bundled_font_path, scale=ui_scale)
-        self.assets = AssetManager(pack_root=pack_root)
+        # Retain the pre-locale sources as a compatibility fallback for packs
+        # that still use the legacy flat ``bundled_font`` declaration.
+        self._base_font_candidates = tuple(self.config.font_candidates)
+        self._legacy_bundled_font_path = bundled_font_path
+        self.assets = AssetManager(
+            pack_root=pack_root,
+            max_image_cache_bytes=max(0, self.config.max_image_cache_mb)
+            * 1024
+            * 1024,
+            max_sound_cache_bytes=max(0, self.config.max_sound_cache_mb)
+            * 1024
+            * 1024,
+        )
         # Push configured audio volumes into the asset manager so voice lines
         # play at the user's chosen level.
         self.assets._voice_volume = self.config.voice_volume
         # Theme + localization come from meta.yaml so packs can fully restyle.
         from .ui.theme import Theme as _Theme
-        self.theme = _Theme.from_meta(self.meta)
-        self.localization = Localization.from_meta(self.meta)
-        # Bind localization globally so existing TimeOfDay / AffectionTracker
-        # helpers honor pack overrides without explicit threading.
-        bind_time_localization(self.localization)
+        self.authored_theme = _Theme.from_meta(self.meta)
+        self.visual = VisualPolicy.from_config(self.config)
+        self.theme = VisualTheme(self.authored_theme, self.visual)
+        self.localization = Localization.from_meta(
+            self.meta,
+            pack_root=pack_root,
+            requested=self.config.preferred_locale(self.config.pack_id),
+        )
+        from .ui.presentation_text import PresentationTextPolicy
+        expansion = float(self.config.presentation_text_expansion)
+        self.presentation_text = (
+            PresentationTextPolicy()
+            if expansion == 1.0
+            else PresentationTextPolicy.pseudo_expand(expansion)
+        )
+        self._apply_locale_fonts()
+        if not headless:
+            pygame.display.set_caption(
+                self.localization.story("meta.title", self.config.title),
+            )
+        self.ui_chrome = build_system_chrome(
+            self.ui_skin_spec,
+            assets=self.assets,
+            fonts=self.fonts,
+            theme=self.theme,
+            visual=self.visual,
+        )
+        # Runtime labels belong to this state/application. Never bind a
+        # process-global locale: multiple embedded apps/headless sessions may
+        # coexist in one interpreter.
+        self.state.time.bind_localization(self.localization)
         self.state.affection.bind_localization(self.localization)
 
         # ----- dialogue engine -----
         # No live LLM brain is wired up in this release; lines marked
         # `llm_speaker: true` will fall back to their `text:` field.
-        self.dialogue = DialogueEngine(self.state, llm_provider=None)
+        self.dialogue = DialogueEngine(
+            self.state,
+            llm_provider=None,
+            speaker_id_resolver=self._dialogue_speaker_id,
+            localization=self.localization,
+        )
 
         # ----- autosave bridge -----
         # The bundled `autosave` plugin runs inside a PluginContext that
@@ -254,6 +379,7 @@ class GalGameApp:
             "config": self.config,
             "save_dir": self.config.save_dir(),
             "get_screen": (None if headless else (lambda: self.screen)),
+            "get_resume": self._capture_resume_context,
         }
 
         # ----- scene context -----
@@ -262,27 +388,22 @@ class GalGameApp:
             brain=self.brain, dialogue=self.dialogue, assets=self.assets,
             fonts=self.fonts, theme=self.theme,
             localization=self.localization,
+            presentation_text=self.presentation_text,
             screen_size=self.config.screen_size,
             meta=self.meta, pack=self.pack,
+            ui_chrome=self.ui_chrome,
+            visual=self.visual,
         )
-        self.manager = SceneManager()
-        self.manager.replace(TitleScene(self.ctx),
-                             title=self.config.title,
-                             subtitle=self.config.subtitle,
-                             version=self.meta.get("version"),
-                             bg=self.meta.get("title_bg"),
-                             bgm=self.meta.get("title_bgm"),
-                             on_continue=(self._continue_game
-                                          if self._has_saves() else None),
-                             on_new_game=self._start_new_game,
-                             on_load=self._open_load_menu,
-                             on_quit=self._quit_app,
-                             on_cg_gallery=self._open_cg_gallery,
-                             on_music_room=self._open_music_room,
-                             on_endings=self._open_endings,
-                             on_flowchart=self._open_flowchart_browse,
-                             on_credits=self._open_credits,
-                             on_settings=self._open_settings)
+        plugin_manager = self.state.meta.get("__plugin_manager__")
+        plugin_ctx = getattr(plugin_manager, "_ctx", None)
+        if plugin_ctx is not None:
+            plugin_ctx.config = self.config
+            plugin_ctx.motion = self.ctx.motion
+        self.manager = SceneManager(motion=self.ctx.motion)
+        self.manager.replace(
+            TitleScene(self.ctx),
+            **self._title_scene_kwargs(),
+        )
         self._running = True
         self._screenshot_pending: str | None = None
         self._inspect_pending = False
@@ -294,6 +415,7 @@ class GalGameApp:
             pygame.Rect(0, 0, self.config.screen_size[0],
                         self.config.screen_size[1]),
             fonts=self.fonts, theme=self.theme, assets=self.assets,
+            motion=self.ctx.motion,
         )
         # Pre-seed seen with anything already unlocked at startup so old
         # saves don't dump 9 toasts at once.
@@ -394,20 +516,202 @@ class GalGameApp:
 
     # ----------- scene navigation helpers -------------------------------
 
-    def _start_new_game(self) -> None:
-        # New Game+: seed the read-log (per line) from clear data so "skip
-        # already-read" immediately covers everything seen in any prior
-        # playthrough — the standard completion-loop convenience.
+    def _dialogue_speaker_id(self, speaker: str) -> str | None:
+        """Resolve authored/display speaker copy to a stable NPC id.
+
+        Dialogue history and per-character voice settings must not use a
+        localized display name as their persistence key. Unknown narrators,
+        player-name interpolation, and old packs safely return None.
+        """
+        npc = self.npcs.by_name(speaker)
+        return npc.id if npc is not None else None
+
+    def _build_media_authority(self, state: GameState) -> MediaAuthority:
+        """Build persistent gallery/jukebox authority from current pack data.
+
+        The story and optional CG manifest are declarative authority.  Initial
+        tracker values support packs/plugins that deliberately unlock an extra
+        on boot, while the physical BGM roster preserves Music Room's legacy
+        convention of discovering current-pack tracks under ``assets/bgm``.
+        No value from a save candidate participates in this snapshot.
+        """
+        manifest = state.meta.get("__cg_gallery_manifest__")
+        if not isinstance(manifest, CGGalleryManifest):
+            manifest = None
+        music_manifest = state.meta.get("__music_room_manifest__")
+        if not isinstance(music_manifest, MusicRoomManifest):
+            music_manifest = None
+
+        discovered_music: list[str] = []
+        bgm_root = self.config.pack_assets(self.pack) / "bgm"
         try:
-            for sid in set(self.clear_data.scenes_seen):
-                sc = self.state.story.scenes.get(sid)
-                if sc is None:
-                    continue
-                self.state.read_log.mark_scene_done(sid)
-                for i in range(len(getattr(sc, "lines", []) or [])):
-                    self.state.read_log.mark_line(sid, i)
-        except Exception:
+            discovered_music = [
+                f"assets/bgm/{entry.name}"
+                for entry in bgm_root.iterdir()
+                if entry.is_file()
+                and entry.suffix.lower() in {".ogg", ".mp3", ".wav"}
+            ]
+        except OSError:
             pass
+
+        return build_media_authority(
+            state.story,
+            cg_manifest=manifest,
+            music_manifest=music_manifest,
+            additional_cg_ids=tuple(state.cg_gallery.unlocked),
+            additional_music_ids=(
+                *state.music_room.unlocked,
+                *discovered_music,
+                self.meta.get("title_bgm", ""),
+            ),
+        )
+
+    def _refresh_media_authority(self) -> MediaAuthority:
+        """Fold explicitly registered runtime story scenes into authority."""
+        current = self._authored_media_authority
+        manifest = self.state.meta.get("__cg_gallery_manifest__")
+        if not isinstance(manifest, CGGalleryManifest):
+            manifest = None
+        music_manifest = self.state.meta.get("__music_room_manifest__")
+        if not isinstance(music_manifest, MusicRoomManifest):
+            music_manifest = None
+        self._authored_media_authority = build_media_authority(
+            self._authored_story_catalog,
+            cg_manifest=manifest,
+            music_manifest=music_manifest,
+            additional_cg_ids=current.cg_ids,
+            additional_music_ids=current.music_ids,
+        )
+        self.state.meta["__pack_media_authority__"] = (
+            self._authored_media_authority
+        )
+        return self._authored_media_authority
+
+    def _install_new_game_state(
+        self,
+        state: GameState,
+        npcs,
+        meta: dict,
+    ) -> None:
+        """Make a freshly loaded pack state the one live runtime state.
+
+        ``GameState`` is referenced by more than ``self.state``: the shared
+        scene context, dialogue engine, plugin context, autosave bridge, and
+        optional Steam bridge all retain a direct reference.  New Game must
+        rebind every one of them; mutating the old object in place would keep
+        playthrough data that is absent from the pack's authored initial
+        state.
+        """
+        old_dialogue = self.dialogue
+
+        self.state = state
+        self.npcs = npcs
+        self.meta = meta
+        self._authored_map_catalog = state.map.model_copy(deep=True)
+        self._authored_ending_catalog = state.endings.model_copy(deep=True)
+        self._authored_story_catalog = state.story.model_copy(deep=True)
+        self._authored_media_authority = self._build_media_authority(state)
+        (
+            state.cg_gallery,
+            state.music_room,
+        ) = rebind_authorized_media_progress(
+            state.cg_gallery,
+            state.music_room,
+            self._authored_media_authority,
+        )
+        self.title_screen_spec = (
+            parse_title_screen_spec(meta)
+            if "title_screen" in meta
+            else None
+        )
+        self.ui_skin_spec = parse_ui_skin_spec(meta)
+        self.ui_chrome = build_system_chrome(
+            self.ui_skin_spec,
+            assets=self.assets,
+            fonts=self.fonts,
+            theme=self.theme,
+            visual=self.visual,
+        )
+
+        # Cross-playthrough data is deliberately the only gameplay progress
+        # carried into a new run. It powers NG+ conditions and seeds the live
+        # read/completion trackers, but remains outside normal save-state
+        # persistence.
+        self._pack_ending_ids = frozenset(state.endings.endings)
+        state.meta["__pack_ending_ids__"] = self._pack_ending_ids
+        state.meta["__pack_ending_catalog__"] = (
+            self._authored_ending_catalog
+        )
+        state.meta["__pack_map_catalog__"] = self._authored_map_catalog
+        state.meta["__pack_story_catalog__"] = self._authored_story_catalog
+        state.meta["__pack_media_authority__"] = (
+            self._authored_media_authority
+        )
+        self.clear_data.apply_to_state(
+            state,
+            registered_endings=self._pack_ending_ids,
+            authored_cg_ids=self._authored_media_authority.cg_ids,
+            authored_music_ids=self._authored_media_authority.music_ids,
+        )
+        state.time.bind_localization(self.localization)
+        state.affection.bind_localization(self.localization)
+        if self.config.seed is not None:
+            state.meta["__seed__"] = self.config.seed
+
+        self.dialogue = DialogueEngine(
+            state,
+            llm_provider=getattr(old_dialogue, "llm_provider", None),
+            speaker_id_resolver=self._dialogue_speaker_id,
+            localization=self.localization,
+        )
+        state.meta["__autosave_config__"] = {
+            "config": self.config,
+            "save_dir": self.config.save_dir(),
+            "get_screen": (None if self.headless else (lambda: self.screen)),
+            "get_resume": self._capture_resume_context,
+        }
+        if self._steam is not None:
+            from .integrations.steam_plugin import STEAM_BRIDGE_META_KEY
+            state.meta[STEAM_BRIDGE_META_KEY] = self._steam
+
+        # ``load_pack`` creates a new manager/context pair.  Its context
+        # already points at ``state``; add the application service that is not
+        # available to the content loader and explicitly refresh all fields so
+        # hooks cannot retain the previous playthrough.
+        plugin_manager = state.meta.get("__plugin_manager__")
+        plugin_ctx = getattr(plugin_manager, "_ctx", None)
+        if plugin_ctx is not None:
+            plugin_ctx.state = state
+            plugin_ctx.meta = meta
+            plugin_ctx.pack_root = self.config.pack_root(self.pack)
+            plugin_ctx.manager = plugin_manager
+            plugin_ctx.config = self.config
+            plugin_ctx.motion = self.ctx.motion
+
+        # Every live and subsequently-created scene shares this object.
+        self.ctx.state = state
+        self.ctx.npcs = npcs
+        self.ctx.dialogue = self.dialogue
+        self.ctx.meta = meta
+        self.ctx.ui_chrome = self.ui_chrome
+        # Notifications describe mutations in one specific playthrough.
+        # Carrying an in-flight toast across Return to Title -> New Game would
+        # visually attribute the previous run's reward/error to the fresh run.
+        if hasattr(self, "toast_stack"):
+            self.toast_stack.toasts.clear()
+
+    def _start_new_game(self) -> None:
+        # The title writes the chosen protagonist name onto the current state
+        # immediately before invoking this callback.  Capture that one piece
+        # of title input, then rebuild the rest from authored pack data so a
+        # return-to-title -> New Game cannot leak flags, time, inventory,
+        # affection, route, story cursors, or plugin state from the old run.
+        player_name = self.state.player.name
+        content_root = self.config.pack_content(self.pack)
+        new_state, new_npcs, new_meta = load_pack(content_root)
+        new_state.player.name = player_name
+        self._install_new_game_state(new_state, new_npcs, new_meta)
+
         # Optional intro scene if defined in meta.
         self.manager.replace(ExplorationScene(self.ctx),
                              **self._exploration_callbacks())
@@ -452,7 +756,30 @@ class GalGameApp:
             on_start_scene=self._start_dialogue,
             on_move_to=self._move_to,
             on_advance_time=self._advance_time,
+            get_advance_time_availability=self._advance_time_availability,
+            get_map_availability=self._map_availability,
         )
+
+    def _advance_time_availability(self) -> tuple[bool, str | None]:
+        """Return the pack-authored availability of the free-wait action.
+
+        Packs can stage an opening or other directed sequence without hiding
+        the clock mechanic by declaring a flag gate in ``content/meta.yaml``::
+
+            exploration_guidance:
+              advance_time:
+                requires_flags: [orientation_done]
+                locked_reason: "先完成目前的目標。"
+
+        This is deliberately generic: core knows only flags and a message,
+        never a pack's characters or story.  Missing/malformed optional
+        metadata keeps the historical allow-by-default behaviour.
+        """
+        return action_availability(self.meta, self.state, "advance_time")
+
+    def _map_availability(self) -> tuple[bool, str | None]:
+        """Return one policy for the CTA, M shortcut, menu, and open guard."""
+        return action_availability(self.meta, self.state, "map")
 
     def _open_menu(self) -> None:
         """Open the consolidated in-game menu overlay."""
@@ -485,9 +812,13 @@ class GalGameApp:
             on_credits=from_menu(self._open_credits),
             on_save=from_menu(self._open_save_menu),
             on_load=from_menu(self._open_load_menu),
-            on_settings=from_menu(self._open_settings),
+            # Settings is a subordinate System surface.  Keep MenuScene below
+            # it so Back returns to the same category/focus instead of dropping
+            # the player straight into gameplay.
+            on_settings=self._open_settings,
             on_quit_to_title=from_menu(self._quit_to_title),
             on_quit_app=self._quit_app,
+            get_map_availability=self._map_availability,
         )
 
     def _open_quest_log(self) -> None:
@@ -499,8 +830,89 @@ class GalGameApp:
                           on_close=self.manager.pop)
 
     def _open_settings(self) -> None:
-        self.manager.push(SettingsScene(self.ctx),
-                          on_close=self.manager.pop)
+        stack = self.manager.stack()
+        locale_change_allowed = bool(
+            stack and isinstance(stack[0], TitleScene)
+        )
+        self.manager.push(
+            SettingsScene(self.ctx),
+            on_close=self.manager.pop,
+            on_controls=self._open_controls,
+            on_fullscreen_change=self._apply_fullscreen_setting,
+            on_locale_change=self._change_locale_from_settings,
+            locale_change_allowed=locale_change_allowed,
+        )
+
+    def _apply_fullscreen_setting(self, enabled: bool) -> None:
+        """Apply Settings' persisted fullscreen authority to the live window."""
+        if self.display is None:
+            return
+        flags = pygame.FULLSCREEN if enabled else pygame.RESIZABLE
+        self.display = pygame.display.set_mode(
+            self.config.screen_size,
+            flags,
+            vsync=1 if self.config.vsync else 0,
+        )
+        self._compute_view()
+
+    def _apply_locale_fonts(self) -> None:
+        """Rebind the shared font registry to the effective locale sources."""
+        sources = self.localization.font_sources
+        locale_font_declared = bool(sources.bundled or sources.candidates)
+        candidates = (
+            tuple(sources.candidates) or self._base_font_candidates
+        )
+        bundled = (
+            None if locale_font_declared else self._legacy_bundled_font_path
+        )
+        if sources.bundled:
+            pack_root = self.config.pack_root(self.pack).resolve()
+            candidate = (pack_root / sources.bundled).resolve()
+            try:
+                contained = candidate.is_relative_to(pack_root)
+            except AttributeError:  # pragma: no cover - Python < 3.9 embedder
+                contained = pack_root == candidate or pack_root in candidate.parents
+            if contained and candidate.is_file():
+                bundled = candidate
+        self.fonts.reconfigure(candidates, bundled=bundled)
+
+    def _change_locale_from_settings(self, locale_id: str) -> str:
+        """Apply a presentation-only locale switch at the safe title boundary."""
+        stack = self.manager.stack()
+        if not stack or not isinstance(stack[0], TitleScene):
+            return self.localization.effective
+
+        previous = self.localization.effective
+        effective = self.localization.activate(locale_id)
+        if (
+            not self.localization.requested
+            or effective != self.localization.requested
+        ):
+            self.localization.activate(previous)
+            return previous
+
+        self.config.set_preferred_locale(effective, self.config.pack_id)
+        self.config.save_to_disk()
+        self._apply_locale_fonts()
+        self.state.time.bind_localization(self.localization)
+        self.state.affection.bind_localization(self.localization)
+
+        title = stack[0]
+        kwargs = self._title_scene_kwargs()
+        title.refresh_localized_copy(
+            title=str(kwargs["title"]),
+            subtitle=str(kwargs["subtitle"]),
+            presentation=kwargs["presentation"],
+        )
+        if pygame.display.get_init():
+            pygame.display.set_caption(str(kwargs["title"]))
+        return effective
+
+    def _open_controls(self) -> None:
+        self.manager.push(
+            ControlsScene(self.ctx),
+            on_close=self.manager.pop,
+        )
 
     def _open_achievements(self) -> None:
         self.manager.push(AchievementsScene(self.ctx),
@@ -527,11 +939,20 @@ class GalGameApp:
                           on_close=self.manager.pop)
 
     def _open_flowchart(self) -> None:
-        """Open the chapter flowchart (チャート). Clicking a read chapter closes
-        the chart and jumps to (replays) that scene."""
+        """Open the chapter chart with read-only replay for completed scenes.
+
+        A chart card is historical navigation, not a live branch jump. Keep
+        the chart below a one-shot :class:`SceneReplayScene` so every authored
+        effect runs only in its isolated sandbox; completion or Back returns to
+        the same chart without changing the active playthrough.
+        """
         def jump(scene_id: str) -> None:
-            self.manager.pop()           # close the flowchart overlay
-            self._start_dialogue(scene_id)
+            self.manager.push(
+                SceneReplayScene(self.ctx),
+                on_close=self.manager.pop,
+                initial_scene_id=scene_id,
+                close_after_replay=True,
+            )
         self.manager.push(FlowchartScene(self.ctx),
                           on_close=self.manager.pop, on_jump=jump)
 
@@ -540,8 +961,9 @@ class GalGameApp:
 
         There is no live scene to jump into from the title, so ``on_jump`` is
         None — the chart reads as a chapter overview; clicking a chapter is
-        inert (FlowchartScene guards the jump on ``on_jump``). The pause-menu
-        entry (`_open_flowchart`) keeps its live jump-to-replay behaviour.
+        inert (FlowchartScene guards the replay on ``on_jump``). The pause-menu
+        entry (``_open_flowchart``) opens the same safe replay sandbox used by
+        the scene-replay gallery.
         """
         self.manager.push(FlowchartScene(self.ctx),
                           on_close=self.manager.pop, on_jump=None)
@@ -580,49 +1002,144 @@ class GalGameApp:
 
     def _record_clear_data(self) -> None:
         """Merge the current playthrough's progress into the persisted clear
-        data (New Game+). Called when returning to the title — a natural
-        end-of-run moment."""
+        data (New Game+).
+
+        Saving even when the in-memory union is unchanged makes shutdown
+        self-healing: a missing file or a prior transient write failure gets
+        another atomic write attempt at every normal exit.
+        """
         try:
-            if self.clear_data.record_from_state(self.state):
-                self.clear_data.save(self._clear_data_path)
+            self._refresh_media_authority()
+            self.clear_data.record_from_state(
+                self.state,
+                authored_cg_ids=self._authored_media_authority.cg_ids,
+                authored_music_ids=self._authored_media_authority.music_ids,
+            )
+            self.clear_data.save(self._clear_data_path)
         except Exception:
             pass
 
+    def _title_scene_kwargs(self) -> dict[str, object]:
+        """Return the single authoritative title-screen wiring.
+
+        Startup and Return to Title must expose the same pack-authored
+        presentation, callbacks, BGM and save-aware Continue entry.  Keeping
+        this in one place prevents a new title option from working only on one
+        of those two paths.
+        """
+        presentation = getattr(
+            self,
+            "title_screen_spec",
+            None,
+        )
+        if presentation is not None:
+            presentation = presentation.model_copy(update={
+                "tagline": self.presentation_text.apply(
+                    self.localization.story(
+                        "meta.title_screen.tagline",
+                        presentation.tagline,
+                    ),
+                ),
+                "footer_text": self.presentation_text.apply(
+                    self.localization.story(
+                        "meta.title_screen.footer_text",
+                        presentation.footer_text,
+                    ),
+                ),
+            })
+        return {
+            "title": self.presentation_text.apply(
+                self.localization.story("meta.title", self.config.title),
+            ),
+            "subtitle": self.presentation_text.apply(
+                self.localization.story(
+                    "meta.subtitle",
+                    self.config.subtitle,
+                ),
+            ),
+            "version": self.meta.get("version"),
+            "bg": self.meta.get("title_bg"),
+            "bgm": self.meta.get("title_bgm"),
+            "presentation": presentation,
+            "on_continue": (
+                self._continue_game if self._has_saves() else None
+            ),
+            "on_new_game": self._start_new_game,
+            "on_load": self._open_load_menu,
+            "on_quit": self._quit_app,
+            "on_cg_gallery": self._open_cg_gallery,
+            "on_music_room": self._open_music_room,
+            "on_endings": self._open_endings,
+            "on_flowchart": self._open_flowchart_browse,
+            "on_scene_replay": self._open_scene_replay,
+            "on_credits": self._open_credits,
+            "on_settings": self._open_settings,
+        }
+
     def _quit_to_title(self) -> None:
         self._record_clear_data()
-        self.manager.clear_to(TitleScene(self.ctx),
-                              title=self.config.title,
-                              subtitle=self.config.subtitle,
-                              version=self.meta.get("version"),
-                              bg=self.meta.get("title_bg"),
-                              bgm=self.meta.get("title_bgm"),
-                              on_continue=(self._continue_game
-                                           if self._has_saves() else None),
-                              on_new_game=self._start_new_game,
-                              on_load=self._open_load_menu,
-                              on_quit=self._quit_app,
-                              on_cg_gallery=self._open_cg_gallery,
-                              on_music_room=self._open_music_room,
-                              on_endings=self._open_endings,
-                              on_flowchart=self._open_flowchart_browse,
-                              on_credits=self._open_credits,
-                              on_settings=self._open_settings)
+        self.manager.clear_to(
+            TitleScene(self.ctx),
+            **self._title_scene_kwargs(),
+        )
 
     def _open_map(self) -> None:
-        # The card-based destination picker is the primary travel surface.
-        # The node-graph map is reachable from it as a "世界地圖" overview.
-        self.manager.push(DestinationPickerScene(self.ctx),
-                          on_close=self.manager.pop,
-                          on_move_to=self._move_from_map,
-                          on_world_map=self._open_world_map)
+        # The authored spatial overview is the primary travel surface. A node
+        # selection opens the existing detail/confirmation sheet; this screen
+        # itself never mutates location or time.
+        if not self._map_transition_allowed():
+            return
+        self.manager.push(
+            MapScene(self.ctx),
+            on_close=self.manager.pop,
+            on_move_to=self._preview_from_world_map,
+        )
+
+    def _map_transition_allowed(self) -> bool:
+        """Guard every app-level route into the authored travel surface."""
+        available, reason = self._map_availability()
+        if not available:
+            queue = self.state.meta.setdefault("__pending_toasts__", [])
+            queue.append((
+                "notice",
+                self.localization.t("map", "地圖"),
+                reason or "先完成目前的目標。",
+            ))
+            return False
+        return True
 
     def _open_world_map(self) -> None:
-        # Swap the picker for the node graph at the same overlay level, so
-        # closing the map returns straight to exploration (not back to the
-        # picker) and a move pops exactly one overlay before travelling.
-        self.manager.replace(MapScene(self.ctx),
-                             on_close=self.manager.pop,
-                             on_move_to=self._move_from_map)
+        # When the detail sheet sits above a live MapScene, simply reveal that
+        # same map so its story/general toggle and focus remain intact. Keep a
+        # replace fallback for callers that opened a standalone picker.
+        if not self._map_transition_allowed():
+            return
+        stack = self.manager.stack()
+        if len(stack) >= 2 and isinstance(stack[-2], MapScene):
+            self.manager.pop()
+            return
+        kwargs = {
+            "on_close": self.manager.pop,
+            "on_move_to": self._preview_from_world_map,
+        }
+        if isinstance(self.manager.current, DestinationPickerScene):
+            self.manager.replace(MapScene(self.ctx), **kwargs)
+        else:
+            self.manager.push(MapScene(self.ctx), **kwargs)
+
+    def _preview_from_world_map(self, loc_id: str) -> None:
+        if not self._map_transition_allowed():
+            return
+        self.manager.push(
+            DestinationPickerScene(self.ctx),
+            on_close=self.manager.pop,
+            on_move_to=self._move_from_map,
+            on_travel=self._travel_from_map_plan,
+            on_wait=self._advance_time,
+            on_world_map=self._open_world_map,
+            initial_destination=loc_id,
+            detail_only=True,
+        )
 
     def _open_affection(self) -> None:
         self.manager.push(AffectionScene(self.ctx),
@@ -637,7 +1154,8 @@ class GalGameApp:
         # each save (320x180, stored as a sibling PNG by SaveManager).
         self.manager.push(SaveScene(self.ctx),
                           mode="save", on_close=self.manager.pop,
-                          get_screen_surface=lambda: self.screen)
+                          get_screen_surface=lambda: self.screen,
+                          get_resume_context=self._capture_resume_context)
 
     def _open_load_menu(self) -> None:
         # From title or in-game both go to load mode.
@@ -647,13 +1165,77 @@ class GalGameApp:
     def _after_load_pop(self) -> None:
         """Called when the load overlay self-closes after loading.
 
-        Replace the title with exploration (if a save was actually loaded
-        — the GameState now has a current location).
+        Rebuild the saved dialogue presentation when present; legacy saves
+        without that envelope use the exploration fallback.
         """
-        self.manager.pop()
-        if self.state.map.current_location_id:
-            self.manager.replace(ExplorationScene(self.ctx),
-                                 **self._exploration_callbacks())
+        resume = self.state.meta.pop("__loaded_resume__", None)
+        self._restore_loaded_view(resume)
+
+    def _capture_resume_context(self) -> dict | None:
+        """Return the top-most live dialogue scene's save presentation."""
+        for scene in reversed(self.manager.stack()):
+            if isinstance(scene, DialogueScene):
+                try:
+                    return scene.export_resume_context()
+                except Exception:
+                    return None
+        return None
+
+    @staticmethod
+    def _resume_matches_state(
+        resume: object,
+        state: GameState,
+        *,
+        authored_story=None,
+        authored_npcs=None,
+        authored_map=None,
+        localization=None,
+    ) -> bool:
+        """Validate untrusted presentation metadata against ``state``."""
+        from .dialogue.dialogue_engine import resume_matches_state
+
+        return resume_matches_state(
+            resume,
+            state,
+            authored_story=authored_story,
+            authored_npcs=authored_npcs,
+            authored_map=authored_map,
+            localization=localization,
+        )
+
+    def _resume_matches_loaded_state(self, resume: object) -> bool:
+        """Validate a resume envelope before adding a DialogueScene."""
+        return self._resume_matches_state(
+            resume,
+            self.state,
+            authored_story=self._authored_story_catalog,
+            authored_npcs=self.npcs,
+            authored_map=self._authored_map_catalog,
+            localization=self.localization,
+        )
+
+    def _restore_loaded_view(self, resume: object) -> bool:
+        """Replace all stale scenes with the loaded exploration/dialogue view."""
+        can_resume = self._resume_matches_loaded_state(resume)
+
+        # Exploration is the stable base even before a pack assigns its first
+        # location (new-game already supports that state). Keeping it under a
+        # resumed dialogue prevents the normal on_done pop from emptying the
+        # scene stack.
+        self.manager.clear_to(
+            ExplorationScene(self.ctx),
+            transition=False,
+            **self._exploration_callbacks(),
+        )
+        if can_resume:
+            dialogue_scene = DialogueScene(self.ctx)
+            self.manager.push(
+                dialogue_scene,
+                scene_id=self.state.story.current_scene,
+                resume_context=resume,
+                **self._dialogue_enter_callbacks(dialogue_scene),
+            )
+        return True
 
     # ----------- quicksave / quickload ----------------------------------
     #
@@ -696,6 +1278,7 @@ class GalGameApp:
                 summary=summary,
                 thumbnail=thumbnail,
                 pack_meta=self.state.meta.get("__pack_meta__", {}),
+                resume_context=self._capture_resume_context(),
             )
         except Exception as exc:
             print(f"[quicksave] skipped: {exc}", file=sys.stderr)
@@ -708,6 +1291,7 @@ class GalGameApp:
         missing/invalid save is a no-op returning False.
         """
         try:
+            self._refresh_media_authority()
             sm = SaveManager(self.config.save_dir())
             from .core.save_manager import SaveError
             try:
@@ -730,11 +1314,88 @@ class GalGameApp:
             except (SavePackMismatchError, SavePackSchemaError) as exc:
                 print(f"[load] incompatible save: {exc}", file=sys.stderr)
                 return False
+            # Keep presentation metadata in the migration payload so a pack
+            # migration that renames a scene or shifts a cursor can update the
+            # resume envelope atomically with StoryGraph. It is removed only
+            # after migration because it is not a GameState field.
+            has_resume_context = "_resume" in data
+            resume_context = data.pop("_resume", None)
             for key in ("_saved_at", "_label", "_summary",
                         "_schema_version", "_thumbnail_path",
                         "_pack_id", "_pack_format_version", "_engine_version"):
                 data.pop(key, None)
             new_state = GameState(**data)
+            new_state.map = rebind_authored_map_catalog(
+                self._authored_map_catalog,
+                new_state.map,
+            )
+            new_state.endings = rebind_authored_ending_catalog(
+                self._authored_ending_catalog,
+                new_state.endings,
+            )
+            new_state.story = rebind_authored_story_catalog(
+                self._authored_story_catalog,
+                new_state.story,
+            )
+            (
+                new_state.cg_gallery,
+                new_state.music_room,
+            ) = rebind_authorized_media_progress(
+                new_state.cg_gallery,
+                new_state.music_room,
+                self._authored_media_authority,
+            )
+            new_state.meta = rebind_authored_audio_meta(
+                self._authored_story_catalog,
+                new_state.meta,
+                self._authored_map_catalog,
+                has_resume_context=has_resume_context,
+                resume_context=resume_context,
+            )
+            new_state.dialogue_history = (
+                rebind_authored_dialogue_history_voices(
+                    self._authored_story_catalog,
+                    new_state.dialogue_history,
+                )
+            )
+            new_state.dialogue_history = rebind_dialogue_history_localization(
+                self._authored_story_catalog,
+                new_state.dialogue_history,
+                new_state,
+                localization=self.localization,
+                speaker_id_resolver=self._dialogue_speaker_id,
+            )
+            from .dialogue.replay_engine import (
+                rebind_authored_replay_visual_fx,
+            )
+            new_state.read_log = rebind_authored_replay_visual_fx(
+                new_state.read_log,
+                self._authored_story_catalog,
+            )
+            if has_resume_context:
+                resume_context = rebind_resume_choice_presentations(
+                    resume_context,
+                    new_state,
+                    localization=self.localization,
+                    speaker_id_resolver=self._dialogue_speaker_id,
+                )
+            # Resume validation belongs to the candidate state, before either
+            # the live GameState or scene stack is touched. A malformed
+            # user-edited envelope must make quickload/Continue an atomic no-op,
+            # not leave a newly-loaded state underneath the old screen.
+            if has_resume_context and not self._resume_matches_state(
+                    resume_context,
+                    new_state,
+                    authored_story=self._authored_story_catalog,
+                    authored_npcs=self.npcs,
+                    authored_map=self._authored_map_catalog,
+                    localization=self.localization,
+            ):
+                print(
+                    "[load] invalid dialogue resume metadata",
+                    file=sys.stderr,
+                )
+                return False
             # Preserve transient `__`-bridges (plugin manager, npc registry,
             # autosave config, pack meta) that were filtered out at save.
             preserved = {
@@ -743,15 +1404,19 @@ class GalGameApp:
             }
             self.state.__dict__.update(new_state.__dict__)
             self.state.meta.update(preserved)
+            self.state.time.bind_localization(self.localization)
+            self.state.affection.bind_localization(self.localization)
+            self.clear_data.apply_to_state(
+                self.state,
+                registered_endings=self._pack_ending_ids,
+                authored_cg_ids=self._authored_media_authority.cg_ids,
+                authored_music_ids=self._authored_media_authority.music_ids,
+            )
             from .plugins import fire_event
             from .plugins.context import HookEvent
             fire_event(self.state, HookEvent.SAVE_AFTER_LOAD,
                        slot=slot, payload=data)
-            # Restore into exploration if the loaded state has a location
-            # (mirrors _after_load_pop). clear_to drops any open overlays.
-            if self.state.map.current_location_id:
-                self.manager.clear_to(ExplorationScene(self.ctx),
-                                      **self._exploration_callbacks())
+            self._restore_loaded_view(resume_context)
             return True
         except Exception as exc:
             print(f"[load] skipped: {exc}", file=sys.stderr)
@@ -789,26 +1454,120 @@ class GalGameApp:
                           on_open_shop=self._open_shop)
 
     def _start_dialogue(self, scene_id: str) -> None:
+        dialogue_scene = DialogueScene(self.ctx)
+        self.manager.push(
+            dialogue_scene,
+            scene_id=scene_id,
+            **self._dialogue_enter_callbacks(dialogue_scene),
+        )
+
+    def _dialogue_enter_callbacks(
+        self,
+        dialogue_scene: DialogueScene | None = None,
+    ) -> dict[str, Callable]:
+        """Callbacks shared by newly-started and save-resumed dialogue."""
         # Wrap on_done so that returning from any dialogue re-checks for
         # enter/auto hooks at the current location. Reason: a dialogue's
         # on_end / choice effects can advance time, set flags, or otherwise
-        # newly satisfy an ambient hook (e.g. setting met_qingyi while at
+        # newly satisfy an ambient hook (e.g. setting met_ruoxue while at
         # library) — the player should not have to leave and come back for
         # it to fire.
         def _after_dialogue() -> None:
+            completed_scene_id = (
+                dialogue_scene.scene_id
+                if dialogue_scene is not None
+                else None
+            )
             self.manager.pop()
-            self._check_ambient_hooks()
-        self.manager.push(DialogueScene(self.ctx),
-                          scene_id=scene_id, on_done=_after_dialogue,
-                          on_scrollback=self._open_scrollback,
-                          on_save=self._open_save_menu,
-                          on_load=self._open_load_menu,
-                          on_config=self._open_settings,
-                          on_menu=self._open_menu,
-                          on_qsave=self._quicksave,
-                          on_qload=self._quickload,
-                          on_movie=self._open_movie,
-                          on_chapter_card=self._open_chapter_card)
+            if self._should_auto_open_map(completed_scene_id):
+                self._open_map()
+                return
+            # A newly eligible same-location hook owns the next beat. Only a
+            # quiet dialogue boundary may hand control back to the guided map.
+            if self._check_ambient_hooks():
+                return
+            if self._should_auto_reopen_guided_map(dialogue_scene):
+                self._open_map()
+        return dict(
+            on_done=_after_dialogue,
+            on_resume_failed=self.manager.pop,
+            on_scrollback=self._open_scrollback,
+            on_save=self._open_save_menu,
+            on_load=self._open_load_menu,
+            on_config=self._open_settings,
+            on_menu=self._open_menu,
+            on_qsave=self._quicksave,
+            on_qload=self._quickload,
+            on_movie=self._open_movie,
+            on_chapter_card=self._open_chapter_card,
+        )
+
+    def _should_auto_open_map(self, completed_scene_id: str | None) -> bool:
+        """Whether a completed authored scene should reveal the travel map.
+
+        Packs opt in under ``travel.spatial_map.auto_open_after_scenes``.
+        Scene identity comes from the live :class:`DialogueScene`, so chained
+        ``play_scene`` transitions correctly report the final tutorial scene
+        instead of the scene that originally opened the dialogue overlay.
+        """
+        if not completed_scene_id:
+            return False
+        travel = self.meta.get("travel")
+        if not isinstance(travel, dict):
+            return False
+        spatial_map = travel.get("spatial_map")
+        if not isinstance(spatial_map, dict):
+            return False
+        configured = spatial_map.get("auto_open_after_scenes", ())
+        if isinstance(configured, str):
+            configured = (configured,)
+        if not isinstance(configured, (list, tuple, set)):
+            return False
+        return completed_scene_id in {
+            str(scene_id).strip()
+            for scene_id in configured
+            if str(scene_id).strip()
+        }
+
+    def _should_auto_reopen_guided_map(
+        self,
+        completed_dialogue: DialogueScene | None,
+    ) -> bool:
+        """Resolve the continuous guided-map hand-off at a safe UI boundary.
+
+        The ending dialogue is still the current scene while its queued pop is
+        being assembled. Any other active surface, or a modal visual effect
+        queued by the completed presentation, owns the hand-off instead. An
+        ambient hook is checked by the caller first and therefore never sits
+        underneath a newly opened map.
+        """
+        if not guided_story_should_auto_reopen(
+            self.meta,
+            self.state.events.flags,
+        ):
+            return False
+        if completed_dialogue is None:
+            return False
+        stack = self.manager.stack()
+        if not stack or stack[-1] is not completed_dialogue:
+            return False
+        if any(
+            not isinstance(scene, ExplorationScene)
+            for scene in stack[:-1]
+        ):
+            return False
+
+        # These directives push modal surfaces after ``on_done`` returns.
+        # Avoid placing MapScene underneath them merely because their pygame
+        # objects have not been constructed yet.
+        visual_fx = self.state.meta.get("__visual_fx__", ())
+        if isinstance(visual_fx, list) and any(
+            isinstance(directive, dict)
+            and directive.get("fx") in {"chapter_card", "play_movie"}
+            for directive in visual_fx
+        ):
+            return False
+        return True
 
     def _open_movie(self, directive: dict) -> None:
         """Push a full-screen movie overlay (from a play_movie effect).
@@ -864,52 +1623,137 @@ class GalGameApp:
                 return True
         return False
 
-    def _move_to(self, loc_id: str) -> None:
-        flags = self.state.events.flags
-        if not self.state.map.can_move_to(
-            loc_id, flags, time_of_day=self.state.time.time_of_day.value
-        ):
-            return
-        # Look up the exit (from current to target) BEFORE moving so we
-        # can read its travel_cost. Local moves cost 0 phases; long trips
-        # opt in via Exit.travel_cost.
-        cur = self.state.map.current
-        cost = 0
-        if cur is not None:
-            ex = next((e for e in cur.exits if e.target == loc_id), None)
-            if ex is not None:
-                cost = ex.travel_cost
-        loc = self.state.map.move_to(loc_id)
-        if cost > 0:
-            self.state.time.advance(cost)
-        self.state.events.record(kind="location",
-                                 title=f"前往 {loc.name}",
-                                 location=loc.id)
-        self._check_ambient_hooks()
+    def _move_to(
+        self,
+        loc_id: str,
+        *,
+        start_dialogue: bool = True,
+        allow_distant: bool = False,
+    ) -> TravelResult:
+        """Commit travel through the shared service.
+
+        Exploration keeps the historical one-exit contract.  The destination
+        picker opts into an atomic graph itinerary after the player confirms
+        it, so intermediate locations never become visited or fire hooks.
+        """
+        plan = TravelService.plan(
+            self.state,
+            loc_id,
+            allow_distant=allow_distant,
+            minimum_cost=(
+                minimum_travel_cost(self.meta) if allow_distant else 0
+            ),
+        )
+        if plan is None:
+            return TravelResult(
+                ok=False,
+                error=f"目前無法前往 {loc_id}",
+            )
+        result = TravelService.commit(self.state, plan)
+        if result.ok and result.scene_triggered and start_dialogue:
+            self._start_dialogue(result.scene_triggered)
+        return result
 
     def _move_from_map(self, loc_id: str) -> None:
-        # Pop the map overlay, then move.
-        self.manager.pop()
-        self._move_to(loc_id)
+        """Compatibility path for callers that only supply a location id."""
+        plan = TravelService.plan(
+            self.state,
+            loc_id,
+            allow_distant=(
+                graph_scope := graph_travel_enabled(
+                    self.meta, self.state.events.flags
+                )
+            ),
+            minimum_cost=(
+                minimum_travel_cost(self.meta) if graph_scope else 0
+            ),
+        )
+        result = (
+            TravelService.commit(self.state, plan)
+            if plan is not None
+            else TravelResult(ok=False, error=f"目前無法前往 {loc_id}")
+        )
+        self._finish_map_travel(result)
 
-    def _advance_time(self) -> None:
+    def _travel_from_map_plan(self, plan: TravelPlan) -> None:
+        """Commit the exact immutable itinerary the detail sheet displayed."""
+        self._finish_map_travel(TravelService.commit(self.state, plan))
+
+    def _finish_map_travel(self, result: TravelResult) -> None:
+        # Commit first. A stale/blocked quote keeps the detail sheet open so
+        # the player sees a reason instead of being silently dropped back into
+        # exploration.
+        if result.ok:
+            # Queue operations in this order: remove the confirmation sheet,
+            # remove its underlying map when present, then place arrival
+            # dialogue above exploration. SceneManager applies queued
+            # mutations in order at the end of the frame.
+            stack = self.manager.stack()
+            close_underlying_map = (
+                len(stack) >= 2 and isinstance(stack[-2], MapScene)
+            )
+            self.manager.pop()
+            if close_underlying_map:
+                self.manager.pop()
+            if result.scene_triggered:
+                self._start_dialogue(result.scene_triggered)
+            return
+        queue = self.state.meta.setdefault("__pending_toasts__", [])
+        queue.append((
+            "notice",
+            "無法前往",
+            result.error or "目的地狀態已改變，請重新確認。",
+        ))
+
+    def _advance_time(self) -> bool:
+        """Advance one phase and report whether deliberate waiting must stop.
+
+        Destination confirmations call this once per advertised phase.  A
+        blocked action or newly eligible ambient scene is an interruption;
+        returning ``True`` prevents a multi-phase wait from skipping it.
+        Ordinary one-click wait callers may ignore the return value.
+        """
+        available, reason = self._advance_time_availability()
+        if not available:
+            queue = self.state.meta.setdefault("__pending_toasts__", [])
+            queue.append((
+                "notice",
+                "現在還不能等待",
+                reason or "先完成目前的目標，再推進時間。",
+            ))
+            return True
         self.state.time.advance(1)
         self.state.events.record(kind="system",
                                  title=f"時間流動到 {self.state.time.label()}")
-        self._check_ambient_hooks()
+        return self._check_ambient_hooks()
 
     def _quit_app(self) -> None:
         self._running = False
+        # Menu callbacks and an OS QUIT event can be exercised without driving
+        # another frame (embedding tests and some web shells do exactly that),
+        # so persist at the request boundary as well as in the loop finalizer.
+        self._record_clear_data()
+
+    def _finalize_shutdown(self) -> None:
+        """Persist global progress and tear down integrations on every exit."""
+        try:
+            self._record_clear_data()
+        finally:
+            try:
+                self._shutdown_steam()
+            finally:
+                pygame.quit()
 
     # ----------- main loop ----------------------------------------------
 
     def run(self) -> None:
         """Synchronous main loop (desktop / PyInstaller)."""
-        while self._running:
-            dt = self.clock.tick(self.config.fps) / 1000.0
-            self._step(dt)
-        self._shutdown_steam()
-        pygame.quit()
+        try:
+            while self._running:
+                dt = self.clock.tick(self.config.fps) / 1000.0
+                self._step(dt)
+        finally:
+            self._finalize_shutdown()
 
     async def run_async(self) -> None:
         """Async main loop for the web (pygbag/Emscripten) target.
@@ -920,12 +1764,13 @@ class GalGameApp:
         unchanged.
         """
         import asyncio
-        while self._running:
-            dt = self.clock.tick(self.config.fps) / 1000.0
-            self._step(dt)
-            await asyncio.sleep(0)
-        self._shutdown_steam()
-        pygame.quit()
+        try:
+            while self._running:
+                dt = self.clock.tick(self.config.fps) / 1000.0
+                self._step(dt)
+                await asyncio.sleep(0)
+        finally:
+            self._finalize_shutdown()
 
     def _step(self, dt: float) -> None:
         """Run exactly one frame: input -> update -> draw -> present.
@@ -937,37 +1782,52 @@ class GalGameApp:
         dt = min(dt, 0.1)
         events = pygame.event.get()
         win_size = self.display.get_size() if self.display is not None else None
-        inp = InputState.collect(
-            events, transform=self._window_to_logical, window_size=win_size,
+        inp = self._input_router.collect(
+            events,
+            dt=dt,
+            transform=self._window_to_logical,
+            window_size=win_size,
+            touch_mode=self.config.touch_mode,
+            binding_overrides=getattr(
+                self.config,
+                "input_bindings",
+                {},
+            ),
         )
         if inp.quit_requested:
-            self._running = False
+            self._quit_app()
         # Window resize -> recompute the letterbox view transform.
         for e in events:
             if e.type == pygame.VIDEORESIZE and self.display is not None:
                 self._on_resize(e.w, e.h)
-        # Touch swipe (spans frames) -> populate inp.swipe.
-        self._update_touch_gesture(events, inp)
-        # F12 screenshot / F11 state dump / F6 quicksave / F9 quickload.
-        # F6 + F9 are chosen so they never collide with the dev F5
-        # hot-reload (handled below) or F11/F12 above.
-        for e in events:
-            if e.type == pygame.KEYDOWN and e.key == pygame.K_F12:
+        # A captured physical key belongs exclusively to ControlsScene.  In
+        # particular F6/F9/F12 must not quick-save, quick-load, or take a
+        # screenshot before the scene can assign the new binding.
+        capturing_binding = bool(
+            getattr(self.manager.current, "capturing", False)
+        )
+        if not capturing_binding:
+            # Player-configurable global actions. They are semantic so the old
+            # physical key stops firing as soon as Controls assigns a new one.
+            if inp.pressed(InputAction.SCREENSHOT):
                 self.take_screenshot()
-            elif e.type == pygame.KEYDOWN and e.key == pygame.K_F11:
-                self.dump_state(verbose=True)
-            elif e.type == pygame.KEYDOWN and e.key == pygame.K_F6:
+            elif inp.pressed(InputAction.QUICKSAVE):
                 self._quicksave()
-            elif e.type == pygame.KEYDOWN and e.key == pygame.K_F9:
+            elif inp.pressed(InputAction.QUICKLOAD):
                 self._quickload()
-        # Dev-mode key handling (F1 overlay toggle, F5 hot reload)
-        if self._dev_mode:
-            for e in inp.events:
-                if e.type == pygame.KEYDOWN:
-                    if e.key == pygame.K_F1 and self._debug_overlay:
-                        self._debug_overlay.toggle()
-                    elif e.key == pygame.K_F5 and self._hot_reloader:
-                        self._do_hot_reload()
+            # Dev-only diagnostics remain deliberately outside the player
+            # profile. F11 used to dump state in release builds; keep that
+            # internal data surface behind the same gate as the debug overlay
+            # and hot reload.
+            if self._dev_mode:
+                for e in inp.events:
+                    if e.type == pygame.KEYDOWN:
+                        if e.key == pygame.K_F1 and self._debug_overlay:
+                            self._debug_overlay.toggle()
+                        elif e.key == pygame.K_F5 and self._hot_reloader:
+                            self._do_hot_reload()
+                        elif e.key == pygame.K_F11:
+                            self.dump_state(verbose=True)
         self.manager.update(dt, inp)
         self._poll_achievement_toasts()
         # Pump Steam callbacks once per frame (flushes stored stats when
@@ -979,7 +1839,10 @@ class GalGameApp:
         # Dev overlay drawn after scene stack, before toasts.
         if self._dev_mode and self._debug_overlay:
             try:
-                self._debug_overlay.set_state(self.state)
+                self._debug_overlay.set_state(
+                    self.state,
+                    cache_stats=self.assets.cache_stats(),
+                )
                 self._debug_overlay.update(dt, inp)
                 self._debug_overlay.draw(self.screen)
             except Exception as _ov_exc:
@@ -1048,10 +1911,12 @@ class GalGameApp:
         pygame.display.flip()
 
     def _update_touch_gesture(self, events, inp) -> None:
-        """Classify a touch drag into inp.swipe ('left'/'right').
+        """Legacy one-off touch classifier for embedding compatibility.
 
-        FINGERDOWN / FINGERUP can land on different frames, so the start
-        point is tracked on the app. Coordinates are normalized [0,1].
+        The application runtime uses :class:`InputRouter`, which additionally
+        distinguishes taps from drags, tracks multiple contacts, and prevents
+        emulated-mouse duplicates. This helper remains for clients that called
+        it directly before the router existed.
         """
         for e in events:
             if e.type == pygame.FINGERDOWN:
@@ -1066,7 +1931,7 @@ class GalGameApp:
 
     def quit(self) -> None:
         """Stop the main loop (used by the web entry / external drivers)."""
-        self._running = False
+        self._quit_app()
 
     def _poll_achievement_toasts(self) -> None:
         """Surface any unlocked-but-unseen achievements as toasts, plus
@@ -1171,9 +2036,9 @@ class GalGameApp:
             "time": {
                 "day": self.state.time.day,
                 "weekday": self.state.time.day_of_week.value,
-                "weekday_label": self.state.time.day_of_week.label,
+                "weekday_label": self.state.time.weekday_label(),
                 "time_of_day": self.state.time.time_of_day.value,
-                "time_label": self.state.time.time_of_day.label,
+                "time_label": self.state.time.time_label(),
                 "is_night": self.state.time.is_night(),
                 "is_haunting": self.state.time.is_haunting_hour(),
             },
@@ -1204,6 +2069,7 @@ class GalGameApp:
                  "location": e.location, "timestamp": e.timestamp}
                 for e in self.state.events.recent(15)
             ],
+            "asset_cache": self.assets.cache_stats(),
             "scene_stack": self.manager.describe(),
         }
 
@@ -1226,12 +2092,16 @@ class GalGameApp:
             new_state, new_npcs, new_meta = self._hot_reloader.reload(
                 self.state, self.npcs
             )
-            self.state = new_state
-            self.npcs = new_npcs
-            self.meta = new_meta
-            # Propagate to scene context so scenes read updated data.
-            self.ctx.state = new_state
-            self.ctx.npcs = new_npcs
+            # Use the same complete runtime rebind as New Game. The reloader
+            # has already overlaid player progress onto fresh authored data;
+            # this refreshes dialogue/plugin/context owners, clear-data
+            # bridges, UI specs, and the map/ending baselines used by later
+            # quickloads.
+            self._install_new_game_state(
+                new_state,
+                new_npcs,
+                new_meta,
+            )
             print("[dev] hot reload OK", file=sys.stderr)
         except Exception as exc:
             print(f"[dev] hot reload failed: {exc}", file=sys.stderr)

@@ -89,7 +89,7 @@ def _make_scene(*, config=None, assets=None, npcs=None):
 def _line(**kw):
     """A line stand-in carrying exactly the attrs _update_portraits reads."""
     base = dict(portrait=None, portraits=[], portrait_pos=None,
-                speaker=None, expression=None)
+                speaker=None, speaker_id=None, expression=None)
     base.update(kw)
     return SimpleNamespace(**base)
 
@@ -99,7 +99,7 @@ def _line(**kw):
 # ---------------------------------------------------------------------------
 
 def test_spec_alias_id_and_position():
-    spec = PortraitSpec(**{"character": "qingyi", "id": "smile",
+    spec = PortraitSpec(**{"character": "ruoxue", "id": "smile",
                            "position": "left"})
     assert spec.expression == "smile"
     assert spec.slot == "left"
@@ -108,7 +108,7 @@ def test_spec_alias_id_and_position():
 def test_spec_canonical_names_still_work():
     # populate_by_name keeps the canonical field names working (Python code and
     # the existing dict form both rely on this).
-    spec = PortraitSpec(character="qingyi", expression="smile", slot="right")
+    spec = PortraitSpec(character="ruoxue", expression="smile", slot="right")
     assert spec.expression == "smile"
     assert spec.slot == "right"
 
@@ -265,6 +265,24 @@ def test_non_speaker_slot_dims_speaker_full():
             PortraitSpec(character="x", slot="right"),
         ],
         speaker="q"))         # q speaks -> left full, right dimmed
+    assert sc._speaking_slot == "left"
+    assert sc._slot_dim_factor("left") == 1.0
+    assert sc._slot_dim_factor("right") < 1.0
+
+
+def test_localized_display_name_does_not_drive_speaking_slot_identity():
+    cfg = SimpleNamespace(dim_inactive_speakers=True)
+    sc = _make_scene(config=cfg, npcs=_FakeNPCs())
+
+    sc._update_portraits(_line(
+        portraits=[
+            PortraitSpec(character="q", slot="left"),
+            PortraitSpec(character="x", slot="right"),
+        ],
+        speaker="Localized Q",
+        speaker_id="q",
+    ))
+
     assert sc._speaking_slot == "left"
     assert sc._slot_dim_factor("left") == 1.0
     assert sc._slot_dim_factor("right") < 1.0

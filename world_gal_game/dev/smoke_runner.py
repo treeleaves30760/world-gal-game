@@ -27,7 +27,7 @@ This split is the fix for the original heuristic-only rule, which silently
 read as a false alarm rather than a real failure) and "passed" any script that
 set an ending flag even when its asserts had failed.
 
-Use it as a CI gate; the ``wgg smoke`` CLI exits non-zero on any failure.
+Use it as a CI gate; ``world-gal-game smoke`` exits non-zero on any failure.
 """
 from __future__ import annotations
 
@@ -105,8 +105,9 @@ class SmokeReport:
 class SmokeRunner:
     """Discover + run scripted routes against a pack."""
 
-    def __init__(self, pack_root: Path | str) -> None:
+    def __init__(self, pack_root: Path | str, *, seed: int | None = None) -> None:
         self.pack_root = Path(pack_root).resolve()
+        self.seed = seed
         if not self.pack_root.exists():
             raise FileNotFoundError(f"pack root not found: {self.pack_root}")
 
@@ -141,8 +142,11 @@ class SmokeRunner:
                 errors=[f"failed to parse script: {exc}"],
             )
 
-        pack = pack_name or self.pack_root.name
-        sess = HeadlessSession.open(EngineConfig(), pack=pack)
+        # Preserve the authoritative absolute pack selected by the caller.
+        # Falling back to ``self.pack_root.name`` can silently execute a
+        # different installed/sibling pack with the same directory name.
+        pack = pack_name or str(self.pack_root)
+        sess = HeadlessSession.open(EngineConfig(seed=self.seed), pack=pack)
         try:
             results = sess.run_script(commands)
         except Exception as exc:

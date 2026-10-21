@@ -45,7 +45,15 @@ def restore(state: GameState, data: dict[str, Any]) -> None:
     ``scenes/save_scene.py``.
     """
     preserved = {k: v for k, v in state.meta.items() if k.startswith("__")}
+    # Localization is presentation-only PrivateAttr state and therefore is
+    # intentionally absent from the portable snapshot. Preserve the two
+    # instance-local bindings across the same reconstruction boundary just as
+    # we preserve the private meta bridges.
+    time_localization = getattr(state.time, "_localization", None)
+    affection_localization = getattr(state.affection, "_localization", None)
     rebuilt = GameState.model_validate(data)
+    rebuilt.time.bind_localization(time_localization)
+    rebuilt.affection.bind_localization(affection_localization)
     state.__dict__.update(rebuilt.__dict__)
     state.meta.update(preserved)
 

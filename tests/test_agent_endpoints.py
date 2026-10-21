@@ -152,7 +152,7 @@ def test_impact_probe_returns_per_ending_verdict():
 def test_agent_guide_text_is_markdown():
     text = agent_guide_text()
     assert text.startswith("# World Gal-Game")
-    assert "wgg context" in text
+    assert "world-gal-game context" in text
 
 
 def test_session_protocol_schema_shape():
@@ -161,6 +161,7 @@ def test_session_protocol_schema_shape():
     shapes = {s["shape"] for s in schema["message_shapes"]}
     assert shapes == {"control", "batch", "single"}
     assert "snapshot" in schema["ops"] and "restore" in schema["ops"]
+    assert "locale" in schema["ops"]
 
 
 def test_recipes_are_actionable():

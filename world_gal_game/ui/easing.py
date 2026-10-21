@@ -218,3 +218,19 @@ def resolve(easing: str | EasingFn | None) -> EasingFn:
     if callable(easing):
         return easing
     return EASINGS.get(easing, linear)
+
+
+def canonical_name(easing: str | EasingFn | None) -> str:
+    """Return a stable serializable identifier for a supported easing.
+
+    Unknown/custom callables remain valid for live plugin rendering but cannot
+    be reconstructed from JSON; they deliberately degrade to ``linear`` in a
+    persistence timeline.
+    """
+    if isinstance(easing, str) and easing in EASINGS:
+        return easing
+    if callable(easing):
+        for name, function in EASINGS.items():
+            if easing is function:
+                return name
+    return "linear"

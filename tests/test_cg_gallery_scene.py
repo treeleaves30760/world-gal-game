@@ -30,6 +30,22 @@ def _open_gallery(driver):
     return scene
 
 
+def _authorize_cgs(driver, *paths: str) -> None:
+    """Register synthetic paths as current plugin-authored gallery media."""
+    from world_gal_game.core.media_authority import build_media_authority
+
+    app = driver.app
+    current = app._authored_media_authority
+    app._authored_media_authority = build_media_authority(
+        app._authored_story_catalog,
+        additional_cg_ids={*current.cg_ids, *paths},
+        additional_music_ids=current.music_ids,
+    )
+    app.state.meta["__pack_media_authority__"] = (
+        app._authored_media_authority
+    )
+
+
 def test_gallery_opens_and_is_overlay(driver):
     scene = _open_gallery(driver)
     assert scene.is_overlay is True
@@ -55,6 +71,11 @@ def test_unlocked_cg_appears_in_grid(driver):
     """Unlocking a CG then opening the gallery reflects it in the count and
     in the discovered set (graceful degradation enumerates the unlocked set
     even when assets/cgs is empty)."""
+    _authorize_cgs(
+        driver,
+        "assets/cgs/lake.png",
+        "assets/cgs/festival.png",
+    )
     driver.app.state.cg_gallery.unlock("assets/cgs/lake.png")
     driver.app.state.cg_gallery.unlock("assets/cgs/festival.png")
     scene = _open_gallery(driver)
@@ -69,6 +90,7 @@ def test_unlocked_cg_appears_in_grid(driver):
 
 
 def test_click_unlocked_cell_opens_fullscreen_then_closes(driver):
+    _authorize_cgs(driver, "assets/cgs/lake.png")
     driver.app.state.cg_gallery.unlock("assets/cgs/lake.png")
     scene = _open_gallery(driver)
     driver.advance_frames(1)  # populate _cells via a draw pass
@@ -89,6 +111,7 @@ def test_click_unlocked_cell_opens_fullscreen_then_closes(driver):
 
 
 def test_escape_in_fullscreen_returns_to_grid_not_close(driver):
+    _authorize_cgs(driver, "assets/cgs/lake.png")
     driver.app.state.cg_gallery.unlock("assets/cgs/lake.png")
     scene = _open_gallery(driver)
     scene._fullscreen = "assets/cgs/lake.png"

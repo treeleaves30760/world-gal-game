@@ -6,17 +6,23 @@ Tracks day number, day-of-week, and time-of-day. Many gal-game mechanics
 from __future__ import annotations
 
 from enum import Enum
-from pydantic import BaseModel
+from pydantic import BaseModel, PrivateAttr
 
 
-# A Localization can be bound at module level (by the App at startup)
-# so that .label returns the pack's chosen string. If unbound, the bundled
-# Chinese defaults below are used.
+# Compatibility-only localization for the historical enum ``.label`` API.
+# The live engine no longer binds or reads this slot: every TimeSystem owns its
+# own localization service.  Keeping the old function/property behaviour avoids
+# breaking embedders that still format a bare TimeOfDay/DayOfWeek value.
 _LOCALIZATION = None
 
 
 def bind_localization(loc) -> None:
-    """Bind a Localization so TimeOfDay.label / DayOfWeek.label honour it."""
+    """Compatibility binding for bare enum ``.label`` access.
+
+    New runtime code must call :meth:`TimeSystem.bind_localization` and format
+    through that instance.  This process-global seam remains only for older
+    integrations that do not have a TimeSystem instance available.
+    """
     global _LOCALIZATION
     _LOCALIZATION = loc
 
@@ -79,6 +85,8 @@ class TimeSystem(BaseModel):
     day: int = 1
     weekday_index: int = 0
     phase_index: int = 0
+    # Presentation-only service, deliberately absent from model_dump/save data.
+    _localization: object | None = PrivateAttr(default=None)
 
     @property
     def time_of_day(self) -> TimeOfDay:
@@ -100,16 +108,42 @@ class TimeSystem(BaseModel):
     def set_phase(self, phase: TimeOfDay) -> None:
         self.phase_index = _PHASE_ORDER.index(phase)
 
+    def bind_localization(self, localization) -> None:
+        """Bind labels to this clock only, without mutating process globals."""
+        self._localization = localization
+
+    def time_label(self, value: TimeOfDay | str | None = None) -> str:
+        """Localized label for ``value`` (or the current time of day)."""
+        raw = self.time_of_day if value is None else value
+        key = raw.value if isinstance(raw, TimeOfDay) else str(raw)
+        if self._localization is not None:
+            translate = getattr(self._localization, "time_label", None)
+            if callable(translate):
+                return str(translate(key))
+        return _DEFAULT_TIME_LABELS.get(key, key)
+
+    def weekday_label(self, value: DayOfWeek | str | None = None) -> str:
+        """Localized label for ``value`` (or the current weekday)."""
+        raw = self.day_of_week if value is None else value
+        key = raw.value if isinstance(raw, DayOfWeek) else str(raw)
+        if self._localization is not None:
+            translate = getattr(self._localization, "weekday_label", None)
+            if callable(translate):
+                return str(translate(key))
+        return _DEFAULT_DAY_LABELS.get(key, key)
+
     def label(self) -> str:
-        if _LOCALIZATION is not None:
-            return _LOCALIZATION.t(
-                "day_format", "第 {day} 天 · {weekday} · {time_of_day}",
-                day=self.day,
-                weekday=self.day_of_week.label,
-                time_of_day=self.time_of_day.label,
-            )
-        return (f"第 {self.day} 天 · {self.day_of_week.label}"
-                f" · {self.time_of_day.label}")
+        if self._localization is not None:
+            translate = getattr(self._localization, "t", None)
+            if callable(translate):
+                return str(translate(
+                    "day_format", "第 {day} 天 · {weekday} · {time_of_day}",
+                    day=self.day,
+                    weekday=self.weekday_label(),
+                    time_of_day=self.time_label(),
+                ))
+        return (f"第 {self.day} 天 · {self.weekday_label()}"
+                f" · {self.time_label()}")
 
     def is_night(self) -> bool:
         return self.time_of_day in (TimeOfDay.NIGHT, TimeOfDay.MIDNIGHT)

@@ -12,6 +12,7 @@ from typing import Callable
 import pygame
 
 from .base import Scene, SceneContext
+from ..ui.input_bindings import BindingProfile, InputAction
 from ..ui.widgets import Button, Panel
 
 
@@ -55,6 +56,7 @@ class NPCActionScene(Scene):
                 "送禮 (Gift)", fonts=self.ctx.fonts, theme=self.ctx.theme,
                 font_size=18, style="primary",
                 on_click=self._do_gift,
+                motion=self.ctx.motion,
             ))
             by += btn_h + 10
         if has_shop and self.on_open_shop is not None:
@@ -63,13 +65,19 @@ class NPCActionScene(Scene):
                 "看貨 (Shop)", fonts=self.ctx.fonts, theme=self.ctx.theme,
                 font_size=18, style="primary",
                 on_click=lambda: self.on_open_shop(self.npc_id) if self.npc_id else None,
+                motion=self.ctx.motion,
             ))
             by += btn_h + 10
         self._buttons.append(Button(
             pygame.Rect(bx, by, btn_w, btn_h),
-            "離開 (Esc)", fonts=self.ctx.fonts, theme=self.ctx.theme,
+            (
+                f"離開 "
+                f"({BindingProfile(getattr(self.ctx.config, 'input_bindings', {})).primary_display(InputAction.BACK)})"
+            ),
+            fonts=self.ctx.fonts, theme=self.ctx.theme,
             font_size=18, style="ghost",
             on_click=lambda: self.on_close() if self.on_close else None,
+            motion=self.ctx.motion,
         ))
 
     def _do_gift(self) -> None:

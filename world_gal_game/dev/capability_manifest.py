@@ -8,7 +8,7 @@ fields does this engine currently support?"* — asked by:
 - :class:`world_gal_game.dev.pack_editor.PackEditor`, which uses the
   manifest to validate fields before writing.
 - Plugin authors checking for name collisions before publishing.
-- The CLI subcommand ``wgg inspect-pack --capabilities``.
+- The CLI subcommand ``world-gal-game inspect-pack --capabilities``.
 
 The manifest is **live** — calling :func:`build_manifest` reflects the
 state of the global registries at that moment, including any
@@ -138,19 +138,75 @@ def _serialize_plugins(manager: "PluginManager | None") -> dict[str, Any]:
 # Public API
 
 
-def _serialize_named_class_registry(reg: Any, *, extra_keys: tuple[str, ...] = ()
-                                    ) -> list[dict[str, Any]]:
+def _unavailable_options_schema(reason: str) -> dict[str, str]:
+    """Machine-readable sentinel for a widget without a usable option schema."""
+    return {"unavailable": reason}
+
+
+def _serialize_widget_options_schema(cls: type) -> dict[str, Any]:
+    """Reflect a plugin ``OptionsModel`` without trusting plugin code.
+
+    ``model_json_schema`` may execute plugin-defined schema hooks. A broken
+    hook must therefore degrade discovery, not break the whole capability
+    manifest.
+    """
+    try:
+        from pydantic import BaseModel
+
+        options_model = getattr(cls, "OptionsModel", None)
+    except Exception:
+        return _unavailable_options_schema("reflection_error")
+
+    if options_model is None:
+        return _unavailable_options_schema("not_declared")
+    try:
+        if (
+            not isinstance(options_model, type)
+            or not issubclass(options_model, BaseModel)
+        ):
+            return _unavailable_options_schema("not_a_pydantic_model")
+        schema = options_model.model_json_schema()
+        if not isinstance(schema, dict):
+            return _unavailable_options_schema("invalid_schema")
+        # Normalize to plain JSON containers now. This prevents a custom model
+        # hook from returning a dict subclass or nested value that only fails
+        # later in ``manifest_json``.
+        return json.loads(json.dumps(
+            schema,
+            ensure_ascii=False,
+            allow_nan=False,
+        ))
+    except Exception:
+        return _unavailable_options_schema("reflection_error")
+
+
+def _class_path(cls: type) -> str:
+    """Best-effort class label; metaclass reflection must not break discovery."""
+    try:
+        return f"{cls.__module__}.{cls.__qualname__}"
+    except Exception:
+        return "<unavailable>"
+
+
+def _serialize_named_class_registry(
+    reg: Any,
+    *,
+    extra_keys: tuple[str, ...] = (),
+    include_options_schema: bool = False,
+) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for name in reg.list_names():
         entry = reg.get(name)
         row = {
             "name": name,
-            "class": f"{entry.cls.__module__}.{entry.cls.__qualname__}",
+            "class": _class_path(entry.cls),
             "plugin_id": entry.plugin_id,
             "description": entry.description,
         }
         for k in extra_keys:
             row[k] = getattr(entry, k, None)
+        if include_options_schema:
+            row["options_schema"] = _serialize_widget_options_schema(entry.cls)
         out.append(row)
     return out
 
@@ -232,13 +288,163 @@ def _serialize_model_schema(model: Any) -> dict[str, Any]:
 
 def _serialize_content_schema() -> dict[str, Any]:
     """The pack-authoring data models AI fills in (Line/Scene/Choice/...)."""
-    from ..core.story_graph import Scene, Line, Choice, Effect, Condition
+    from ..core.story_graph import (
+        Choice,
+        ChoiceCardDetail,
+        ChoiceCardSpec,
+        Condition,
+        Effect,
+        Line,
+        Scene,
+    )
     from ..core.portrait_spec import PortraitSpec
+    from ..core.spatial_map import (
+        EdgeDestinationSpec,
+        SpatialMapNodeSpec,
+        SpatialMapSpec,
+    )
+    from ..core.title_screen_spec import TitleScreenSpec
+    from ..core.ui_skin_spec import UISkinSpec
+    from ..core.cg_gallery_spec import CGGalleryEntrySpec, CGGalleryManifest
+    from ..core.music_room_spec import MusicRoomEntrySpec, MusicRoomManifest
     models = {
         "Line": Line, "Scene": Scene, "Choice": Choice,
+        "ChoiceCardSpec": ChoiceCardSpec,
+        "ChoiceCardDetail": ChoiceCardDetail,
         "PortraitSpec": PortraitSpec, "Effect": Effect, "Condition": Condition,
+        "EdgeDestinationSpec": EdgeDestinationSpec,
+        "SpatialMapNodeSpec": SpatialMapNodeSpec,
+        "SpatialMapSpec": SpatialMapSpec,
+        "TitleScreenSpec": TitleScreenSpec,
+        "UISkinSpec": UISkinSpec,
+        "CGGalleryEntrySpec": CGGalleryEntrySpec,
+        "CGGalleryManifest": CGGalleryManifest,
+        "MusicRoomEntrySpec": MusicRoomEntrySpec,
+        "MusicRoomManifest": MusicRoomManifest,
     }
     return {name: _serialize_model_schema(m) for name, m in models.items()}
+
+
+def _cg_gallery_file_schema() -> dict[str, Any]:
+    """JSON Schema for every runtime-supported ``cg_gallery.yaml`` shape."""
+    from copy import deepcopy
+
+    from ..core.cg_gallery_spec import CGGalleryEntrySpec
+
+    entry_schema = CGGalleryEntrySpec.model_json_schema()
+    compact_entry_schema = deepcopy(entry_schema)
+    compact_entry_schema["required"] = [
+        field
+        for field in compact_entry_schema.get("required", [])
+        if field != "asset"
+    ]
+    entry_ref = {"$ref": "#/$defs/CGGalleryEntrySpec"}
+    compact_ref = {"$ref": "#/$defs/CGGalleryCompactEntry"}
+    return {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "title": "content/cg_gallery.yaml",
+        "description": (
+            "Authored CG roster in wrapper, top-level list, or compact "
+            "asset-keyed mapping form."
+        ),
+        "$defs": {
+            "CGGalleryEntrySpec": entry_schema,
+            "CGGalleryCompactEntry": compact_entry_schema,
+        },
+        "oneOf": [
+            {
+                "type": "object",
+                "properties": {
+                    "entries": {
+                        "type": "array",
+                        "items": entry_ref,
+                        "default": [],
+                    },
+                },
+                "required": ["entries"],
+                "additionalProperties": False,
+            },
+            {
+                "type": "array",
+                "items": entry_ref,
+            },
+            {
+                "type": "object",
+                "propertyNames": {
+                    "not": {"const": "entries"},
+                },
+                "additionalProperties": compact_ref,
+            },
+        ],
+    }
+
+
+def _music_room_file_schema() -> dict[str, Any]:
+    """JSON Schema for every runtime-supported ``music_room.yaml`` shape."""
+    from copy import deepcopy
+
+    from ..core.music_room_spec import MusicRoomEntrySpec
+
+    entry_schema = MusicRoomEntrySpec.model_json_schema()
+    compact_entry_schema = deepcopy(entry_schema)
+    compact_entry_schema["required"] = [
+        field
+        for field in compact_entry_schema.get("required", [])
+        if field != "asset"
+    ]
+    entry_ref = {"$ref": "#/$defs/MusicRoomEntrySpec"}
+    compact_ref = {"$ref": "#/$defs/MusicRoomCompactEntry"}
+    return {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "title": "content/music_room.yaml",
+        "description": (
+            "Authored Music Room roster in wrapper, top-level list, or "
+            "compact asset-keyed mapping form."
+        ),
+        "$defs": {
+            "MusicRoomEntrySpec": entry_schema,
+            "MusicRoomCompactEntry": compact_entry_schema,
+        },
+        "oneOf": [
+            {
+                "type": "object",
+                "properties": {
+                    "entries": {
+                        "type": "array",
+                        "items": entry_ref,
+                        "default": [],
+                        "maxItems": 4096,
+                    },
+                },
+                "required": ["entries"],
+                "additionalProperties": False,
+            },
+            {
+                "type": "array",
+                "items": entry_ref,
+                "maxItems": 4096,
+            },
+            {
+                "type": "object",
+                "propertyNames": {"not": {"const": "entries"}},
+                "additionalProperties": compact_ref,
+                "maxProperties": 4096,
+            },
+        ],
+    }
+
+
+def _serialize_metadata_schema() -> dict[str, Any]:
+    """Real JSON Schemas for strict blocks nested under ``meta.yaml``."""
+    from ..core.spatial_map import SpatialMapSpec
+    from ..core.title_screen_spec import TitleScreenSpec
+    from ..core.ui_skin_spec import UISkinSpec
+
+    return {
+        "title_screen": TitleScreenSpec.model_json_schema(),
+        "travel.spatial_map": SpatialMapSpec.model_json_schema(),
+        "ui_skin": UISkinSpec.model_json_schema(),
+    }
 
 
 def _serialize_markup() -> dict[str, Any]:
@@ -309,7 +515,11 @@ def build_manifest(*, manager: "PluginManager | None" = None) -> dict[str, Any]:
         "conditions": _serialize_kind_registry(CONDITION_REGISTRY),
         "hooks": _serialize_hooks(),
         "inspect_fields": _serialize_inspect_fields(),
-        "widgets": _serialize_named_class_registry(WIDGET_REGISTRY),
+        "widgets": _serialize_named_class_registry(
+            WIDGET_REGISTRY,
+            extra_keys=("signature",),
+            include_options_schema=True,
+        ),
         "scenes": _serialize_named_class_registry(SCENE_REGISTRY,
                                                    extra_keys=("overlay",)),
         "brains": _serialize_named_class_registry(BRAIN_REGISTRY),
@@ -319,6 +529,11 @@ def build_manifest(*, manager: "PluginManager | None" = None) -> dict[str, Any]:
         "ambient_backends": _serialize_named_class_registry(
             AMBIENT_BACKEND_REGISTRY),
         "content_schema": _serialize_content_schema(),
+        "content_files": {
+            "content/cg_gallery.yaml": _cg_gallery_file_schema(),
+            "content/music_room.yaml": _music_room_file_schema(),
+        },
+        "metadata_schema": _serialize_metadata_schema(),
         "markup": _serialize_markup(),
         "plugins": _serialize_plugins(manager),
     }
@@ -360,11 +575,39 @@ def schema_document() -> dict[str, Any]:
     include plugin-provided kinds.
     """
     from ..core.portrait_spec import PortraitSpec
-    from ..core.story_graph import Choice, Condition, Effect, Line, Scene
+    from ..core.spatial_map import (
+        EdgeDestinationSpec,
+        SpatialMapNodeSpec,
+        SpatialMapSpec,
+    )
+    from ..core.story_graph import (
+        Choice,
+        ChoiceCardDetail,
+        ChoiceCardSpec,
+        Condition,
+        Effect,
+        Line,
+        Scene,
+    )
+    from ..core.title_screen_spec import TitleScreenSpec
+    from ..core.ui_skin_spec import UISkinSpec
+    from ..core.cg_gallery_spec import CGGalleryEntrySpec, CGGalleryManifest
+    from ..core.music_room_spec import MusicRoomEntrySpec, MusicRoomManifest
 
     models = {
         "Effect": Effect, "Condition": Condition, "Line": Line,
         "Scene": Scene, "Choice": Choice, "PortraitSpec": PortraitSpec,
+        "ChoiceCardSpec": ChoiceCardSpec,
+        "ChoiceCardDetail": ChoiceCardDetail,
+        "EdgeDestinationSpec": EdgeDestinationSpec,
+        "SpatialMapNodeSpec": SpatialMapNodeSpec,
+        "SpatialMapSpec": SpatialMapSpec,
+        "TitleScreenSpec": TitleScreenSpec,
+        "UISkinSpec": UISkinSpec,
+        "CGGalleryEntrySpec": CGGalleryEntrySpec,
+        "CGGalleryManifest": CGGalleryManifest,
+        "MusicRoomEntrySpec": MusicRoomEntrySpec,
+        "MusicRoomManifest": MusicRoomManifest,
     }
     return {
         "engine_version": engine_version,
@@ -372,6 +615,10 @@ def schema_document() -> dict[str, Any]:
         "effects": _kind_arg_schemas(EFFECT_REGISTRY),
         "conditions": _kind_arg_schemas(CONDITION_REGISTRY),
         "models": {n: m.model_json_schema() for n, m in models.items()},
+        "content_files": {
+            "content/cg_gallery.yaml": _cg_gallery_file_schema(),
+            "content/music_room.yaml": _music_room_file_schema(),
+        },
     }
 
 
@@ -495,7 +742,7 @@ def summary_table() -> str:
     ]
     if INSPECT_FIELD_REGISTRY.list_keys():
         lines.append(
-            f"Inspect fields: "
+            "Inspect fields: "
             + ", ".join(INSPECT_FIELD_REGISTRY.list_keys())
         )
     # Plugin grouping

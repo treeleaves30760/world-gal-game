@@ -99,3 +99,23 @@ class EndingTracker(BaseModel):
         """Unlocked endings the player hasn't acknowledged yet."""
         return [self.endings[i] for i in self.unlocked
                 if i in self.endings and i not in self.seen]
+
+
+def rebind_authored_ending_catalog(
+    authored: EndingTracker,
+    saved: EndingTracker,
+) -> EndingTracker:
+    """Install current ending definitions while retaining save progress.
+
+    Titles, requirements, route grouping, icons, and hidden status are pack
+    content. A serialized tracker may predate newly added endings or retain
+    definitions removed by a later pack version, so loading it wholesale
+    would pin stale authored data. Unlock timestamps and acknowledgement state
+    are player progress and remain untouched, including retired ids kept for
+    round-trip compatibility; player-facing queries already intersect those
+    keys with the rebound current definitions.
+    """
+    rebound = authored.model_copy(deep=True)
+    rebound.unlocked = dict(saved.unlocked)
+    rebound.seen = set(saved.seen)
+    return rebound

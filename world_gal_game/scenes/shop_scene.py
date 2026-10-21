@@ -20,6 +20,7 @@ import pygame
 
 from .base import Scene, SceneContext
 from ..core.story_graph import Effect
+from ..ui.input_bindings import BindingProfile, InputAction
 from ..ui.widgets import Button, Panel, ScrollArea
 
 
@@ -43,9 +44,14 @@ class ShopScene(Scene):
         self.close_btn = Button(
             pygame.Rect(self._panel_rect.right - 120 - 16,
                         self._panel_rect.y + 16, 120, 36),
-            "關閉 (Esc)", fonts=self.ctx.fonts, theme=self.ctx.theme,
+            (
+                f"關閉 "
+                f"({BindingProfile(getattr(self.ctx.config, 'input_bindings', {})).primary_display(InputAction.BACK)})"
+            ),
+            fonts=self.ctx.fonts, theme=self.ctx.theme,
             font_size=15, style="ghost",
             on_click=(lambda: on_close() if on_close else None),
+            motion=self.ctx.motion,
         )
         col_w = (self._panel_rect.width - 80) // 2
         col_h = self._panel_rect.height - 140
@@ -210,15 +216,15 @@ class ShopScene(Scene):
                                            self.ctx.theme.text_mute)
             surface.blit(empty, (0, 0))
             return empty.get_height()
-        for l in listings:
-            item = self.ctx.state.items.get(l.item)
-            name = item.name if item else l.item
+        for listing in listings:
+            item = self.ctx.state.items.get(listing.item)
+            name = item.name if item else listing.item
             desc = item.description if item else ""
             can_afford = self.ctx.state.resources.can_afford(shop.currency,
-                                                              l.price)
+                                                              listing.price)
             y = self._draw_row(surface, y, side="buy",
-                               item_id=l.item, name=name, desc=desc,
-                               price=l.price, can_afford=can_afford)
+                               item_id=listing.item, name=name, desc=desc,
+                               price=listing.price, can_afford=can_afford)
         return y
 
     def _draw_sell(self, surface: pygame.Surface) -> int:

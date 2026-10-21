@@ -41,6 +41,48 @@ def test_found_path_replays_on_fresh_session() -> None:
     assert sess.assert_expect(REACHABLE_GOAL)["ok"] is True
 
 
+def test_checkpoint_preserves_real_choice_boundary_without_early_choice() -> None:
+    """The final line and following choice can share one story cursor."""
+    from world_gal_game.core.story_graph import Choice, Line, Scene
+
+    planner = Planner("demo_pack")
+    sess = HeadlessSession.open(EngineConfig(seed=42), pack="demo_pack")
+    sess.state.story.add_scene(Scene(
+        id="planner_choice_boundary_probe",
+        lines=[Line(text="先讀完這一行。")],
+        choices=[Choice(id="continue_probe", text="現在才可選")],
+    ))
+
+    sess.start_scene("planner_choice_boundary_probe")
+    line_key = Planner._state_key(sess)
+    assert sess.affordances()["choices"] == []
+    assert not any(
+        op["op"] == "choose"
+        for op in planner._actions(
+            sess,
+            explore_moves=False,
+            explore_scenes=False,
+            explore_examines=False,
+        )
+    )
+
+    sess.next_line()
+    choice_key = Planner._state_key(sess)
+    assert sess.state.story.current_line_index == 1
+    assert choice_key != line_key
+    checkpoint = Planner._checkpoint(sess)
+
+    # Raw GameState restore intentionally clears presentation state. The
+    # planner checkpoint restores both halves so its frontier remains at the
+    # exact action boundary it actually reached.
+    sess.restore(checkpoint[0])
+    assert sess.affordances()["choices"] == []
+    Planner._restore_checkpoint(sess, checkpoint)
+    assert [row["id"] for row in sess.affordances()["choices"]] == [
+        "continue_probe",
+    ]
+
+
 def test_impossible_goal_terminates_bounded() -> None:
     """An unsatisfiable goal stops at the node cap and reports found=False."""
     result = Planner("demo_pack").find_path(

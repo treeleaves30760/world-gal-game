@@ -16,8 +16,8 @@ Effect 是「我要改變遊戲狀態」的宣告。所有 effect 都長這個�
 "set_flag:met_heroine_1"      # = {kind: set_flag, target: met_heroine_1}
 ```
 
-每個 kind 的 `args` 欄位附完整型別（取自 `wgg capabilities --schema` 的 JSON
-Schema），可用來離線驗證 pack。
+每個 kind 的 `args` 欄位附完整型別（取自
+`world-gal-game capabilities --schema` 的 JSON Schema），可用來離線驗證 pack。
 
 > 本檔由 `tools/gen_references.py` 從 capability manifest 自動產生,涵蓋
 > **此次執行時 registry 內所有 kind**(含已載入的 plugin)。用
@@ -444,7 +444,7 @@ Turn on an ambient overlay (rain/snow/petals/...). target=registered @ambient_ba
 
 ### `show_cg`
 
-Show a full-screen CG, with an optional transition. target=image path; value={style,duration,easing,color,mask}. Queued for the scene.
+Show and gallery-unlock a full-screen CG, with an optional transition. target=image path; value={style,duration,easing,color,mask}. Queued for the scene.
 
 | 參數 | 型別 | 必填 | 預設 | 說明 |
 |---|---|---|---|---|

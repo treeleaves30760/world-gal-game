@@ -79,16 +79,16 @@ def test_apply_all_enqueues_threshold_toast_with_npc_name():
     """An affection effect that crosses a NAMED threshold queues a 'notice'
     toast (name + tier) and surfaces the crossing in apply_all's result."""
     st = GameState()
-    st.affection.register("qingyi")
-    st.affection.characters["qingyi"].thresholds.append(
+    st.affection.register("ruoxue")
+    st.affection.characters["ruoxue"].thresholds.append(
         AffectionThreshold(name="在意你", value=50, unlocks=["k"]))
     reg = NPCRegistry()
-    reg.add(NPC(id="qingyi", name="林青衣"))
+    reg.add(NPC(id="ruoxue", name="白若雪"))
     st.meta["__npc_registry__"] = reg
 
-    out = st.apply_all([Effect(kind="affection", target="qingyi", value=60)])
+    out = st.apply_all([Effect(kind="affection", target="ruoxue", value=60)])
     toasts = st.meta.get("__pending_toasts__", [])
-    assert ("notice", "林青衣", "「在意你」") in toasts
+    assert ("notice", "白若雪", "「在意你」") in toasts
     assert any(r.get("kind") == "affection_threshold"
                and r.get("threshold") == "在意你" for r in out)
 
@@ -97,13 +97,13 @@ def test_apply_all_threshold_toast_only_on_crossing_frame():
     """The toast fires once, on the batch that crosses — not again while the
     stat stays above the threshold."""
     st = GameState()
-    st.affection.register("qingyi")
-    st.affection.characters["qingyi"].thresholds.append(
+    st.affection.register("ruoxue")
+    st.affection.characters["ruoxue"].thresholds.append(
         AffectionThreshold(name="在意你", value=50, unlocks=["k"]))
-    st.apply_all([Effect(kind="affection", target="qingyi", value=60)])
+    st.apply_all([Effect(kind="affection", target="ruoxue", value=60)])
     st.meta.pop("__pending_toasts__", None)
     # already above 50 — a further bump must not re-toast the tier
-    st.apply_all([Effect(kind="affection", target="qingyi", value=5)])
+    st.apply_all([Effect(kind="affection", target="ruoxue", value=5)])
     toasts = st.meta.get("__pending_toasts__", [])
     assert not any(t[0] == "notice" and t[2] == "「在意你」" for t in toasts)
 

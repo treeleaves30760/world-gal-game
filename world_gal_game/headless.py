@@ -27,10 +27,20 @@ from typing import Any, ClassVar
 from .config import EngineConfig
 from .content_loader import load_pack
 from .core.game_state import GameState
+from .core.action_policy import action_availability
+from .core.guided_destinations import (
+    GuidedDestinationResolver,
+    guided_story_should_auto_reopen,
+)
 from .core.localization import Localization
-from .core.time_system import bind_localization as bind_time_localization
+from .core.travel import (
+    TravelService,
+    graph_travel_enabled,
+    hidden_travel_tags,
+    minimum_travel_cost,
+)
 from .dialogue.dialogue_engine import DialogueEngine, ScenePresentation
-from .npc.llm_brain import default_brain, EchoBrain, LLMBrain
+from .npc.llm_brain import EchoBrain, LLMBrain
 from .npc.npc_base import NPCRegistry
 
 
@@ -44,6 +54,12 @@ class HeadlessSession:
     brain: LLMBrain
     dialogue: DialogueEngine
     meta: dict
+    # Keyword-only so adding the session-local service does not shift the
+    # historical positional constructor arguments used by embedders.
+    localization: Localization = field(
+        default_factory=Localization,
+        kw_only=True,
+    )
     last_presentation: dict | None = None
     transcript: list[dict] = field(default_factory=list)
     pack: str = ""
@@ -63,6 +79,14 @@ class HeadlessSession:
     # so a run of single edits costs one analysis each, not two.
     _world_baseline: dict | None = None
 
+    def __post_init__(self) -> None:
+        self._bind_state_localization()
+
+    def _bind_state_localization(self) -> None:
+        """Attach this session's presentation labels to its current state."""
+        self.state.time.bind_localization(self.localization)
+        self.state.affection.bind_localization(self.localization)
+
     @classmethod
     def open(cls, config: EngineConfig, *, pack: str | None = None,
              brain: LLMBrain | None = None) -> "HeadlessSession":
@@ -77,22 +101,40 @@ class HeadlessSession:
             config.subtitle = meta["subtitle"]
         if "text_speed" in meta:
             config.text_speed = float(meta["text_speed"])
-        # Apply pack-level localization so inspect()/script outputs use
-        # the pack's chosen labels, not the engine defaults.
-        localization = Localization.from_meta(meta)
-        bind_time_localization(localization)
-        state.affection.bind_localization(localization)
+        config.pack_id = str(
+            state.meta.get("__pack_meta__", {}).get("pack_id", "")
+            or pack
+        )
+        # Apply one session-owned locale authority. A valid preference that is
+        # unsupported by this pack resolves to the manifest default.
+        localization = Localization.from_meta(
+            meta,
+            pack_root=config.pack_root(pack),
+            requested=config.preferred_locale(config.pack_id),
+        )
         # Headless defaults to EchoBrain so deterministic scripts work.
         # No live LLM brain is wired up; llm_speaker lines fall back to
         # `line.text`.
         brain = brain or EchoBrain()
-        dialogue = DialogueEngine(state, llm_provider=None)
+        dialogue = DialogueEngine(
+            state,
+            llm_provider=None,
+            localization=localization,
+        )
         if config.seed is not None:
             # Thread the determinism seed onto the state so GameState.rng() is
             # reproducible for any plugin/brain that uses it.
             state.meta["__seed__"] = config.seed
-        return cls(config=config, state=state, npcs=npcs, brain=brain,
-                   dialogue=dialogue, meta=meta, pack=pack)
+        return cls(
+            config=config,
+            state=state,
+            npcs=npcs,
+            brain=brain,
+            dialogue=dialogue,
+            meta=meta,
+            localization=localization,
+            pack=pack,
+        )
 
     # ----- inspect ------------------------------------------------------
 
@@ -100,15 +142,27 @@ class HeadlessSession:
         loc = self.state.map.current
         return {
             "pack": self.pack,
-            "title": self.config.title,
-            "subtitle": self.config.subtitle,
+            "title": self.localization.story(
+                "meta.title",
+                self.config.title,
+            ),
+            "subtitle": self.localization.story(
+                "meta.subtitle",
+                self.config.subtitle,
+            ),
+            "locale": {
+                "requested": self.localization.requested,
+                "effective": self.localization.effective,
+                "source": self.localization.source,
+                "default": self.localization.default,
+            },
             "player": self.state.player.model_dump(),
             "time": {
                 "day": self.state.time.day,
                 "weekday": self.state.time.day_of_week.value,
-                "weekday_label": self.state.time.day_of_week.label,
+                "weekday_label": self.state.time.weekday_label(),
                 "time_of_day": self.state.time.time_of_day.value,
-                "time_label": self.state.time.time_of_day.label,
+                "time_label": self.state.time.time_label(),
                 "label": self.state.time.label(),
                 "is_night": self.state.time.is_night(),
                 "is_haunting": self.state.time.is_haunting_hour(),
@@ -120,9 +174,13 @@ class HeadlessSession:
             "exits": [e.id for e in self.state.map.available_exits(
                 self.state.events.flags)],
             "all_locations": [
-                {"id": l.id, "name": l.name, "region": l.region,
-                 "visited": l.id in self.state.map.visited}
-                for l in self.state.map.locations.values()
+                {
+                    "id": location.id,
+                    "name": location.name,
+                    "region": location.region,
+                    "visited": location.id in self.state.map.visited,
+                }
+                for location in self.state.map.locations.values()
             ],
             "npcs_present": [
                 {"id": n, "name": (self.npcs.get(n).name if self.npcs.get(n) else n)}
@@ -223,27 +281,61 @@ class HeadlessSession:
 
     # ----- actions ------------------------------------------------------
 
-    def move_to(self, loc_id: str) -> dict:
-        flags = self.state.events.flags
-        if not self.state.map.can_move_to(loc_id, flags):
+    def move_to(self, loc_id: str, *, allow_distant: bool = False) -> dict:
+        """Move directly, or commit one atomic unlocked graph trip.
+
+        ``allow_distant`` opts into graph routing; it does not bypass a pack's
+        ``travel.requires_flags`` or map-guidance gate. Before graph travel
+        opens, ordinary adjacent tutorial exits remain usable through the
+        default local-move form and keep their own conditions and costs.
+        """
+        if self.state.story.current_scene is not None:
+            return {
+                "ok": False,
+                "error": "finish the current dialogue before moving",
+                "location": self.state.map.current_location_id,
+            }
+        if allow_distant:
+            map_available, map_reason = action_availability(
+                self.meta,
+                self.state,
+                "map",
+            )
+            if not map_available:
+                return {
+                    "ok": False,
+                    "error": (
+                        map_reason
+                        or "map travel is currently unavailable"
+                    ),
+                    "location": self.state.map.current_location_id,
+                }
+        graph_scope = graph_travel_enabled(
+            self.meta,
+            self.state.events.flags,
+        )
+        use_distant_graph = allow_distant and graph_scope
+        plan = TravelService.plan(
+            self.state,
+            loc_id,
+            allow_distant=use_distant_graph,
+            minimum_cost=(
+                minimum_travel_cost(self.meta)
+                if use_distant_graph
+                else 0
+            ),
+        )
+        if plan is None:
             return {"ok": False, "error": f"can't move to {loc_id}"}
-        loc = self.state.map.move_to(loc_id)
-        self.state.time.advance(1)
-        self.state.events.record(kind="location", title=f"前往 {loc.name}",
-                                 location=loc.id)
-        for hook in self.state.map.available_scenes(
-            time_of_day=self.state.time.time_of_day.value,
-            flags=flags,
-            played_scenes=self.state.story.played,
-            state=self.state,
-        ):
-            if hook.trigger in ("enter", "auto"):
-                pres = self.dialogue.start_scene(hook.scene_id)
-                self.last_presentation = self._serialize_pres(pres)
-                return {"ok": True, "moved_to": loc.id,
-                        "scene_triggered": hook.scene_id,
-                        "presentation": self.last_presentation}
-        return {"ok": True, "moved_to": loc.id}
+        result = TravelService.commit(self.state, plan)
+        out = result.as_dict()
+        if not result.ok:
+            return out
+        if result.scene_triggered:
+            pres = self.dialogue.start_scene(result.scene_triggered)
+            self.last_presentation = self._serialize_pres(pres)
+            out["presentation"] = self.last_presentation
+        return out
 
     def start_scene(self, scene_id: str) -> dict:
         pres = self.dialogue.start_scene(scene_id)
@@ -252,14 +344,16 @@ class HeadlessSession:
 
     def next_line(self, count: int = 1) -> dict:
         """Advance up to ``count`` lines. Auto-follows scene transitions
-        triggered by on_end play_scene effects."""
+        triggered by on_end play_scene effects, then performs the same
+        post-dialogue enter/auto-hook recheck as the graphical runtime."""
         last = None
         for _ in range(count):
             pres = self.dialogue.next_line()
             # Auto-follow transitions (on_end -> play_scene chain).
             while pres.kind == "transition" and pres.next_scene:
                 pres = self.dialogue.start_scene(pres.next_scene)
-            last = self._serialize_pres(pres)
+            pres = self._follow_ambient_hook(pres)
+            last = self._serialize_post_dialogue(pres)
             self.last_presentation = last
             if pres.kind in ("choice", "end"):
                 break
@@ -271,8 +365,201 @@ class HeadlessSession:
         # and the on_end chains into a sequel scene.
         while pres.kind == "transition" and pres.next_scene:
             pres = self.dialogue.start_scene(pres.next_scene)
-        self.last_presentation = self._serialize_pres(pres)
+        pres = self._follow_ambient_hook(pres)
+        self.last_presentation = self._serialize_post_dialogue(pres)
         return {"ok": True, "presentation": self.last_presentation}
+
+    def _follow_ambient_hook(
+        self,
+        presentation: ScenePresentation,
+    ) -> ScenePresentation:
+        """Open the first newly eligible enter/auto hook after dialogue.
+
+        The graphical app performs this check whenever a dialogue closes.
+        Keeping the same boundary here prevents a headless replay from having
+        to leave and re-enter a location merely to trigger content that a
+        player would see immediately.
+        """
+        if presentation.kind != "end":
+            return presentation
+        if self._should_yield_to_map(presentation.scene_id):
+            return presentation
+        hook = self._first_ambient_hook()
+        if hook is None:
+            return presentation
+        return self.dialogue.start_scene(hook.scene_id)
+
+    def _should_yield_to_map(self, completed_scene_id: str | None) -> bool:
+        """Mirror ``App._should_auto_open_map`` at a headless boundary."""
+        if not completed_scene_id:
+            return False
+        travel = self.meta.get("travel")
+        if not isinstance(travel, dict):
+            return False
+        spatial_map = travel.get("spatial_map")
+        if not isinstance(spatial_map, dict):
+            return False
+        configured = spatial_map.get("auto_open_after_scenes", ())
+        if isinstance(configured, str):
+            configured = (configured,)
+        if not isinstance(configured, (list, tuple, set)):
+            return False
+        return completed_scene_id in {
+            str(scene_id).strip()
+            for scene_id in configured
+            if str(scene_id).strip()
+        }
+
+    def _serialize_post_dialogue(
+        self,
+        presentation: ScenePresentation,
+    ) -> dict:
+        """Expose the GUI's map hand-off without inventing a headless screen."""
+        serialized = self._serialize_pres(presentation)
+        if presentation.kind != "end":
+            return serialized
+        if self._should_yield_to_map(presentation.scene_id):
+            serialized["next_surface"] = "map"
+            serialized["map_handoff"] = "authored_scene"
+        elif guided_story_should_auto_reopen(
+            self.meta,
+            self.state.events.flags,
+        ):
+            serialized["next_surface"] = "map"
+            serialized["map_handoff"] = "guided_story"
+        return serialized
+
+    def _first_ambient_hook(self):
+        """Return the first eligible enter/auto hook while no scene is open."""
+        if self.state.story.current_scene is not None:
+            return None
+        hooks = self.state.map.available_scenes(
+            time_of_day=self.state.time.time_of_day.value,
+            flags=self.state.events.flags,
+            played_scenes=self.state.story.played,
+            state=self.state,
+        )
+        return next(
+            (
+                hook
+                for hook in hooks
+                if hook.trigger in {"enter", "auto"}
+                and self.state.story.get(hook.scene_id) is not None
+            ),
+            None,
+        )
+
+    def examine(self, scene_id: str) -> dict:
+        """Open one currently available ``trigger: examine`` scene hook.
+
+        Unlike ``start_scene``, this is an ordinary player action rather than
+        a developer teleport: the scene must be authored on the current
+        location, satisfy every hook condition, and be explicitly examinable.
+        """
+        if self.state.story.current_scene is not None:
+            return {
+                "ok": False,
+                "error": "finish the current dialogue before examining",
+            }
+        hooks = self.state.map.available_scenes(
+            time_of_day=self.state.time.time_of_day.value,
+            flags=self.state.events.flags,
+            played_scenes=self.state.story.played,
+            state=self.state,
+        )
+        hook = next(
+            (
+                candidate
+                for candidate in hooks
+                if candidate.scene_id == scene_id
+                and candidate.trigger == "examine"
+            ),
+            None,
+        )
+        if hook is None:
+            available = [
+                candidate.scene_id
+                for candidate in hooks
+                if candidate.trigger == "examine"
+                and self.state.story.get(candidate.scene_id) is not None
+            ]
+            return {
+                "ok": False,
+                "error": (
+                    f"scene '{scene_id}' is not an available examine hook"
+                ),
+                "available": available,
+            }
+        if self.state.story.get(scene_id) is None:
+            return {
+                "ok": False,
+                "error": (
+                    f"examine hook references unknown scene '{scene_id}'"
+                ),
+            }
+        presentation = self.dialogue.start_scene(scene_id)
+        self.last_presentation = self._serialize_pres(presentation)
+        return {"ok": True, "presentation": self.last_presentation}
+
+    def gift(self, npc_id: str, item_id: str, count: int = 1) -> dict:
+        """Give one owned item to an NPC who is present at this location."""
+        if count != 1:
+            return {
+                "ok": False,
+                "error": "gift count must be exactly 1",
+            }
+        if self.state.story.current_scene is not None:
+            return {
+                "ok": False,
+                "error": "finish the current dialogue before giving a gift",
+            }
+        present = self.state.map.present_npcs(
+            self.state.time.time_of_day.value,
+            self.state.time.day_of_week.value,
+            self.state.events.flags,
+        )
+        if npc_id not in present:
+            return {
+                "ok": False,
+                "error": f"npc '{npc_id}' is not present",
+                "present": present,
+            }
+        if self.npcs.get(npc_id) is None:
+            return {"ok": False, "error": f"unknown npc '{npc_id}'"}
+        if not self.state.inventory.has(item_id):
+            return {
+                "ok": False,
+                "error": f"item '{item_id}' is not owned",
+            }
+        item = self.state.items.get(item_id)
+        if item is None:
+            return {"ok": False, "error": f"unknown item '{item_id}'"}
+        if item.locked:
+            return {
+                "ok": False,
+                "error": f"item '{item_id}' is locked and cannot be gifted",
+            }
+
+        from .core.story_graph import Effect
+
+        effects = self.state.apply_all([
+            Effect(kind="gift", target=npc_id, stat=item_id),
+        ])
+        result = next(
+            (
+                effect
+                for effect in effects
+                if effect.get("kind") == "gift"
+            ),
+            {"kind": "gift", "error": "gift effect returned no result"},
+        )
+        return {
+            "ok": "error" not in result,
+            "npc": npc_id,
+            "item": item_id,
+            "result": result,
+            "effects": effects,
+        }
 
     def chat(self, npc_id: str, message: str) -> dict:
         """Free-chat with an NPC.
@@ -293,12 +580,12 @@ class HeadlessSession:
             player_name=self.state.player.name,
             affection=self.state.affection.get(npc.id),
             location=loc_label,
-            time_of_day=self.state.time.time_of_day.label,
+            time_of_day=self.state.time.time_label(),
             recent_events=recent,
         )
         user = (
             f"場景：自由對話\n地點：{loc_label}\n"
-            f"時刻：{self.state.time.time_of_day.label}\n"
+            f"時刻：{self.state.time.time_label()}\n"
             f"玩家對你說：「{message}」\n"
             f"請以 {npc.name} 的身份回覆，1~3 句中文對白。"
         )
@@ -325,8 +612,51 @@ class HeadlessSession:
                 "affection": new_val, "unlocked": unlocked}
 
     def advance_time(self, phases: int = 1) -> dict:
-        self.state.time.advance(phases)
-        return {"ok": True, "time": self.state.time.label()}
+        if phases < 1:
+            return {
+                "ok": False,
+                "error": "phases must be at least 1",
+                "time": self.state.time.label(),
+                "phases_advanced": 0,
+            }
+        if self.state.story.current_scene is not None:
+            return {
+                "ok": False,
+                "error": "finish the current dialogue before advancing time",
+                "time": self.state.time.label(),
+                "phases_advanced": 0,
+            }
+        advanced = 0
+        out: dict[str, Any] = {"ok": True}
+        for _ in range(phases):
+            available, reason = action_availability(
+                self.meta,
+                self.state,
+                "advance_time",
+            )
+            if not available:
+                if advanced == 0:
+                    return {
+                        "ok": False,
+                        "error": (
+                            reason
+                            or "advance_time is currently unavailable"
+                        ),
+                        "time": self.state.time.label(),
+                        "phases_advanced": 0,
+                    }
+                break
+            self.state.time.advance(1)
+            advanced += 1
+            hook = self._first_ambient_hook()
+            if hook is not None:
+                presentation = self.dialogue.start_scene(hook.scene_id)
+                self.last_presentation = self._serialize_pres(presentation)
+                out["presentation"] = self.last_presentation
+                break
+        out["time"] = self.state.time.label()
+        out["phases_advanced"] = advanced
+        return out
 
     def set_flag(self, key: str, value: Any = True) -> dict:
         self.state.events.set_flag(key, value)
@@ -341,6 +671,29 @@ class HeadlessSession:
         new_val, unlocked = self.state.affection.adjust(npc_id, delta, stat)
         return {"ok": True, "new": new_val, "unlocked": unlocked}
 
+    def set_locale(self, locale_id: str) -> dict:
+        """Switch locale only at a side-effect-free dialogue boundary."""
+        if self.state.story.current_scene is not None:
+            return {
+                "ok": False,
+                "error": (
+                    "finish or leave the current dialogue before changing "
+                    "locale"
+                ),
+                "effective": self.localization.effective,
+            }
+        effective = self.localization.activate(locale_id)
+        self._bind_state_localization()
+        self.last_presentation = None
+        return {
+            "ok": (
+                bool(self.localization.requested)
+                and effective == self.localization.requested
+            ),
+            "requested": locale_id,
+            "effective": effective,
+        }
+
     def _serialize_pres(self, pres: ScenePresentation) -> dict:
         d = {"kind": pres.kind, "scene_id": pres.scene_id,
              "title": pres.title, "next_scene": pres.next_scene}
@@ -351,16 +704,22 @@ class HeadlessSession:
             clean = pres.line.plain_text or pres.line.text
             d["line"] = {
                 "speaker": pres.line.speaker,
+                "speaker_id": pres.line.speaker_id,
                 "text": clean,
                 "raw_text": pres.line.text,
                 "line_index": pres.line.line_index,
+                "loc_id": pres.line.loc_id,
                 "total_lines": pres.line.total_lines,
                 "voice": pres.line.voice,
+                "sound_captions": [
+                    caption.model_dump(mode="json")
+                    for caption in pres.line.sound_captions
+                ],
                 "effects": pres.line.effects_applied,
                 "is_llm_generated": pres.line.is_llm_generated,
             }
         if pres.choices:
-            # ``reason`` is the human lock phrase ("需要 與林青衣的好感度 ≥ 40")
+            # ``reason`` is the human lock phrase ("需要 與白若雪的好感度 ≥ 40")
             # the GUI shows under a locked option — surfaced here too so agents
             # / tests can read *why* a choice is locked headlessly, not just
             # that it is. Empty for an enabled choice (omitted to keep the
@@ -368,6 +727,8 @@ class HeadlessSession:
             choices = []
             for c in pres.choices:
                 row = {"id": c.id, "text": c.text, "enabled": c.enabled}
+                if getattr(c, "card", None) is not None:
+                    row["card"] = c.card.model_dump(mode="json")
                 if not c.enabled and getattr(c, "reason", ""):
                     row["reason"] = c.reason
                 choices.append(row)
@@ -515,6 +876,7 @@ class HeadlessSession:
         """Restore state in place from a :meth:`snapshot` dict."""
         from .dev.diff import restore
         restore(self.state, data)
+        self._bind_state_localization()
         self.last_presentation = None
         return {"ok": True}
 
@@ -536,6 +898,7 @@ class HeadlessSession:
         if snap is None:
             return {"ok": False, "error": f"no snapshot named '{name}'"}
         restore(self.state, snap)
+        self._bind_state_localization()
         self.last_presentation = None
         return {"ok": True, "name": name}
 
@@ -551,22 +914,43 @@ class HeadlessSession:
         flags = self.state.events.flags
         tod = self.state.time.time_of_day.value
         loc = self.state.map.current
+        dialogue_open = self.state.story.current_scene is not None
 
         exits = []
         if loc:
             for ex in loc.exits:
-                avail = ex.is_available(tod, flags)
+                authored_available = ex.is_available(tod, flags)
+                avail = authored_available and not dialogue_open
                 row = {"target": ex.target, "label": ex.label, "available": avail}
-                if not avail:
+                if dialogue_open:
+                    row["blocked_reason"] = (
+                        "finish the current dialogue before moving"
+                    )
+                elif not authored_available:
                     row["blocked_reason"] = ex.unavailable_reason(tod)
                 exits.append(row)
 
         choices = []
         scene_id = self.state.story.current_scene
         scene = self.state.story.scenes.get(scene_id) if scene_id else None
-        if scene:
+        visible_rows = (
+            self.last_presentation.get("choices", [])
+            if (
+                isinstance(self.last_presentation, dict)
+                and self.last_presentation.get("kind") == "choice"
+                and self.last_presentation.get("scene_id") == scene_id
+            )
+            else []
+        )
+        if scene and isinstance(visible_rows, list):
             from .dialogue.condition_text import summarize_lock
-            for ch in scene.choices:
+            by_id = {choice.id: choice for choice in scene.choices}
+            for presented in visible_rows:
+                if not isinstance(presented, dict):
+                    continue
+                ch = by_id.get(presented.get("id"))
+                if ch is None:
+                    continue
                 blocked_by = []
                 failed_requires = []
                 hit_forbids = []
@@ -578,10 +962,16 @@ class HeadlessSession:
                     if self.state.evaluate(c):
                         blocked_by.append({"forbids": c.kind, "target": c.target})
                         hit_forbids.append(c)
-                row = {"id": ch.id, "text": ch.text,
-                       "enabled": not blocked_by, "blocked_by": blocked_by}
+                row = {
+                    "id": ch.id,
+                    "text": str(presented.get("text", ch.text)),
+                    "enabled": bool(presented.get("enabled", not blocked_by)),
+                    "blocked_by": blocked_by,
+                }
+                if isinstance(presented.get("card"), dict):
+                    row["card"] = dict(presented["card"])
                 if blocked_by:
-                    # A concise human-readable reason ("需要 與林青衣的好感度 ≥
+                    # A concise human-readable reason ("需要 與白若雪的好感度 ≥
                     # 40") alongside the structured blocked_by — the same string
                     # the choice menu shows under a locked option. Exposed as
                     # ``reason`` (the key the choice presentation also uses) and
@@ -592,15 +982,120 @@ class HeadlessSession:
                     row["lock_reason"] = human
                 choices.append(row)
 
-        scenes = [h.scene_id for h in self.state.map.available_scenes(
+        available_hooks = self.state.map.available_scenes(
             time_of_day=tod, flags=flags,
-            played_scenes=self.state.story.played, state=self.state)]
+            played_scenes=self.state.story.played, state=self.state,
+        )
+        scenes = [hook.scene_id for hook in available_hooks]
+        examine_actions = []
+        if not dialogue_open:
+            for hook in available_hooks:
+                if hook.trigger != "examine":
+                    continue
+                target_scene = self.state.story.get(hook.scene_id)
+                if target_scene is None:
+                    continue
+                examine_actions.append({
+                    "op": "examine",
+                    "scene": hook.scene_id,
+                    "title": target_scene.title or target_scene.id,
+                })
+
+        gift_actions = []
+        if loc is not None and not dialogue_open:
+            present_npcs = self.state.map.present_npcs(
+                tod,
+                self.state.time.day_of_week.value,
+                flags,
+            )
+            owned_items = self.state.inventory.list_owned()
+            for npc_id in present_npcs:
+                npc = self.npcs.get(npc_id)
+                if npc is None:
+                    continue
+                for item_id, count in owned_items:
+                    item = self.state.items.get(item_id)
+                    if item is None or item.locked or count < 1:
+                        continue
+                    gift_actions.append({
+                        "op": "gift",
+                        "npc": npc_id,
+                        "npc_name": npc.name,
+                        "item": item_id,
+                        "item_name": item.name,
+                        "count": 1,
+                        "owned": count,
+                    })
+        if dialogue_open:
+            advance_available = False
+            advance_reason = "finish the current dialogue before advancing time"
+        else:
+            advance_available, advance_reason = action_availability(
+                self.meta,
+                self.state,
+                "advance_time",
+            )
+        if dialogue_open:
+            map_available = False
+            map_reason = "finish the current dialogue before opening the map"
+        else:
+            map_available, map_reason = action_availability(
+                self.meta, self.state, "map",
+            )
+        travel_options = []
+        guided_destinations = []
+        if loc and map_available:
+            if graph_travel_enabled(self.meta, flags):
+                hidden_tags = hidden_travel_tags(self.meta)
+                for destination in self.state.map.locations.values():
+                    if (
+                        destination.id == loc.id
+                        or hidden_tags.intersection(destination.tags)
+                    ):
+                        continue
+                    plan = TravelService.plan(
+                        self.state,
+                        destination.id,
+                        allow_distant=True,
+                        minimum_cost=minimum_travel_cost(self.meta),
+                    )
+                    if plan is None:
+                        continue
+                    travel_options.append({
+                        "target": destination.id,
+                        "path": list(plan.location_ids),
+                        "cost": plan.total_cost,
+                        "arrival": {
+                            "day": plan.arrival.day,
+                            "weekday": plan.arrival.day_of_week.value,
+                            "time_of_day": plan.arrival.time_of_day.value,
+                        },
+                        "npcs": list(plan.arrival_npc_ids),
+                        "scene": plan.arrival_hook_id,
+                    })
+            resolver = GuidedDestinationResolver(self.state, self.meta)
+            if resolver.enabled:
+                guided_destinations = [
+                    offer.as_dict() for offer in resolver.resolve()
+                ]
 
         return {
             "location": loc.id if loc else None,
             "exits": exits,
+            "travel_options": travel_options,
+            "guided_destinations": guided_destinations,
             "choices": choices,
             "scenes_available": scenes,
+            "examine": examine_actions,
+            "gift": gift_actions,
+            "advance_time": {
+                "available": advance_available,
+                "reason": advance_reason,
+            },
+            "map": {
+                "available": map_available,
+                "reason": map_reason,
+            },
             "applicable_effects": all_effect_kinds(),
             "applicable_conditions": all_condition_kinds(),
         }
@@ -771,15 +1266,23 @@ class HeadlessSession:
         """
         content_root = self.config.pack_content(self.pack)
         state, npcs, meta = load_pack(content_root)
-        localization = Localization.from_meta(meta)
-        bind_time_localization(localization)
-        state.affection.bind_localization(localization)
+        localization = Localization.from_meta(
+            meta,
+            pack_root=self.config.pack_root(self.pack),
+            requested=self.localization.effective,
+        )
         if self.config.seed is not None:
             state.meta["__seed__"] = self.config.seed
         self.state = state
         self.npcs = npcs
         self.meta = meta
-        self.dialogue = DialogueEngine(state, llm_provider=None)
+        self.localization = localization
+        self._bind_state_localization()
+        self.dialogue = DialogueEngine(
+            state,
+            llm_provider=None,
+            localization=localization,
+        )
         self._snapshots.clear()
         self.last_presentation = None
         return {"op": "reload", "ok": True, "reloaded": True,
@@ -790,7 +1293,7 @@ class HeadlessSession:
     # Ops that act on the pack/session rather than the live GameState; their
     # per-step runtime diff would be empty (or, for `reload`, a misleading
     # full-state swap), so run_script skips diffing them.
-    _META_OPS = frozenset({"begin", "commit", "rollback", "reload"})
+    _META_OPS = frozenset({"begin", "commit", "rollback", "reload", "locale"})
 
     def _dispatch_op(self, op: str, cmd: dict) -> dict:
         if isinstance(op, str) and op.startswith("edit."):
@@ -803,8 +1306,21 @@ class HeadlessSession:
             return self.rollback_edit()
         if op == "reload":
             return self.reload_content()
+        if op == "locale":
+            return self.set_locale(str(cmd.get("locale", "")))
         if op == "move":
-            return self.move_to(cmd["location"])
+            return self.move_to(
+                cmd["location"],
+                allow_distant=bool(cmd.get("distant", False)),
+            )
+        if op == "examine":
+            return self.examine(cmd["scene"])
+        if op == "gift":
+            return self.gift(
+                cmd["npc"],
+                cmd["item"],
+                int(cmd.get("count", 1)),
+            )
         if op == "start_scene":
             return self.start_scene(cmd["scene"])
         if op == "next":
@@ -845,15 +1361,16 @@ class HeadlessSession:
         moves, time) is collected into ``self.transcript`` so the whole run is
         understandable from a single call (the anti-MCP "rich batch").
 
-        Runtime ops: move, start_scene, next, choose, chat, advance_time,
-        set_flag, adjust_affection, inspect, apply, check, assert, affordances,
-        snapshot, restore. Structural-edit ops (warm authoring loop): edit.*
-        (add_scene/update_scene/remove_scene/add_choice/update_line/add_npc/
-        update_npc/remove_npc/add_location/update_location/remove_location/
-        add_item), and the transaction controls begin / commit / rollback /
-        reload. An edit op autocommits and returns its YAML ``diff`` plus an
-        ``impact`` delta; wrap several in begin ... commit to stage them and get
-        one aggregate impact.
+        Runtime ops: move, examine, gift, start_scene, next, choose, chat,
+        advance_time, set_flag, adjust_affection, inspect, apply, check,
+        assert, affordances, snapshot, restore. Structural-edit ops (warm
+        authoring loop): edit.* (add_scene/update_scene/remove_scene/
+        add_choice/update_line/add_npc/update_npc/remove_npc/add_location/
+        update_location/remove_location/add_item), and the transaction
+        controls begin / commit / rollback / reload. An edit op autocommits
+        and returns its YAML ``diff`` plus an ``impact`` delta; wrap several in
+        begin ... commit to stage them and get one aggregate impact. ``locale``
+        changes presentation language only while no dialogue scene is active.
         """
         from .dev.diff import diff as _diff, snapshot as _snapshot
         if self._trace is None:
@@ -905,7 +1422,7 @@ def run_script(config: EngineConfig, script_path: str,
     """Run a JSON op script headlessly; return a process exit code.
 
     Returns non-zero (1) if any ``assert`` op failed *or* any op errored, so
-    ``wgg --headless --script s.json && echo OK`` and CI gates actually see a
+    ``world-gal-game --headless --script s.json && echo OK`` and CI gates see a
     failure instead of a silent exit 0 (which previously masked a route-strand
     regression). A failing-assert / errored-op summary is printed to stderr; the
     full JSON results+transcript still go to stdout unchanged. Exit 0 when every

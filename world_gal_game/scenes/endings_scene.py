@@ -54,11 +54,25 @@ def compute_completion(state, *, total_cgs: int | None = None) -> dict:
     ``overall_pct`` is the mean of the *countable* categories — those with
     a positive total. With nothing countable it is 0.0.
     """
-    scenes_done = len(getattr(state.read_log, "scenes", ()) or ())
-    scenes_total = len(getattr(state.story, "scenes", ()) or ())
+    authored_scene_ids = set(
+        (getattr(state.story, "scenes", {}) or {}).keys()
+    )
+    read_scene_ids = set(
+        getattr(state.read_log, "scenes", ()) or ()
+    )
+    # Clear data intentionally keeps removed scene ids forever so global
+    # progress remains monotonic. Completion is a view of the *current*
+    # authored roster, however, and must not exceed 100% after pack updates.
+    scenes_done = len(read_scene_ids & authored_scene_ids)
+    scenes_total = len(authored_scene_ids)
 
-    endings_done = len(getattr(state.endings, "unlocked", ()) or ())
-    endings_total = len(state.endings.all())
+    authored_endings = state.endings.all()
+    authored_ending_ids = {ending.id for ending in authored_endings}
+    unlocked_ending_ids = set(
+        getattr(state.endings, "unlocked", ()) or ()
+    )
+    endings_done = len(unlocked_ending_ids & authored_ending_ids)
+    endings_total = len(authored_endings)
 
     cgs_done = len(getattr(state.cg_gallery, "unlocked", ()) or ())
 
@@ -76,6 +90,7 @@ def compute_completion(state, *, total_cgs: int | None = None) -> dict:
     if total_cgs is None:
         result["cgs"] = None
     else:
+        cgs_done = min(cgs_done, max(0, total_cgs))
         result["cgs"] = {"done": cgs_done, "total": total_cgs,
                          "pct": _pct(cgs_done, total_cgs)}
         if total_cgs > 0:
@@ -90,6 +105,23 @@ class EndingsScene(Scene):
     def __init__(self, ctx: SceneContext):
         super().__init__(ctx)
         self.is_overlay = True
+
+    def _total_cgs(self) -> int | None:
+        """Visible authored roster size, or unknown for a legacy pack."""
+        from ..core.cg_gallery_spec import CGGalleryManifest
+
+        manifest = self.ctx.state.meta.get("__cg_gallery_manifest__")
+        if not isinstance(manifest, CGGalleryManifest) or not manifest.authored:
+            return None
+        unlocked = set(self.ctx.state.cg_gallery.unlocked)
+        catalog_assets = set(manifest.by_asset())
+        visible_catalog = {
+            entry.asset
+            for entry in manifest.entries
+            if not entry.hidden or entry.asset in unlocked
+        }
+        # Old saves and plugin-provided unlocks remain visible fallback rows.
+        return len(visible_catalog | (unlocked - catalog_assets))
 
     # ---- route grouping -------------------------------------------------
     def _route_labels(self) -> dict[str, str]:
@@ -144,23 +176,43 @@ class EndingsScene(Scene):
                             fill=(*self.ctx.theme.bg_overlay[:3], 240),
                             border=self.ctx.theme.border_strong,
                             radius=self.ctx.theme.radius_l, border_width=2)
+        close_h = max(
+            44,
+            self.ctx.fonts.get(15, bold=True).get_linesize() + 14,
+        )
         self.close_btn = Button(
             pygame.Rect(self._panel_rect.right - 120 - 16,
-                        self._panel_rect.y + 16, 120, 36),
+                        self._panel_rect.y + 16, 120, close_h),
             self.ctx.localization.t("close", "關閉"),
             fonts=self.ctx.fonts, theme=self.ctx.theme,
             font_size=15, style="ghost",
             on_click=(lambda: on_close() if on_close else None),
+            motion=self.ctx.motion,
         )
         # Summary band sits below the title; the scroll list fills the rest.
         summary_top = self._panel_rect.y + 70
-        self._summary_h = 56
+        self._summary_h = max(
+            56,
+            self.ctx.fonts.get(16).get_linesize()
+            + self.ctx.fonts.get(18, bold=True).get_linesize()
+            + 4,
+        )
+        self._summary_rect = pygame.Rect(
+            self._panel_rect.x + 32,
+            summary_top,
+            max(1, self._panel_rect.width - 64),
+            self._summary_h,
+        )
+        self._summary_text_rects: list[pygame.Rect] = []
+        self._summary_texts: list[str] = []
+        self._summary_compact = False
+        scroll_top = self._summary_rect.bottom + 8
+        scroll_bottom = self._panel_rect.bottom - 30
         self._scroll = ScrollArea(
             pygame.Rect(self._panel_rect.x + 30,
-                        summary_top + self._summary_h + 8,
+                        scroll_top,
                         self._panel_rect.width - 60,
-                        self._panel_rect.height
-                        - (self._summary_h + 8) - 100),
+                        max(1, scroll_bottom - scroll_top)),
             fonts=self.ctx.fonts, theme=self.ctx.theme,
         )
         self._scroll.set_drawer(self._draw_content)
@@ -248,25 +300,96 @@ class EndingsScene(Scene):
     # ---- summary band ---------------------------------------------------
     def _draw_summary(self, surface: pygame.Surface) -> None:
         theme = self.ctx.theme
-        comp = compute_completion(self.ctx.state, total_cgs=None)
-        x = self._panel_rect.x + 32
-        y = self._panel_rect.y + 70
+        comp = compute_completion(
+            self.ctx.state,
+            total_cgs=self._total_cgs(),
+        )
         parts = [
             ("劇情", comp["scenes"]),
             ("結局", comp["endings"]),
         ]
         if comp["cgs"] is not None:
             parts.append(("CG", comp["cgs"]))
-        seg = self.ctx.fonts
-        cur_x = x
-        for name, data in parts:
-            label = f"{name} {data['done']}/{data['total']} ({data['pct']}%)"
-            surf = seg.render(label, 16, theme.text_mute)
-            surface.blit(surf, (cur_x, y))
-            cur_x += surf.get_width() + 28
-        overall = seg.render(
-            f"完成度 {comp['overall_pct']}%", 18, theme.accent_warm, bold=True)
-        surface.blit(overall, (x, y + 26))
+
+        full_labels = [
+            f"{name} {data['done']}/{data['total']} ({data['pct']}%)"
+            for name, data in parts
+        ]
+        metric_surfaces = [
+            self.ctx.fonts.render(label, 16, theme.text_mute)
+            for label in full_labels
+        ]
+        gap = 28
+        full_width = (
+            sum(item.get_width() for item in metric_surfaces)
+            + gap * max(0, len(metric_surfaces) - 1)
+        )
+        self._summary_compact = full_width > self._summary_rect.width
+        if self._summary_compact:
+            labels = [
+                f"{name} {data['done']}/{data['total']}"
+                for name, data in parts
+            ]
+            metric_surfaces = [
+                self.ctx.fonts.render(label, 15, theme.text_mute)
+                for label in labels
+            ]
+            gap = 16
+        else:
+            labels = full_labels
+
+        # Preserve every metric on compact canvases. Typical authored counts
+        # fit at 15 pt; unusually large counters step down before the final
+        # clip guard rather than painting outside the summary band.
+        font_size = 15
+        row_width = (
+            sum(item.get_width() for item in metric_surfaces)
+            + gap * max(0, len(metric_surfaces) - 1)
+        )
+        while (
+            self._summary_compact
+            and row_width > self._summary_rect.width
+            and font_size > 10
+        ):
+            font_size -= 1
+            metric_surfaces = [
+                self.ctx.fonts.render(label, font_size, theme.text_mute)
+                for label in labels
+            ]
+            row_width = (
+                sum(item.get_width() for item in metric_surfaces)
+                + gap * max(0, len(metric_surfaces) - 1)
+            )
+
+        overall_label = f"完成度 {comp['overall_pct']}%"
+        overall = self.ctx.fonts.render(
+            overall_label, 18, theme.accent_warm, bold=True)
+        overall_rect = overall.get_rect(
+            left=self._summary_rect.left,
+            bottom=self._summary_rect.bottom,
+        )
+
+        self._summary_texts = [*labels, overall_label]
+        self._summary_text_rects = []
+        cur_x = self._summary_rect.left
+        for metric in metric_surfaces:
+            rect = metric.get_rect(
+                left=cur_x,
+                top=self._summary_rect.top,
+            )
+            self._summary_text_rects.append(rect)
+            cur_x = rect.right + gap
+        self._summary_text_rects.append(overall_rect)
+
+        previous_clip = surface.get_clip()
+        surface.set_clip(previous_clip.clip(self._summary_rect))
+        for metric, rect in zip(
+            metric_surfaces,
+            self._summary_text_rects[:-1],
+        ):
+            surface.blit(metric, rect)
+        surface.blit(overall, overall_rect)
+        surface.set_clip(previous_clip)
 
     def update(self, dt: float, inp) -> None:
         if inp.cancel and self.on_close:
@@ -291,7 +414,10 @@ class EndingsScene(Scene):
         self._scroll.draw(surface)
 
     def describe(self) -> dict:
-        comp = compute_completion(self.ctx.state, total_cgs=None)
+        comp = compute_completion(
+            self.ctx.state,
+            total_cgs=self._total_cgs(),
+        )
         return {
             "scene": "EndingsScene",
             "unlocked": list(self.ctx.state.endings.unlocked.keys()),

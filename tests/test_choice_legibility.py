@@ -33,23 +33,23 @@ from world_gal_game.dialogue.condition_text import (
 def test_condition_text_affection_gte_is_readable():
     """affection_gte renders as a readable gate, resolving the character name
     from the NPC registry when present."""
-    cond = Condition(kind="affection_gte", target="qingyi", value=40)
+    cond = Condition(kind="affection_gte", target="ruoxue", value=40)
     # Without a registry: falls back to the raw id, but still readable.
     txt = describe_condition(cond, None)
     assert "好感度" in txt and "40" in txt and "≥" in txt
 
     # With a registry bridging id -> display name.
     class _NPC:
-        name = "林青衣"
+        name = "白若雪"
 
     class _Reg:
         def get(self, cid):
-            return _NPC() if cid == "qingyi" else None
+            return _NPC() if cid == "ruoxue" else None
 
     state = GameState()
     state.meta["__npc_registry__"] = _Reg()
     txt2 = describe_condition(cond, state)
-    assert "林青衣" in txt2
+    assert "白若雪" in txt2
     assert "好感度 ≥ 40" in txt2
 
 
@@ -96,13 +96,13 @@ def test_summarize_lock_drops_bare_flag_when_meaningful_sibling_exists():
     """Fix 3: a label-less flag gate is suppressed in favour of a richer sibling
     reason (affection), and crucially the raw flag id never leaks."""
     reqs = [
-        Condition(kind="affection_gte", target="qingyi", value=40),
-        Condition(kind="flag", target="qingyi_copyroom_done"),
+        Condition(kind="affection_gte", target="ruoxue", value=40),
+        Condition(kind="flag", target="ruoxue_copyroom_done"),
     ]
     text = summarize_lock(reqs, [], None)
     assert "好感度 ≥ 40" in text
     # the raw flag id must not leak, and the vague flag phrase is dropped
-    assert "qingyi_copyroom_done" not in text
+    assert "ruoxue_copyroom_done" not in text
     assert "前置劇情" not in text
 
 
@@ -122,14 +122,14 @@ def test_flag_reason_uses_manifest_description_label():
     from world_gal_game.core.variable_spec import VariableManifest, VariableSpec
     state = GameState()
     state.meta["__variables__"] = VariableManifest(variables={
-        "qingyi_copyroom_done": VariableSpec(
-            key="qingyi_copyroom_done", type="bool",
+        "ruoxue_copyroom_done": VariableSpec(
+            key="ruoxue_copyroom_done", type="bool",
             description="影印室劇情"),
     })
     txt = describe_condition(
-        Condition(kind="flag", target="qingyi_copyroom_done"), state)
+        Condition(kind="flag", target="ruoxue_copyroom_done"), state)
     assert "影印室劇情" in txt
-    assert "qingyi_copyroom_done" not in txt
+    assert "ruoxue_copyroom_done" not in txt
 
 
 def test_locked_choice_yields_reason_on_presentation():
@@ -138,12 +138,12 @@ def test_locked_choice_yields_reason_on_presentation():
     s1 = Scene(id="s1", lines=[Line(text="a")], choices=[
         Choice(id="open", text="陪她",
                requires=[Condition(kind="affection_gte",
-                                   target="qingyi", value=40)]),
+                                   target="ruoxue", value=40)]),
         Choice(id="leave", text="先走"),
     ])
     state = GameState()
     state.story.add_scene(s1)
-    state.affection.register("qingyi")        # affection 0 < 40 -> locked
+    state.affection.register("ruoxue")        # affection 0 < 40 -> locked
     eng = DialogueEngine(state)
     eng.start_scene("s1")
     pres = eng.next_line()                     # end of lines -> choice phase
@@ -220,12 +220,12 @@ def test_locked_choice_reason_is_exposed_headlessly():
     s1 = Scene(id="s1", lines=[Line(text="a")], choices=[
         Choice(id="open", text="陪她",
                requires=[Condition(kind="affection_gte",
-                                   target="qingyi", value=40)]),
+                                   target="ruoxue", value=40)]),
         Choice(id="leave", text="先走"),
     ])
     state = GameState()
     state.story.add_scene(s1)
-    state.affection.register("qingyi")              # 0 < 40 -> locked
+    state.affection.register("ruoxue")              # 0 < 40 -> locked
     sess = HeadlessSession(config=EngineConfig(), state=state,
                            npcs=NPCRegistry(), brain=EchoBrain(),
                            dialogue=DialogueEngine(state), meta={})
@@ -251,12 +251,12 @@ def test_affordances_locked_choice_carries_reason_and_blocked_by():
     s1 = Scene(id="s1", lines=[Line(text="a")], choices=[
         Choice(id="open", text="陪她",
                requires=[Condition(kind="affection_gte",
-                                   target="qingyi", value=40)]),
+                                   target="ruoxue", value=40)]),
         Choice(id="leave", text="先走"),
     ])
     state = GameState()
     state.story.add_scene(s1)
-    state.affection.register("qingyi")
+    state.affection.register("ruoxue")
     sess = HeadlessSession(config=EngineConfig(), state=state,
                            npcs=NPCRegistry(), brain=EchoBrain(),
                            dialogue=DialogueEngine(state), meta={})
@@ -268,7 +268,7 @@ def test_affordances_locked_choice_carries_reason_and_blocked_by():
     assert locked["reason"] and "好感度" in locked["reason"]
     assert locked["lock_reason"] == locked["reason"]     # back-compat alias
     assert locked["blocked_by"] == [{"requires": "affection_gte",
-                                     "target": "qingyi"}]
+                                     "target": "ruoxue"}]
 
 
 def test_choice_menu_widget_accepts_reason_tuple():
@@ -287,7 +287,7 @@ def test_choice_menu_widget_accepts_reason_tuple():
                           theme=Theme(), on_choose=lambda cid: None)
         # 4-tuple (locked, with reason) + 3-tuple (enabled) mixed.
         menu.set_choices([
-            ("a", "陪她", False, "需要 與林青衣的好感度 ≥ 40"),
+            ("a", "陪她", False, "需要 與白若雪的好感度 ≥ 40"),
             ("b", "先走", True),
         ])
         assert len(menu.buttons) == 2
@@ -307,14 +307,14 @@ def test_affection_effect_enqueues_feedback_toast():
     appended to apply_all's per-effect result list (back-compat: a single-effect
     batch still returns exactly one result)."""
     state = GameState()
-    state.affection.register("qingyi")
-    out = state.apply_all([Effect(kind="affection", target="qingyi", value=5)])
+    state.affection.register("ruoxue")
+    out = state.apply_all([Effect(kind="affection", target="ruoxue", value=5)])
 
     queue = state.meta.get("__pending_toasts__") or []
     aff_toasts = [t for t in queue if t[0] == "affection"]
     assert aff_toasts, "expected an affection feedback toast in the queue"
     kind, name, delta = aff_toasts[0]
-    assert name == "qingyi" and delta == 5
+    assert name == "ruoxue" and delta == 5
 
     # apply_all's result list shape is unchanged (one row for the one effect).
     assert len(out) == 1 and out[0]["new"] == 5
@@ -322,25 +322,25 @@ def test_affection_effect_enqueues_feedback_toast():
 
 def test_affection_feedback_uses_display_name_when_available():
     class _NPC:
-        name = "林青衣"
+        name = "白若雪"
 
     class _Reg:
         def get(self, cid):
-            return _NPC() if cid == "qingyi" else None
+            return _NPC() if cid == "ruoxue" else None
 
     state = GameState()
     state.meta["__npc_registry__"] = _Reg()
-    state.affection.register("qingyi")
-    state.apply_all([Effect(kind="affection", target="qingyi", value=3)])
+    state.affection.register("ruoxue")
+    state.apply_all([Effect(kind="affection", target="ruoxue", value=3)])
     queue = state.meta.get("__pending_toasts__") or []
     aff = next(t for t in queue if t[0] == "affection")
-    assert aff[1] == "林青衣"
+    assert aff[1] == "白若雪"
 
 
 def test_no_affection_change_enqueues_no_feedback():
     """A batch that doesn't move affection enqueues no affection toast."""
     state = GameState()
-    state.affection.register("qingyi")
+    state.affection.register("ruoxue")
     state.apply_all([Effect(kind="set_flag", target="x")])
     queue = state.meta.get("__pending_toasts__") or []
     assert not [t for t in queue if t[0] == "affection"]

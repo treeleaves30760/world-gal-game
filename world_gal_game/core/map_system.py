@@ -13,10 +13,14 @@ position.
 """
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Mapping, TYPE_CHECKING
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from .story_graph import Condition
+
+if TYPE_CHECKING:
+    from .time_system import TimeSystem
+    from .travel import TravelMoment, TravelPlan
 
 
 class NPCPresence(BaseModel):
@@ -86,7 +90,7 @@ class Exit(BaseModel):
     # Time-of-day phases consumed by walking this exit. 0 (default) means
     # local move within the same area — players can wander campus without
     # the clock ticking. Long trips (cross-region, off-campus) opt in.
-    travel_cost: int = 0
+    travel_cost: int = Field(default=0, ge=0)
 
     def is_available(self, time_of_day: str, flags: dict[str, Any]) -> bool:
         """Return True when this exit is usable given the current state."""
@@ -228,6 +232,28 @@ class MapSystem(BaseModel):
         self.visited.add(loc_id)
         return self.locations[loc_id]
 
+    def plan_travel(
+        self,
+        loc_id: str,
+        *,
+        flags: Mapping[str, Any],
+        departure: "TimeSystem | TravelMoment",
+    ) -> "TravelPlan | None":
+        """Return a pure distant-route proposal without changing this map.
+
+        This is deliberately separate from :meth:`can_move_to`, whose legacy
+        contract remains a one-exit adjacency check used by current GUI and
+        headless movement.
+        """
+        from .travel import plan_travel
+
+        return plan_travel(
+            self,
+            loc_id,
+            flags=flags,
+            departure=departure,
+        )
+
     def available_exits(self, flags: dict[str, Any],
                         time_of_day: str = "") -> list[Location]:
         """Return locations reachable from current position.
@@ -274,6 +300,13 @@ class MapSystem(BaseModel):
             reason = None
             if not available:
                 reason = exit_obj.unavailable_reason(time_of_day)
+                # ``description`` already is the pack-authored supplemental
+                # hint for this directed exit.  Reuse it as the lock reason
+                # when a flag gate (rather than a time gate) closes the edge,
+                # instead of leaking an internal flag id or showing nothing.
+                if reason is None and not exit_obj.is_available(
+                        time_of_day, flags):
+                    reason = exit_obj.description or "尚未開放"
                 if reason is None and not loc.is_accessible(flags):
                     reason = "條件不足"
             out.append((exit_obj, loc, available, reason))
@@ -352,3 +385,41 @@ class MapSystem(BaseModel):
             key = loc.region or None
             out.setdefault(key, []).append(loc)
         return out
+
+
+def rebind_authored_map_catalog(
+    authored: MapSystem,
+    saved: MapSystem,
+) -> MapSystem:
+    """Install current pack geography while retaining player map progress.
+
+    Location names, coordinates, exits, schedules, scene hooks, backgrounds,
+    regions, and tags are authored content. Keeping those definitions from a
+    save would permanently pin an old map after the pack is updated. Only the
+    player's current position and visited-location set are save progress.
+
+    The returned map is independent of both inputs. If a save points at a
+    location removed by the current pack, the authored start position is used
+    rather than leaving the player at a dangling id.
+    """
+    rebound = authored.model_copy(deep=True)
+    saved_current = saved.current_location_id
+    if saved_current is None:
+        # ``None`` is a valid pre-location narrative state. Do not turn a
+        # dialogue saved before its first move effect into an implicit visit
+        # to the pack's start location.
+        rebound.current_location_id = None
+        rebound.visited = {
+            location_id
+            for location_id in saved.visited
+            if location_id in rebound.locations
+        }
+    elif saved_current in rebound.locations:
+        rebound.current_location_id = saved_current
+        rebound.visited = {
+            location_id
+            for location_id in saved.visited
+            if location_id in rebound.locations
+        }
+        rebound.visited.add(saved_current)
+    return rebound

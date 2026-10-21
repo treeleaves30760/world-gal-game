@@ -14,7 +14,7 @@ can plausibly break or fix: the set of scenes, the set of endings, which of each
 are reachable, structural dead-ends, and used-but-undeclared flags. It reuses the
 exact :class:`~world_gal_game.dev.pack_inspector.PackInspector` +
 :class:`~world_gal_game.dev.dataflow.DataflowAnalyzer` machinery behind
-``wgg inspect-pack`` / ``build_context`` so the numbers always agree.
+``world-gal-game inspect-pack`` / ``build_context`` so the numbers always agree.
 
 :func:`world_delta` diffs two snapshots into an *agent-actionable* report that
 separates **regressions** (newly-unreachable endings, new dead-ends, new

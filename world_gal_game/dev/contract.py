@@ -20,7 +20,7 @@ expectations, each one of four kinds:
 Goals use the same predicate vocabulary as ``HeadlessSession.assert_expect`` /
 the planner: ``{flag, equals?}`` · ``{affection, gte|lt|equals, stat?}`` ·
 ``{scene_played}`` · ``{condition: {...}}``. The whole file is checked in one
-call (``wgg contract <pack>``), so an agent gets behavioural regression safety
+call (``world-gal-game contract <pack>``), so an agent gets regression safety
 for the cost of one command after an edit — no per-check process spawn.
 """
 from __future__ import annotations

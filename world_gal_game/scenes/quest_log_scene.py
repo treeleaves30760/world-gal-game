@@ -4,6 +4,7 @@ from __future__ import annotations
 import pygame
 
 from .base import Scene, SceneContext
+from ..ui.input_bindings import BindingProfile, InputAction
 from ..ui.widgets import Button, Panel, QuestLog
 
 
@@ -26,10 +27,14 @@ class QuestLogScene(Scene):
         self.close_btn = Button(
             pygame.Rect(self._panel_rect.right - 120 - 16,
                         self._panel_rect.y + 16, 120, 36),
-            self.ctx.localization.t("close", "關閉 (Esc)"),
+            (
+                f"{self.ctx.localization.t('close', '關閉')} "
+                f"({BindingProfile(getattr(self.ctx.config, 'input_bindings', {})).primary_display(InputAction.BACK)})"
+            ),
             fonts=self.ctx.fonts, theme=self.ctx.theme,
             font_size=15, style="ghost",
             on_click=(lambda: self.on_close() if self.on_close else None),
+            motion=self.ctx.motion,
         )
         content_rect = pygame.Rect(
             self._panel_rect.x + 24,

@@ -30,7 +30,7 @@ import math
 
 import pygame
 
-from .easing import resolve
+from .easing import canonical_name, resolve
 
 
 def _clamp01(t: float) -> float:
@@ -80,6 +80,7 @@ class Camera:
         self._to = (self.zoom, self.pan_x, self.pan_y)
         self.duration = 0.0
         self.t = 0.0
+        self.easing_name = "linear"
         self._ease = resolve(None)
 
     # -- intent --------------------------------------------------------------
@@ -104,6 +105,7 @@ class Camera:
         self._to = target
         self.duration = max(0.0, float(duration))
         self.t = 0.0
+        self.easing_name = canonical_name(easing)
         self._ease = resolve(easing)
         if self.duration <= 0.0:
             # Instant: snap and mark complete.
@@ -203,6 +205,7 @@ class ScreenFlash:
         self.duration = max(0.01, float(duration))
         self.max_alpha = max(0, min(255, int(max_alpha)))
         self.t = 0.0
+        self.easing_name = canonical_name(easing)
         self._ease = resolve(easing)
 
     def update(self, dt: float) -> None:
@@ -241,6 +244,7 @@ class ColorTint:
         self.duration = max(0.0, float(duration))
         self.max_alpha = max(0, min(255, int(max_alpha)))
         self.t = 0.0
+        self.easing_name = canonical_name(easing)
         self._ease = resolve(easing)
         if self.duration <= 0.0:
             self.t = 0.0   # fully applied immediately (see alpha()).

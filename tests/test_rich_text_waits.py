@@ -23,7 +23,12 @@ def init_pygame():
     pygame.quit()
 
 
-from world_gal_game.dialogue.richtext import parse, strip_markup
+from world_gal_game.dialogue.richtext import (
+    MAX_INLINE_WAIT_SECONDS,
+    lint_markup,
+    parse,
+    strip_markup,
+)
 from world_gal_game.ui.fonts import FontRegistry
 from world_gal_game.ui.widgets.rich_text_view import RichText
 
@@ -60,6 +65,23 @@ def test_wait_explicit_duration():
 def test_wait_at_start_is_index_zero():
     doc = parse("[w=0.5]go")
     assert doc.waits() == {0: pytest.approx(0.5)}
+
+
+@pytest.mark.parametrize("raw", ["inf", "nan", "90000", "0", "-1", "bad"])
+def test_invalid_wait_duration_degrades_to_bounded_default(raw):
+    doc = parse(f"a[w={raw}]b")
+
+    assert doc.waits() == {1: pytest.approx(0.4)}
+    assert any("停頓秒數" in issue for issue in lint_markup(f"a[w={raw}]b"))
+
+
+def test_same_position_waits_are_bounded_and_linted_when_accumulated():
+    markup = "a[w=60000][b][/b][w=60000]b"
+
+    assert parse(markup).waits() == {
+        1: pytest.approx(MAX_INLINE_WAIT_SECONDS),
+    }
+    assert any("累積" in issue for issue in lint_markup(markup))
 
 
 def test_strip_markup_removes_wait_and_speed():
@@ -161,3 +183,87 @@ def test_set_markup_resets_wait_state(fonts):
     assert rt.reveal_chars == 2
     rt.update(0.05)   # still inside the new wait
     assert rt.reveal_chars == 2
+
+
+def test_active_wait_timeline_restores_only_remaining_duration(fonts):
+    original = _rt(fonts, "ab[w=0.5]cd", speed=10.0)
+    original.update(0.25)  # 0.20s to the wait, then consume 0.05s.
+    timeline = original.export_wait_timeline()
+
+    assert original.reveal_chars == 2
+    assert timeline == {
+        "consumed_plain_positions": [2],
+        "active": {
+            "plain_position": 2,
+            "remaining_seconds": pytest.approx(0.45),
+        },
+    }
+
+    restored = _rt(fonts, "ab[w=0.5]cd", speed=10.0)
+    restored.restore_reveal(2, wait_timeline=timeline)
+
+    assert restored._wait_left == pytest.approx(0.45)
+    restored.update(0.44)
+    assert restored.reveal_chars == 2
+    assert restored._wait_left == pytest.approx(0.01)
+    restored.update(0.02)
+    assert restored._wait_left == 0.0
+    restored.update(0.1)
+    assert restored.reveal_chars == 3
+
+
+def test_completed_wait_at_same_cursor_does_not_retrigger_after_restore(fonts):
+    original = _rt(fonts, "ab[w=0.5]cd", speed=10.0)
+    original.update(0.25)
+    original.update(0.45)
+    timeline = original.export_wait_timeline()
+
+    assert original.reveal_chars == 2
+    assert timeline == {
+        "consumed_plain_positions": [2],
+        "active": None,
+    }
+
+    restored = _rt(fonts, "ab[w=0.5]cd", speed=10.0)
+    restored.restore_reveal(2, wait_timeline=timeline)
+    restored.update(0.1)
+
+    assert restored._wait_left == 0.0
+    assert restored.reveal_chars == 3
+
+
+def test_active_wait_timeline_survives_resolution_reflow(fonts):
+    plain = "甲乙丙丁" * 40
+    wait_plain = 80
+    markup = plain[:wait_plain] + "[w=2]" + plain[wait_plain:]
+    narrow = _rt(fonts, markup, speed=20.0, width=180)
+    narrow_cursor = narrow.reveal_cursor_for_plain(wait_plain)
+    narrow.set_reveal(narrow_cursor)
+    narrow.update(0.25)
+    timeline = narrow.export_wait_timeline()
+
+    wide = _rt(fonts, markup, speed=20.0, width=620)
+    wide_cursor = wide.reveal_cursor_for_plain(wait_plain)
+    assert wide_cursor != narrow_cursor
+    wide.restore_reveal(wide_cursor, wait_timeline=timeline)
+
+    assert wide.plain_cursor_for_reveal() == wait_plain
+    assert wide._wait_left == pytest.approx(1.75)
+
+
+def test_terminal_wait_is_not_a_resumable_pause_without_a_following_glyph(fonts):
+    original = _rt(fonts, "甲[w=2]", speed=10.0)
+    original.update(0.1)
+
+    assert original.fully_revealed() is True
+    assert original.export_wait_timeline() == {
+        "consumed_plain_positions": [],
+        "active": None,
+    }
+
+    restored = _rt(fonts, "甲[w=2]", speed=10.0)
+    restored.restore_reveal(
+        original.reveal_chars,
+        wait_timeline=original.export_wait_timeline(),
+    )
+    assert restored.fully_revealed() is True

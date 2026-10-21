@@ -9,10 +9,12 @@ from __future__ import annotations
 
 import difflib
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, Literal
 
 import yaml
+
+from .dev.scene_transitions import iter_scene_transitions
 
 
 # ---------------------------------------------------------------------------
@@ -28,13 +30,33 @@ class ValidationIssue:
     hint: str | None = None
 
 
+@dataclass(frozen=True)
+class _SpatialLocationRecord:
+    """Raw authored location plus its diagnostic source coordinates."""
+
+    raw: dict[str, Any]
+    file: str
+    path: str
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
 def _suggest(bad: str, choices: list[str], n: int = 1) -> str | None:
     """Return the closest match for *bad* among *choices*, or None."""
-    matches = difflib.get_close_matches(bad, choices, n=n, cutoff=0.6)
+    if not isinstance(bad, str):
+        return None
+    string_choices = [
+        choice for choice in choices
+        if isinstance(choice, str)
+    ]
+    matches = difflib.get_close_matches(
+        bad,
+        string_choices,
+        n=n,
+        cutoff=0.6,
+    )
     return matches[0] if matches else None
 
 
@@ -69,6 +91,618 @@ def _resolve_asset_path(ref: str, *, pack_root: Path) -> Path | None:
     if parts and parts[0] in ("assets", "./assets"):
         return (pack_root / p)
     return (pack_root / p)
+
+
+def _safe_relative_asset_path(
+    ref: str,
+    *,
+    pack_root: Path,
+) -> tuple[Path | None, str | None]:
+    """Resolve a portable pack-relative asset path without allowing escape.
+
+    The runtime still supports historical absolute paths in a few places, but
+    title presentation is distributable pack metadata.  New title assets must
+    therefore remain within the pack on every supported desktop platform.
+    The second tuple member is a user-facing reason when the reference is not
+    safe.
+    """
+    if not ref.strip():
+        return None, "路徑不能是空字串。"
+    if ref != ref.strip():
+        return None, "路徑前後不能有空白。"
+    if "\x00" in ref:
+        return None, "路徑不能包含 NUL 字元。"
+    if "\\" in ref:
+        return None, "pack 路徑必須使用 '/'，不能使用反斜線。"
+    if "://" in ref:
+        return None, "只接受 pack 內的相對路徑，不能使用 URL。"
+
+    portable = PurePosixPath(ref)
+    windows = PureWindowsPath(ref)
+    if portable.is_absolute() or windows.is_absolute() or windows.drive:
+        return None, "只接受 pack 內的相對路徑，不能使用絕對路徑。"
+    if ".." in portable.parts:
+        return None, "相對路徑不能包含 '..' 或跳出 pack。"
+
+    root = pack_root.resolve()
+    candidate = (root / Path(*portable.parts)).resolve()
+    try:
+        candidate.relative_to(root)
+    except ValueError:
+        return None, "資產解析後位於 pack 外，不能使用此路徑。"
+    return candidate, None
+
+
+def _image_decodes(path: Path) -> bool | None:
+    """Return whether pygame can decode *path*, or ``None`` if unavailable."""
+    try:
+        import pygame
+    except ImportError:  # pragma: no cover - pygame is a required dependency
+        return None
+    try:
+        pygame.image.load(str(path))
+    except (OSError, pygame.error):
+        return False
+    return True
+
+
+def _check_pack_asset(
+    ref: str,
+    *,
+    field_path: str,
+    label: str,
+    file: str,
+    pack_root: Path,
+    image: bool,
+) -> list[ValidationIssue]:
+    """Validate one non-empty, portable pack asset reference."""
+    resolved, unsafe_reason = _safe_relative_asset_path(
+        ref,
+        pack_root=pack_root,
+    )
+    if unsafe_reason is not None:
+        return [ValidationIssue(
+            severity="error",
+            file=file,
+            path=field_path,
+            message=f"{label}不是安全的 pack 相對路徑：{ref}",
+            hint=unsafe_reason,
+        )]
+    if resolved is None or not resolved.is_file():
+        return [ValidationIssue(
+            severity="warning",
+            file=file,
+            path=field_path,
+            message=f"{label}檔案不存在：{ref}",
+            hint="補上 pack 內的檔案，或修正相對路徑。",
+        )]
+    if image and _image_decodes(resolved) is False:
+        return [ValidationIssue(
+            severity="warning",
+            file=file,
+            path=field_path,
+            message=f"{label}無法解碼為圖片：{ref}",
+            hint="重新輸出為 pygame 支援的 PNG、JPEG 或 WebP 圖片。",
+        )]
+    return []
+
+
+def _validate_title_metadata(
+    meta: dict[str, Any],
+    *,
+    file: str,
+    pack_root: Path,
+) -> list[ValidationIssue]:
+    """Validate strict ``title_screen`` and legacy title asset fields."""
+    from pydantic import ValidationError
+
+    from .core.title_screen_spec import (
+        TitleScreenSpec,
+        parse_title_screen_spec,
+    )
+
+    issues: list[ValidationIssue] = []
+    try:
+        parse_title_screen_spec(meta)
+    except ValidationError as exc:
+        issues.extend(_wrap_pydantic_error(
+            exc,
+            file=file,
+            path_prefix="title_screen",
+            model_fields=list(TitleScreenSpec.model_fields),
+        ))
+
+    raw_title = meta.get("title_screen")
+    if isinstance(raw_title, dict):
+        logo_image = raw_title.get("logo_image")
+        if isinstance(logo_image, str) and logo_image:
+            issues.extend(_check_pack_asset(
+                logo_image,
+                field_path="title_screen.logo_image",
+                label="標題 Logo",
+                file=file,
+                pack_root=pack_root,
+                image=True,
+            ))
+
+    for field_name, label, image in (
+        ("title_bg", "標題背景", True),
+        ("title_bgm", "標題背景音樂", False),
+    ):
+        if field_name not in meta:
+            continue
+        ref = meta[field_name]
+        if not isinstance(ref, str):
+            issues.append(ValidationIssue(
+                severity="error",
+                file=file,
+                path=field_name,
+                message=f"{label}路徑必須是字串。",
+                hint=f"例如：`{field_name}: assets/{'backgrounds/title.png' if image else 'bgm/title.ogg'}`",
+            ))
+            continue
+        if not ref:
+            issues.append(ValidationIssue(
+                severity="error",
+                file=file,
+                path=field_name,
+                message=f"{label}路徑不能是空字串。",
+                hint=f"不需要{label}時請移除 `{field_name}` 欄位。",
+            ))
+            continue
+        issues.extend(_check_pack_asset(
+            ref,
+            field_path=field_name,
+            label=label,
+            file=file,
+            pack_root=pack_root,
+            image=image,
+        ))
+    return issues
+
+
+def _validate_locale_metadata(
+    meta: dict[str, Any],
+    *,
+    file: str,
+    pack_root: Path,
+) -> list[ValidationIssue]:
+    """Load the runtime locale authority in strict, pack-contained mode."""
+    if "locale" not in meta:
+        return []
+    from .core.localization import Localization, LocalizationError
+
+    runtime_root = (
+        pack_root.parent if pack_root.name == "content" else pack_root
+    )
+    try:
+        Localization.from_meta(
+            meta,
+            pack_root=runtime_root,
+            strict=True,
+        )
+    except (LocalizationError, TypeError, ValueError) as exc:
+        return [ValidationIssue(
+            severity="error",
+            file=file,
+            path="locale",
+            message=f"locale manifest 或 catalog 無效：{exc}",
+            hint=(
+                "修正語系代碼、明示的 pack 相對 catalog/font 路徑、"
+                "catalog envelope 與 source digest。"
+            ),
+        )]
+    return []
+
+
+def _validate_ui_skin_metadata(
+    meta: dict[str, Any],
+    *,
+    file: str,
+) -> list[ValidationIssue]:
+    """Validate the generic selector and its plugin-owned option schema."""
+    from pydantic import BaseModel, ValidationError
+
+    from .core.ui_skin_spec import UISkinSpec, parse_ui_skin_spec
+    from .plugins import WIDGET_REGISTRY
+    from .ui.system_chrome import UI_CHROME_PROTOCOL
+
+    try:
+        spec = parse_ui_skin_spec(meta)
+    except ValidationError as exc:
+        return _wrap_pydantic_error(
+            exc,
+            file=file,
+            path_prefix="ui_skin",
+            model_fields=list(UISkinSpec.model_fields),
+        )
+    if spec is None:
+        return []
+
+    entry = WIDGET_REGISTRY.get(spec.renderer)
+    if entry is None:
+        return [ValidationIssue(
+            severity="error",
+            file=file,
+            path="ui_skin.renderer",
+            message=(
+                f"UI skin renderer '{spec.renderer}' 沒有由任何已載入的 "
+                "pack plugin 註冊。"
+            ),
+            hint=(
+                "以 @widget 註冊同名 renderer，並在 plugin.yaml 的 "
+                "extends.widgets 宣告它。"
+            ),
+        )]
+
+    protocol = (entry.signature or {}).get("protocol")
+    if protocol != UI_CHROME_PROTOCOL:
+        return [ValidationIssue(
+            severity="error",
+            file=file,
+            path="ui_skin.renderer",
+            message=(
+                f"UI skin renderer '{spec.renderer}' 宣告 protocol "
+                f"{protocol!r}，需要 {UI_CHROME_PROTOCOL!r}。"
+            ),
+            hint=(
+                "在 @widget(..., signature={\"protocol\": "
+                "\"ui_chrome/v1\"}) 中宣告相容協定。"
+            ),
+        )]
+
+    try:
+        options_model = getattr(entry.cls, "OptionsModel", None)
+    except Exception as exc:
+        return [ValidationIssue(
+            severity="error",
+            file=file,
+            path="ui_skin.options",
+            message=(
+                f"UI skin renderer '{spec.renderer}' 的 OptionsModel "
+                f"無法讀取：{type(exc).__name__}: {exc}"
+            ),
+            hint="修正 plugin 的 OptionsModel 宣告後再驗證 pack。",
+        )]
+    try:
+        is_pydantic_model = (
+            isinstance(options_model, type)
+            and issubclass(options_model, BaseModel)
+        )
+    except Exception as exc:
+        return [ValidationIssue(
+            severity="error",
+            file=file,
+            path="ui_skin.options",
+            message=(
+                f"UI skin renderer '{spec.renderer}' 的 OptionsModel "
+                f"無法檢查：{type(exc).__name__}: {exc}"
+            ),
+            hint="修正 plugin 的 OptionsModel 宣告後再驗證 pack。",
+        )]
+    if not is_pydantic_model:
+        return []
+    try:
+        options_model.model_validate(spec.options)
+    except ValidationError as exc:
+        try:
+            model_fields = list(options_model.model_fields)
+        except Exception:
+            # Field reflection is only used for typo suggestions. Preserve the
+            # detailed pydantic issues even when plugin metadata reflection is
+            # faulty.
+            model_fields = []
+        return _wrap_pydantic_error(
+            exc,
+            file=file,
+            path_prefix="ui_skin.options",
+            model_fields=model_fields,
+        )
+    except Exception as exc:
+        return [ValidationIssue(
+            severity="error",
+            file=file,
+            path="ui_skin.options",
+            message=(
+                f"UI skin renderer '{spec.renderer}' 的 OptionsModel "
+                f"驗證失敗：{type(exc).__name__}: {exc}"
+            ),
+            hint=(
+                "plugin-defined validator 不應拋出 ValidationError 以外的"
+                "例外；修正 plugin 後再驗證 pack。"
+            ),
+        )]
+    return []
+
+
+def _validate_spatial_map_metadata(
+    meta: dict[str, Any],
+    *,
+    file: str,
+    pack_root: Path,
+    locations: dict[str, _SpatialLocationRecord],
+    scene_ids: set[str],
+) -> list[ValidationIssue]:
+    """Validate the strict spatial-map block and its pack-wide references."""
+    import math
+
+    from pydantic import ValidationError
+
+    from .core.spatial_map import (
+        SpatialMapSpec,
+        parse_spatial_map_spec,
+    )
+
+    issues: list[ValidationIssue] = []
+    try:
+        spec = parse_spatial_map_spec(meta)
+    except ValidationError as exc:
+        return _wrap_pydantic_error(
+            exc,
+            file=file,
+            path_prefix="travel.spatial_map",
+            model_fields=list(SpatialMapSpec.model_fields),
+        )
+    if spec is None:
+        return issues
+
+    if spec.background is not None:
+        issues.extend(_check_pack_asset(
+            spec.background,
+            field_path="travel.spatial_map.background",
+            label="空間地圖背景",
+            file=file,
+            pack_root=pack_root,
+            image=True,
+        ))
+
+    known_location_ids = set(locations)
+    edge_ids = set(spec.edge_destinations)
+    node_ids = set(spec.nodes)
+
+    for index, scene_id in enumerate(spec.auto_open_after_scenes):
+        if scene_id in scene_ids:
+            continue
+        suggestion = _suggest(scene_id, sorted(scene_ids))
+        issues.append(ValidationIssue(
+            severity="error",
+            file=file,
+            path=(
+                "travel.spatial_map.auto_open_after_scenes"
+                f"[{index}]"
+            ),
+            message=f"自動開啟地圖的 scene '{scene_id}' 不存在。",
+            hint=(
+                f"最接近的 scene id 是 '{suggestion}'。"
+                if suggestion else None
+            ),
+        ))
+
+    for location_id, edge in spec.edge_destinations.items():
+        edge_path = (
+            "travel.spatial_map.edge_destinations."
+            f"{location_id}"
+        )
+        if location_id not in known_location_ids:
+            suggestion = _suggest(location_id, sorted(known_location_ids))
+            issues.append(ValidationIssue(
+                severity="error",
+                file=file,
+                path=edge_path,
+                message=(
+                    f"校外縮圖地點 '{location_id}' 不是已知 location id。"
+                ),
+                hint=(
+                    f"最接近的地點 id 是 '{suggestion}'。"
+                    if suggestion else
+                    "在 locations.yaml 宣告地點，或修正此 mapping key。"
+                ),
+            ))
+        if edge.thumbnail is not None:
+            issues.extend(_check_pack_asset(
+                edge.thumbnail,
+                field_path=f"{edge_path}.thumbnail",
+                label=f"校外地點 '{location_id}' 的縮圖",
+                file=file,
+                pack_root=pack_root,
+                image=True,
+            ))
+            if not (edge.attribution or spec.attribution):
+                issues.append(ValidationIssue(
+                    severity="error",
+                    file=file,
+                    path=f"{edge_path}.attribution",
+                    message=(
+                        f"校外地點 '{location_id}' 使用縮圖但沒有署名資訊。"
+                    ),
+                    hint=(
+                        "在此 edge destination 加上 `attribution`，或在 "
+                        "`travel.spatial_map.attribution` 提供涵蓋所有圖像"
+                        "的署名。原創圖片也應明確標示為原創。"
+                    ),
+                ))
+
+    for location_id, node in spec.nodes.items():
+        node_path = f"travel.spatial_map.nodes.{location_id}"
+        if location_id not in known_location_ids:
+            suggestion = _suggest(location_id, sorted(known_location_ids))
+            issues.append(ValidationIssue(
+                severity="error",
+                file=file,
+                path=node_path,
+                message=(
+                    f"空間地圖節點 '{location_id}' 不是已知 location id。"
+                ),
+                hint=(
+                    f"最接近的地點 id 是 '{suggestion}'。"
+                    if suggestion else
+                    "在 locations.yaml 宣告地點，或修正此 mapping key。"
+                ),
+            ))
+        if node.layer == "interior" and node.parent is None:
+            issues.append(ValidationIssue(
+                severity="error",
+                file=file,
+                path=f"{node_path}.parent",
+                message=f"interior 節點 '{location_id}' 必須指定 parent。",
+                hint="parent 必須是已存在的 location id。",
+            ))
+        if node.parent is not None:
+            if node.parent == location_id:
+                issues.append(ValidationIssue(
+                    severity="error",
+                    file=file,
+                    path=f"{node_path}.parent",
+                    message=f"節點 '{location_id}' 不能以自己作為 parent。",
+                ))
+            elif node.parent not in known_location_ids:
+                suggestion = _suggest(
+                    node.parent,
+                    sorted(known_location_ids),
+                )
+                issues.append(ValidationIssue(
+                    severity="error",
+                    file=file,
+                    path=f"{node_path}.parent",
+                    message=(
+                        f"parent '{node.parent}' 不是已知 location id。"
+                    ),
+                    hint=(
+                        f"最接近的地點 id 是 '{suggestion}'。"
+                        if suggestion else None
+                    ),
+                ))
+
+    for location_id in sorted(edge_ids & node_ids):
+        issues.append(ValidationIssue(
+            severity="error",
+            file=file,
+            path=f"travel.spatial_map.nodes.{location_id}",
+            message=(
+                f"地點 '{location_id}' 不能同時是中央節點與校外縮圖。"
+            ),
+            hint=(
+                "從 `nodes` 或 `edge_destinations` 移除其中一個設定；"
+                "旅行可達性不受此呈現選擇影響。"
+            ),
+        ))
+
+    # A parent may point at an unannotated location, which is an implicit
+    # campus node. Only authored node-to-node links can form a cycle.
+    parent_by_node = {
+        location_id: node.parent
+        for location_id, node in spec.nodes.items()
+        if (
+            node.parent is not None
+            and node.parent in spec.nodes
+            and node.parent != location_id
+        )
+    }
+    visited: set[str] = set()
+    active: list[str] = []
+    active_index: dict[str, int] = {}
+    reported_cycles: set[frozenset[str]] = set()
+
+    def visit(location_id: str) -> None:
+        if location_id in visited:
+            return
+        if location_id in active_index:
+            cycle_nodes = active[active_index[location_id]:]
+            cycle_key = frozenset(cycle_nodes)
+            if cycle_nodes and cycle_key not in reported_cycles:
+                reported_cycles.add(cycle_key)
+                source = cycle_nodes[-1]
+                cycle = " -> ".join([*cycle_nodes, cycle_nodes[0]])
+                issues.append(ValidationIssue(
+                    severity="error",
+                    file=file,
+                    path=(
+                        f"travel.spatial_map.nodes.{source}.parent"
+                    ),
+                    message=f"空間地圖 parent 形成循環：{cycle}。",
+                    hint="每個 interior 階層最終必須回到無 parent 的根節點。",
+                ))
+            return
+
+        active_index[location_id] = len(active)
+        active.append(location_id)
+        parent = parent_by_node.get(location_id)
+        if parent is not None:
+            visit(parent)
+        active.pop()
+        active_index.pop(location_id, None)
+        visited.add(location_id)
+
+    for location_id in sorted(parent_by_node):
+        visit(location_id)
+
+    min_x, min_y, max_x, max_y = spec.bounds
+    for location_id, record in locations.items():
+        # Edge cards are positioned by compass direction. Interior nodes use a
+        # child canvas whose own bounds may be introduced independently later.
+        node = spec.nodes.get(location_id)
+        is_central = (
+            location_id not in edge_ids
+            and (node is None or node.layer != "interior")
+        )
+        values: dict[str, float] = {}
+        for field_name in ("map_x", "map_y"):
+            field_path = f"{record.path}.{field_name}"
+            if field_name not in record.raw:
+                if is_central:
+                    issues.append(ValidationIssue(
+                        severity="warning",
+                        file=record.file,
+                        path=field_path,
+                        message=(
+                            f"中央地圖節點 '{location_id}' 沒有明確指定 "
+                            f"{field_name}，會使用 Location 預設值 0。"
+                        ),
+                        hint=(
+                            "在 locations.yaml 明確填寫 map_x 與 map_y，"
+                            "讓標記穩定對齊插畫。"
+                        ),
+                    ))
+                continue
+            value = record.raw[field_name]
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(float(value))
+            ):
+                issues.append(ValidationIssue(
+                    severity="error",
+                    file=record.file,
+                    path=field_path,
+                    message=(
+                        f"地點 '{location_id}' 的 {field_name} "
+                        "必須是有限數值。"
+                    ),
+                ))
+                continue
+            values[field_name] = float(value)
+
+        if not is_central or set(values) != {"map_x", "map_y"}:
+            continue
+        x = values["map_x"]
+        y = values["map_y"]
+        if not (min_x <= x <= max_x and min_y <= y <= max_y):
+            issues.append(ValidationIssue(
+                severity="warning",
+                file=record.file,
+                path=record.path,
+                message=(
+                    f"中央地圖節點 '{location_id}' 的座標 "
+                    f"({x:g}, {y:g}) 超出 spatial_map.bounds。"
+                ),
+                hint=(
+                    f"座標需位於 x={min_x:g}..{max_x:g}、"
+                    f"y={min_y:g}..{max_y:g}，否則 UI 會將標記限制"
+                    "在畫布邊緣。"
+                ),
+            ))
+
+    return issues
 
 
 def _check_line_assets(raw_line: dict, *, file: str, path: str,
@@ -131,6 +765,484 @@ def _check_line_assets(raw_line: dict, *, file: str, path: str,
                     hint="引擎會畫紫色 placeholder；補上立繪圖檔或修正 character。",
                 ))
     return issues
+
+
+def _validate_choice_card(
+    raw_choice: dict,
+    *,
+    file: str,
+    path: str,
+    pack_root: Path | None,
+) -> list[ValidationIssue]:
+    """Validate strict visual-choice metadata and its optional image."""
+    if "card" not in raw_choice:
+        return []
+
+    from pydantic import ValidationError
+    from world_gal_game.core.story_graph import (
+        ChoiceCardDetail,
+        ChoiceCardSpec,
+    )
+
+    raw_card = raw_choice.get("card")
+    if raw_card is None:
+        return []
+    try:
+        card = ChoiceCardSpec.model_validate(raw_card)
+    except ValidationError as exc:
+        return _wrap_pydantic_error(
+            exc,
+            file=file,
+            path_prefix=f"{path}.card",
+            model_fields=(
+                list(ChoiceCardSpec.model_fields)
+                + list(ChoiceCardDetail.model_fields)
+            ),
+        )
+
+    if pack_root is None or card.image is None:
+        return []
+    return _check_pack_asset(
+        card.image,
+        field_path=f"{path}.card.image",
+        label="選項卡圖片",
+        file=file,
+        pack_root=pack_root,
+        image=True,
+    )
+
+
+def _check_cg_reference_asset(
+    ref: str,
+    *,
+    file: str,
+    path: str,
+    pack_root: Path,
+) -> list[ValidationIssue]:
+    """Warn when a legacy scene/effect CG reference is missing or unreadable.
+
+    Scene and effect asset fields predate the portable-path contract, so this
+    intentionally mirrors the existing line-asset policy instead of turning
+    historical absolute paths into new validation errors.
+    """
+    from .core.cg_gallery import canonical_cg_path
+
+    ref = canonical_cg_path(ref)
+    resolved = _resolve_asset_path(ref, pack_root=pack_root)
+    if resolved is None or not resolved.is_file():
+        return [ValidationIssue(
+            severity="warning",
+            file=file,
+            path=path,
+            message=f"CG 檔案不存在：{ref}",
+            hint="引擎會以 placeholder 降級；補上檔案或修正路徑。",
+        )]
+    if _image_decodes(resolved) is False:
+        return [ValidationIssue(
+            severity="warning",
+            file=file,
+            path=path,
+            message=f"CG 無法解碼為圖片：{ref}",
+            hint="重新輸出為 pygame 支援的 PNG、JPEG 或 WebP 圖片。",
+        )]
+    return []
+
+
+def _check_show_cg_effect_assets(
+    effects: list[Any],
+    *,
+    file: str,
+    path_prefix: str,
+    pack_root: Path,
+) -> list[ValidationIssue]:
+    """Validate the image target of every built-in ``show_cg`` effect."""
+    issues: list[ValidationIssue] = []
+    for index, raw_effect in enumerate(effects):
+        if not isinstance(raw_effect, dict):
+            continue
+        if raw_effect.get("kind") != "show_cg":
+            continue
+        ref = raw_effect.get("target")
+        field_path = f"{path_prefix}[{index}].target"
+        if not isinstance(ref, str) or not ref.strip():
+            issues.append(ValidationIssue(
+                severity="error",
+                file=file,
+                path=field_path,
+                message="show_cg 必須提供非空白的 CG 圖片 target。",
+                hint="設定 pack-relative 圖片路徑，例如 assets/cgs/memory.png。",
+            ))
+            continue
+        issues.extend(_check_cg_reference_asset(
+            ref.strip(),
+            file=file,
+            path=field_path,
+            pack_root=pack_root,
+        ))
+    return issues
+
+
+def _cg_manifest_from_data(data: Any):
+    """Parse either supported raw ``cg_gallery.yaml`` shape."""
+    from .core.cg_gallery_spec import CGGalleryManifest
+
+    if isinstance(data, dict) and "entries" in data:
+        return CGGalleryManifest.model_validate(data)
+    return CGGalleryManifest.from_items(data)
+
+
+def _cg_entry_field_path(
+    data: Any,
+    index: int,
+    asset: str,
+    field: str,
+) -> str:
+    """Return a source-accurate path for every supported catalog shape."""
+    if isinstance(data, list):
+        return f"[{index}].{field}"
+    if isinstance(data, dict) and "entries" in data:
+        return f"entries[{index}].{field}"
+    # In compact mapping form the asset is the key, not an authored child
+    # field. Point asset errors at that key and metadata errors below it.
+    key_path = f"[{asset!r}]"
+    return key_path if field == "asset" else f"{key_path}.{field}"
+
+
+def _remap_cg_schema_issue_paths(
+    issues: list[ValidationIssue],
+    data: Any,
+) -> list[ValidationIssue]:
+    """Restore list indices or compact mapping keys to model error paths."""
+    if not isinstance(data, (list, dict)) or (
+        isinstance(data, dict) and "entries" in data
+    ):
+        return issues
+    mapping_keys = list(data) if isinstance(data, dict) else []
+    for issue in issues:
+        head, separator, tail = issue.path.partition(".")
+        if not head.isdigit():
+            continue
+        index = int(head)
+        if isinstance(data, list):
+            prefix = f"[{index}]"
+        elif index < len(mapping_keys):
+            prefix = f"[{mapping_keys[index]!r}]"
+        else:
+            continue
+        issue.path = f"{prefix}.{tail}" if separator else prefix
+    return issues
+
+
+def _validate_cg_gallery_yaml(
+    data: Any,
+    *,
+    file: str,
+    pack_root: Path,
+) -> list[ValidationIssue]:
+    """Validate the optional authored CG roster and its image assets."""
+    from pydantic import ValidationError
+
+    from .core.cg_gallery_spec import CGGalleryEntrySpec, CGGalleryManifest
+
+    try:
+        manifest = _cg_manifest_from_data(data)
+    except ValidationError as exc:
+        return _remap_cg_schema_issue_paths(_wrap_pydantic_error(
+            exc,
+            file=file,
+            path_prefix="",
+            model_fields=(
+                list(CGGalleryManifest.model_fields)
+                + list(CGGalleryEntrySpec.model_fields)
+            ),
+        ), data)
+    except ValueError as exc:
+        return [ValidationIssue(
+            severity="error",
+            file=file,
+            path="",
+            message=f"CG gallery manifest 無效：{exc}",
+        )]
+
+    issues: list[ValidationIssue] = []
+    for index, entry in enumerate(manifest.entries):
+        issues.extend(_check_pack_asset(
+            entry.asset,
+            field_path=_cg_entry_field_path(
+                data,
+                index,
+                entry.asset,
+                "asset",
+            ),
+            label="CG 原圖",
+            file=file,
+            pack_root=pack_root,
+            image=True,
+        ))
+        if entry.thumbnail:
+            issues.extend(_check_pack_asset(
+                entry.thumbnail,
+                field_path=_cg_entry_field_path(
+                    data,
+                    index,
+                    entry.asset,
+                    "thumbnail",
+                ),
+                label="CG 縮圖",
+                file=file,
+                pack_root=pack_root,
+                image=True,
+            ))
+    return issues
+
+
+def _validate_cg_gallery_refs(
+    data: Any,
+    *,
+    file: str,
+    character_ids: set[str],
+    chapter_ids: set[str],
+) -> list[ValidationIssue]:
+    """Cross-check catalog context ids after the whole pack is indexed."""
+    try:
+        manifest = _cg_manifest_from_data(data)
+    except (TypeError, ValueError):
+        return []
+
+    issues: list[ValidationIssue] = []
+    for index, entry in enumerate(manifest.entries):
+        for character_id in entry.character_ids:
+            if character_id in character_ids:
+                continue
+            suggestion = _suggest(character_id, sorted(character_ids))
+            issues.append(ValidationIssue(
+                severity="error",
+                file=file,
+                path=_cg_entry_field_path(
+                    data,
+                    index,
+                    entry.asset,
+                    "character_ids",
+                ),
+                message=(
+                    f"CG character id '{character_id}' "
+                    "不是已知角色 id。"
+                ),
+                hint=(
+                    f"最接近的角色 id 是 '{suggestion}'。"
+                    if suggestion
+                    else "在 characters.yaml 宣告角色，或修正 id。"
+                ),
+            ))
+        if entry.chapter_id and entry.chapter_id not in chapter_ids:
+            suggestion = _suggest(entry.chapter_id, sorted(chapter_ids))
+            issues.append(ValidationIssue(
+                severity="error",
+                file=file,
+                path=_cg_entry_field_path(
+                    data,
+                    index,
+                    entry.asset,
+                    "chapter_id",
+                ),
+                message=(
+                    f"CG chapter id '{entry.chapter_id}' "
+                    "不是 chapters.yaml 中的章節。"
+                ),
+                hint=(
+                    f"最接近的 chapter id 是 '{suggestion}'。"
+                    if suggestion
+                    else "在 chapters.yaml 宣告章節，或修正 id。"
+                ),
+            ))
+    return issues
+
+
+def _music_manifest_from_data(data: Any):
+    """Parse every runtime-supported ``music_room.yaml`` authoring shape."""
+    from .core.music_room_spec import MusicRoomManifest
+
+    if isinstance(data, dict) and "entries" in data:
+        return MusicRoomManifest.model_validate(data)
+    return MusicRoomManifest.from_items(data)
+
+
+def _music_entry_field_path(
+    data: Any,
+    index: int,
+    asset: str,
+    field: str,
+) -> str:
+    if isinstance(data, list):
+        return f"[{index}].{field}"
+    if isinstance(data, dict) and "entries" in data:
+        return f"entries[{index}].{field}"
+    key_path = f"[{asset!r}]"
+    return key_path if field == "asset" else f"{key_path}.{field}"
+
+
+def _remap_music_schema_issue_paths(
+    issues: list[ValidationIssue],
+    data: Any,
+) -> list[ValidationIssue]:
+    if not isinstance(data, (list, dict)) or (
+        isinstance(data, dict) and "entries" in data
+    ):
+        return issues
+    mapping_keys = list(data) if isinstance(data, dict) else []
+    for issue in issues:
+        head, separator, tail = issue.path.partition(".")
+        if not head.isdigit():
+            continue
+        index = int(head)
+        if isinstance(data, list):
+            prefix = f"[{index}]"
+        elif index < len(mapping_keys):
+            prefix = f"[{mapping_keys[index]!r}]"
+        else:
+            continue
+        issue.path = f"{prefix}.{tail}" if separator else prefix
+    return issues
+
+
+def _validate_music_room_yaml(
+    data: Any,
+    *,
+    file: str,
+    pack_root: Path,
+) -> list[ValidationIssue]:
+    """Validate Music Room schema plus every decoder-facing audio asset."""
+    from pydantic import ValidationError
+
+    from .core.music_room_spec import MusicRoomEntrySpec, MusicRoomManifest
+
+    try:
+        manifest = _music_manifest_from_data(data)
+    except ValidationError as exc:
+        return _remap_music_schema_issue_paths(_wrap_pydantic_error(
+            exc,
+            file=file,
+            path_prefix="",
+            model_fields=(
+                list(MusicRoomManifest.model_fields)
+                + list(MusicRoomEntrySpec.model_fields)
+            ),
+        ), data)
+    except ValueError as exc:
+        return [ValidationIssue(
+            severity="error",
+            file=file,
+            path="",
+            message=f"Music Room manifest 無效：{exc}",
+        )]
+
+    issues: list[ValidationIssue] = []
+    for index, entry in enumerate(manifest.entries):
+        issues.extend(_check_pack_asset(
+            entry.asset,
+            field_path=_music_entry_field_path(
+                data,
+                index,
+                entry.asset,
+                "asset",
+            ),
+            label="Music Room 音訊",
+            file=file,
+            pack_root=pack_root,
+            image=False,
+        ))
+    return issues
+
+
+def _collect_music_references(data: Any) -> set[str]:
+    """Collect executable scene/line BGM identities, excluding silence."""
+    from .core.music_room import canonical_music_path
+
+    raw_scenes: list[Any] = []
+    if isinstance(data, dict) and "scenes" in data:
+        raw_scenes = data.get("scenes") or []
+    elif isinstance(data, list):
+        raw_scenes = data
+    elif isinstance(data, dict) and "id" in data:
+        raw_scenes = [data]
+
+    references: set[str] = set()
+
+    def add(value: Any) -> None:
+        if not isinstance(value, str):
+            return
+        if value.strip().lower() in {"none", "silence", "-"}:
+            return
+        canonical = canonical_music_path(value)
+        if canonical:
+            references.add(canonical)
+
+    for scene in raw_scenes:
+        if not isinstance(scene, dict):
+            continue
+        add(scene.get("bgm"))
+        for line in scene.get("lines") or []:
+            if isinstance(line, dict):
+                add(line.get("bgm"))
+    return references
+
+
+def _collect_cg_references(data: Any) -> set[str]:
+    """Collect CG paths from executable scene and item authoring surfaces."""
+    from .core.cg_gallery import canonical_cg_path
+
+    raw_scenes: list[Any] = []
+    if isinstance(data, dict) and "scenes" in data:
+        raw_scenes = data.get("scenes") or []
+    elif isinstance(data, list):
+        raw_scenes = data
+    elif isinstance(data, dict) and "id" in data:
+        raw_scenes = [data]
+
+    references: set[str] = set()
+
+    def add_reference(value: Any) -> None:
+        if not isinstance(value, str):
+            return
+        canonical = canonical_cg_path(value)
+        if canonical:
+            references.add(canonical)
+
+    def collect_effects(effects: Any) -> None:
+        if not isinstance(effects, list):
+            return
+        for effect in effects:
+            if not isinstance(effect, dict):
+                continue
+            if effect.get("kind") != "show_cg":
+                continue
+            add_reference(effect.get("target"))
+
+    raw_items: list[Any] = []
+    if isinstance(data, dict) and "items" in data:
+        raw_items = data.get("items") or []
+    for item in raw_items:
+        if isinstance(item, dict):
+            collect_effects(item.get("use_effects"))
+
+    for scene in raw_scenes:
+        if not isinstance(scene, dict):
+            continue
+        # A top-level list is a supported shape for both scenes.yaml and
+        # items.yaml. Collecting this optional field is harmless for scenes
+        # and preserves item-triggered CG coverage without guessing file type.
+        collect_effects(scene.get("use_effects"))
+        add_reference(scene.get("cg"))
+        collect_effects(scene.get("on_end"))
+        for line in scene.get("lines") or []:
+            if not isinstance(line, dict):
+                continue
+            add_reference(line.get("cg"))
+            collect_effects(line.get("effects"))
+        for choice in scene.get("choices") or []:
+            if isinstance(choice, dict):
+                collect_effects(choice.get("effects"))
+    return references
 
 
 def _check_line_markup(raw_line: dict, *, file: str,
@@ -210,9 +1322,25 @@ def _check_line_animations(raw_line: dict, *, file: str,
 # Per-file YAML parse
 # ---------------------------------------------------------------------------
 
-def _parse_yaml_file(path: Path) -> tuple[Any, list[ValidationIssue]]:
+def _parse_yaml_file(
+    path: Path,
+    *,
+    strict: bool = False,
+) -> tuple[Any, list[ValidationIssue]]:
     """Return (parsed_data, issues).  issues non-empty means parse failure."""
     rel = str(path)
+    if strict:
+        from .core.localization import load_yaml_strict
+
+        try:
+            return load_yaml_strict(path, max_bytes=2 * 1024 * 1024), []
+        except ValueError as exc:
+            return None, [ValidationIssue(
+                severity="error",
+                file=rel,
+                path="",
+                message=f"YAML 解析失敗：{exc}",
+            )]
     try:
         with open(path, encoding="utf-8") as fh:
             data = yaml.safe_load(fh)
@@ -233,7 +1361,6 @@ def _parse_yaml_file(path: Path) -> tuple[Any, list[ValidationIssue]]:
 def _wrap_pydantic_error(exc, *, file: str, path_prefix: str,
                          model_fields: list[str]) -> list[ValidationIssue]:
     """Convert a pydantic ValidationError into friendly ValidationIssues."""
-    from pydantic import ValidationError
     issues: list[ValidationIssue] = []
     for err in exc.errors():
         loc_parts = [str(p) for p in err["loc"]]
@@ -399,7 +1526,10 @@ def _validate_args_model(raw: dict, kind: str, entry: Any, *,
             issues.append(ValidationIssue(
                 severity="warning", file=file, path=full_path,
                 message=f"{category} '{kind}' 參數可能有誤：{err['msg']}",
-                hint=f"見 `wgg capabilities --schema` 中 {kind} 的參數 schema。",
+                hint=(
+                    "見 `world-gal-game capabilities --schema` 中 "
+                    f"{kind} 的參數 schema。"
+                ),
             ))
     return issues
 
@@ -467,6 +1597,24 @@ def _validate_effect_raw(raw: dict, *, file: str, path: str) -> list[ValidationI
         issues += _validate_args_model(
             raw, kind_val, EFFECT_REGISTRY.get(kind_val),
             file=file, path=path, category="effect")
+
+    # ``play_scene_branch.value[*].when`` is a real runtime Condition nested
+    # inside an Effect's open ``value`` slot. Validate its kind explicitly;
+    # Effect/arg-model validation checks the container shape but intentionally
+    # does not know the condition registry.
+    if kind_val == "play_scene_branch":
+        cases = raw.get("value")
+        if isinstance(cases, list):
+            for case_index, case in enumerate(cases):
+                if not isinstance(case, dict):
+                    continue
+                when = case.get("when")
+                if isinstance(when, dict):
+                    issues += _validate_condition_raw(
+                        when,
+                        file=file,
+                        path=f"{path}.value[{case_index}].when",
+                    )
     return issues
 
 
@@ -532,8 +1680,6 @@ def _validate_scenes_yaml(data: Any, *, file: str,
     ``assets/...`` references). When ``None`` (rare standalone call) those
     checks are skipped; markup + animation/easing checks still run.
     """
-    from pydantic import ValidationError
-    from world_gal_game.core.story_graph import Scene, Line, Choice, Effect, Condition
 
     issues: list[ValidationIssue] = []
 
@@ -553,6 +1699,18 @@ def _validate_scenes_yaml(data: Any, *, file: str,
         if not isinstance(raw_scene, dict):
             continue
         sp = f"scenes[{si}]"
+        scene_cg = raw_scene.get("cg")
+        if (
+            pack_root is not None
+            and isinstance(scene_cg, str)
+            and scene_cg
+        ):
+            issues.extend(_check_cg_reference_asset(
+                scene_cg,
+                file=file,
+                path=f"{sp}.cg",
+                pack_root=pack_root,
+            ))
 
         # Validate lines
         for li, raw_line in enumerate(raw_scene.get("lines") or []):
@@ -571,6 +1729,13 @@ def _validate_scenes_yaml(data: Any, *, file: str,
                 if isinstance(raw_eff, dict):
                     issues.extend(_validate_effect_raw(
                         raw_eff, file=file, path=f"{lp}.effects[{ei}]"))
+            if pack_root is not None:
+                issues.extend(_check_show_cg_effect_assets(
+                    raw_line.get("effects") or [],
+                    file=file,
+                    path_prefix=f"{lp}.effects",
+                    pack_root=pack_root,
+                ))
             for ci2, raw_cond in enumerate((raw_line.get("requires") or [])):
                 if isinstance(raw_cond, dict):
                     issues.extend(_validate_condition_raw(
@@ -596,10 +1761,23 @@ def _validate_scenes_yaml(data: Any, *, file: str,
                         severity="error", file=file, path=f"{cp}.{k}",
                         message=f"未知欄位 '{k}'。", hint=hint,
                     ))
+            issues.extend(_validate_choice_card(
+                raw_choice,
+                file=file,
+                path=cp,
+                pack_root=pack_root,
+            ))
             for ei, raw_eff in enumerate((raw_choice.get("effects") or [])):
                 if isinstance(raw_eff, dict):
                     issues.extend(_validate_effect_raw(
                         raw_eff, file=file, path=f"{cp}.effects[{ei}]"))
+            if pack_root is not None:
+                issues.extend(_check_show_cg_effect_assets(
+                    raw_choice.get("effects") or [],
+                    file=file,
+                    path_prefix=f"{cp}.effects",
+                    pack_root=pack_root,
+                ))
             for ri, raw_cond in enumerate((raw_choice.get("requires") or [])):
                 if isinstance(raw_cond, dict):
                     issues.extend(_validate_condition_raw(
@@ -614,6 +1792,13 @@ def _validate_scenes_yaml(data: Any, *, file: str,
             if isinstance(raw_eff, dict):
                 issues.extend(_validate_effect_raw(
                     raw_eff, file=file, path=f"{sp}.on_end[{ei}]"))
+        if pack_root is not None:
+            issues.extend(_check_show_cg_effect_assets(
+                raw_scene.get("on_end") or [],
+                file=file,
+                path_prefix=f"{sp}.on_end",
+                pack_root=pack_root,
+            ))
 
         # Validate top-level scene fields
         for k in raw_scene:
@@ -651,8 +1836,6 @@ def _validate_scenes_yaml(data: Any, *, file: str,
 
 
 def _validate_locations_yaml(data: Any, *, file: str) -> list[ValidationIssue]:
-    from pydantic import ValidationError
-    from world_gal_game.core.map_system import Location, NPCPresence, SceneHook
 
     issues: list[ValidationIssue] = []
     raw_locs: list[Any] = []
@@ -751,7 +1934,12 @@ def _validate_characters_yaml(data: Any, *, file: str) -> list[ValidationIssue]:
     return issues
 
 
-def _validate_items_yaml(data: Any, *, file: str) -> list[ValidationIssue]:
+def _validate_items_yaml(
+    data: Any,
+    *,
+    file: str,
+    pack_root: Path,
+) -> list[ValidationIssue]:
     issues: list[ValidationIssue] = []
     raw_items: list[Any] = []
     if isinstance(data, dict) and "items" in data:
@@ -772,10 +1960,17 @@ def _validate_items_yaml(data: Any, *, file: str) -> list[ValidationIssue]:
                     severity="error", file=file, path=f"{ip}.{k}",
                     message=f"未知欄位 '{k}'。", hint=hint,
                 ))
-        for ei, raw_eff in enumerate((raw_item.get("use_effects") or [])):
+        use_effects = raw_item.get("use_effects") or []
+        for ei, raw_eff in enumerate(use_effects):
             if isinstance(raw_eff, dict):
                 issues.extend(_validate_effect_raw(
                     raw_eff, file=file, path=f"{ip}.use_effects[{ei}]"))
+        issues.extend(_check_show_cg_effect_assets(
+            use_effects,
+            file=file,
+            path_prefix=f"{ip}.use_effects",
+            pack_root=pack_root,
+        ))
     return issues
 
 
@@ -851,10 +2046,12 @@ def _validate_achievements_yaml(data: Any, *, file: str) -> list[ValidationIssue
 class _RefIndex:
     """Holds all known ids gathered from the whole pack."""
     scene_ids: set[str] = field(default_factory=set)
+    ending_ids: set[str] = field(default_factory=set)
     character_ids: set[str] = field(default_factory=set)
     location_ids: set[str] = field(default_factory=set)
     item_ids: set[str] = field(default_factory=set)
     resource_ids: set[str] = field(default_factory=set)
+    chapter_ids: set[str] = field(default_factory=set)
     # character id -> declared portrait_set expression keys (for the
     # expression-reference check). Empty/absent set = character uses pure
     # convention resolution, so we can't know its expressions → no check.
@@ -878,8 +2075,10 @@ def _collect_scene_ids(data: Any) -> set[str]:
     elif isinstance(data, dict) and "id" in data:
         raw_scenes = [data]
     for s in raw_scenes:
-        if isinstance(s, dict) and "id" in s:
-            ids.add(s["id"])
+        if isinstance(s, dict):
+            scene_id = s.get("id")
+            if isinstance(scene_id, str) and scene_id.strip():
+                ids.add(scene_id)
     return ids
 
 
@@ -891,9 +2090,40 @@ def _collect_simple_ids(data: Any, key: str) -> set[str]:
     elif isinstance(data, list):
         items = data
     for item in items:
-        if isinstance(item, dict) and "id" in item:
-            ids.add(item["id"])
+        if isinstance(item, dict):
+            item_id = item.get("id")
+            if isinstance(item_id, str) and item_id.strip():
+                ids.add(item_id)
     return ids
+
+
+def _collect_spatial_location_records(
+    parsed: dict[Path, Any],
+    *,
+    pack_root: Path,
+) -> dict[str, _SpatialLocationRecord]:
+    """Index raw location coordinates for spatial-map diagnostics."""
+    records: dict[str, _SpatialLocationRecord] = {}
+    for yaml_path, data in parsed.items():
+        if yaml_path.name.lower() != "locations.yaml":
+            continue
+        raw_locations: list[Any] = []
+        if isinstance(data, dict) and "locations" in data:
+            raw_locations = data["locations"] or []
+        elif isinstance(data, list):
+            raw_locations = data
+        for index, raw_location in enumerate(raw_locations):
+            if not isinstance(raw_location, dict):
+                continue
+            location_id = raw_location.get("id")
+            if not isinstance(location_id, str) or not location_id:
+                continue
+            records[location_id] = _SpatialLocationRecord(
+                raw=raw_location,
+                file=_rel(pack_root, yaml_path),
+                path=f"locations[{index}]",
+            )
+    return records
 
 
 def _collect_character_portraits(
@@ -927,6 +2157,8 @@ def _collect_character_portraits(
         if not isinstance(raw, dict) or "id" not in raw:
             continue
         cid = raw["id"]
+        if not isinstance(cid, str) or not cid.strip():
+            continue
         ps = raw.get("portrait_set")
         if isinstance(ps, dict):
             keys = {str(k) for k in ps.keys()}
@@ -977,14 +2209,18 @@ def _check_refs_in_effects(
                 message=f"effect target '{target}' 不是已知地點 id。",
                 hint=hint,
             ))
-        elif kind == "play_scene":
-            ref = eff.get("target") or (eff.get("value") if isinstance(eff.get("value"), str) else None)
-            if ref and ref not in index.scene_ids:
+        elif kind in ("play_scene", "play_scene_branch"):
+            for transition in iter_scene_transitions(eff):
+                ref = transition.target
+                if ref in index.scene_ids:
+                    continue
                 suggestion = _suggest(ref, list(index.scene_ids))
                 hint = f"最接近的 scene id 是 '{suggestion}'。" if suggestion else None
                 issues.append(ValidationIssue(
-                    severity="error", file=file, path=f"{ep}.target",
-                    message=f"play_scene target '{ref}' 不是已知 scene id。",
+                    severity="error",
+                    file=file,
+                    path=f"{ep}.{transition.path}",
+                    message=f"{kind} target '{ref}' 不是已知 scene id。",
                     hint=hint,
                 ))
         elif kind in ("give_item", "take_item", "use_item") and target and target not in index.item_ids:
@@ -1325,7 +2561,118 @@ def _collect_flag_usage(obj: Any, writes: set[str], reads: set[str]) -> None:
 # Main entry point
 # ---------------------------------------------------------------------------
 
+
+def _plugin_pack_root(validation_root: Path) -> Path:
+    """Return the runtime pack root for a validator input path.
+
+    ``validate_pack`` accepts either ``<pack>/`` or ``<pack>/content/``.
+    Plugin discovery always starts at ``<pack>/plugins/``, matching
+    :func:`world_gal_game.content_loader.load_pack`.
+    """
+    if validation_root.name == "content":
+        return validation_root.parent
+    return validation_root
+
+
+def _plugin_failure_issues(manager: Any, *,
+                           pack_root: Path) -> list[ValidationIssue]:
+    """Convert failed pack-local plugin records into validation errors."""
+    from world_gal_game.plugins.errors import PluginLoadError
+
+    issues: list[ValidationIssue] = []
+    for record in manager.failed():
+        # A broken user/global plugin is not a defect in the pack being
+        # validated. Pack-local failures, including malformed manifests,
+        # belong in the pack's validation report.
+        if record.source != "pack":
+            continue
+
+        manifest_path = record.root / "plugin.yaml"
+        issue_path = "plugin"
+        issue_file = _rel(pack_root, manifest_path)
+        if isinstance(record.error, PluginLoadError):
+            entry_name = record.manifest.entry_module or "plugin"
+            if "/" in entry_name or "\\" in entry_name:
+                entry_path = record.root / entry_name
+            else:
+                entry_path = record.root / f"{entry_name}.py"
+            issue_file = _rel(pack_root, entry_path)
+            issue_path = "entry_module"
+
+        detail = str(record.error) if record.error else "unknown load failure"
+        issues.append(ValidationIssue(
+            severity="error",
+            file=issue_file,
+            path=issue_path,
+            message=f"pack plugin '{record.id}' 載入失敗：{detail}",
+            hint=(
+                "檢查 plugin.yaml 的相容性與相依項目，並確認 entry_module "
+                "存在且可正常匯入。"
+            ),
+        ))
+    return issues
+
+
+def _is_runtime_scene_yaml(path: Path, content_root: Path) -> bool:
+    """Whether the runtime scene loader will execute this YAML file."""
+    try:
+        path.relative_to(content_root / "scenes")
+    except ValueError:
+        return False
+    return True
+
+
 def validate_pack(pack_root: Path) -> list[ValidationIssue]:
+    """Validate a pack with its plugin-provided schema kinds active.
+
+    The effect/condition registries are process-global. Capture them before
+    loading this pack's plugins and restore them in ``finally`` so validating
+    one pack cannot change the result of a later validation.
+    """
+    from world_gal_game import __version__ as engine_version
+    from world_gal_game.plugins import (
+        PluginContext,
+        PluginManager,
+        restore,
+        snapshot,
+    )
+
+    validation_root = Path(pack_root).resolve()
+    runtime_pack_root = _plugin_pack_root(validation_root)
+    registry_snapshot = snapshot()
+    plugin_issues: list[ValidationIssue] = []
+
+    try:
+        manager = PluginManager(
+            pack_root=runtime_pack_root,
+            engine_version=engine_version,
+        )
+        try:
+            manager.discover()
+            manager.activate(context=PluginContext(
+                state=None,
+                meta={},
+                pack_root=runtime_pack_root,
+            ))
+        except Exception as exc:
+            # PluginManager normally records per-plugin failures. Keep a
+            # defensive issue here for discovery/filesystem failures that
+            # happen outside that isolation boundary.
+            plugin_issues.append(ValidationIssue(
+                severity="error",
+                file="plugins",
+                path="",
+                message=f"pack plugin discovery/activation failed: {exc}",
+                hint="檢查 plugins/ 目錄權限、plugin.yaml 與 entry_module。",
+            ))
+        plugin_issues.extend(_plugin_failure_issues(
+            manager, pack_root=runtime_pack_root))
+        return plugin_issues + _validate_pack_content(validation_root)
+    finally:
+        restore(registry_snapshot)
+
+
+def _validate_pack_content(pack_root: Path) -> list[ValidationIssue]:
     """Walk a pack directory, parse every YAML, return all issues found.
 
     Strategy:
@@ -1343,8 +2690,41 @@ def validate_pack(pack_root: Path) -> list[ValidationIssue]:
 
     # --- Step 1 & 2: parse + schema validate each file ---
 
-    all_yamls = sorted(content_root.rglob("*.yaml")) + sorted(content_root.rglob("*.yml"))
-    # deduplicate (rglob may overlap)
+    runtime_yamls = [
+        path
+        for path in (
+            sorted(content_root.rglob("*.yaml"))
+            + sorted(content_root.rglob("*.yml"))
+        )
+        if path.suffix in {".yaml", ".yml"}
+    ]
+    cg_gallery_case_aliases = sorted(
+        path
+        for path in content_root.iterdir()
+        if (
+            path.is_file()
+            and path.name.casefold() == "cg_gallery.yaml"
+            and path.name != "cg_gallery.yaml"
+        )
+    )
+    music_room_case_aliases = sorted(
+        path
+        for path in content_root.iterdir()
+        if (
+            path.is_file()
+            and path.name.casefold() == "music_room.yaml"
+            and path.name != "music_room.yaml"
+        )
+    )
+    # Match the runtime loader's case-sensitive YAML patterns everywhere
+    # except for the one root catalog alias we explicitly diagnose. This
+    # avoids validating uppercase scene extensions that Linux runtime ignores.
+    all_yamls = [
+        *runtime_yamls,
+        *cg_gallery_case_aliases,
+        *music_room_case_aliases,
+    ]
+    # Keep explicit deduplication for unusual filesystem aliases.
     seen_paths: set[Path] = set()
     yaml_files: list[Path] = []
     for p in all_yamls:
@@ -1352,32 +2732,121 @@ def validate_pack(pack_root: Path) -> list[ValidationIssue]:
             seen_paths.add(p)
             yaml_files.append(p)
 
+    canonical_cg_gallery_path = content_root / "cg_gallery.yaml"
+    cg_gallery_aliases = [
+        path
+        for path in yaml_files
+        if (
+            path.parent == content_root
+            and path.name.casefold() == "cg_gallery.yaml"
+            and path != canonical_cg_gallery_path
+        )
+    ]
+    for alias in cg_gallery_aliases:
+        issues.append(ValidationIssue(
+            severity="error",
+            file=_rel(pack_root, alias),
+            path="filename",
+            message=(
+                "CG gallery 檔名必須精確為 "
+                "'content/cg_gallery.yaml'（含大小寫）。"
+            ),
+            hint=(
+                "重新命名為 cg_gallery.yaml，避免 macOS 與 Linux "
+                "對大小寫敏感度不同而產生跨平台行為差異。"
+            ),
+        ))
+    cg_gallery_source_path = (
+        canonical_cg_gallery_path
+        if canonical_cg_gallery_path in yaml_files
+        else (cg_gallery_aliases[0] if cg_gallery_aliases else None)
+    )
+    canonical_music_room_path = content_root / "music_room.yaml"
+    music_room_aliases = [
+        path
+        for path in yaml_files
+        if (
+            path.parent == content_root
+            and path.name.casefold() == "music_room.yaml"
+            and path != canonical_music_room_path
+        )
+    ]
+    for alias in music_room_aliases:
+        issues.append(ValidationIssue(
+            severity="error",
+            file=_rel(pack_root, alias),
+            path="filename",
+            message=(
+                "Music Room 檔名必須精確為 "
+                "'content/music_room.yaml'（含大小寫）。"
+            ),
+            hint=(
+                "重新命名為 music_room.yaml，避免 macOS 與 Linux "
+                "對大小寫敏感度不同而產生跨平台行為差異。"
+            ),
+        ))
+    music_room_source_path = (
+        canonical_music_room_path
+        if canonical_music_room_path in yaml_files
+        else (music_room_aliases[0] if music_room_aliases else None)
+    )
+
     for yaml_path in yaml_files:
         rel = _rel(pack_root, yaml_path)
-        data, parse_issues = _parse_yaml_file(yaml_path)
+        data, parse_issues = _parse_yaml_file(
+            yaml_path,
+            strict=yaml_path == music_room_source_path,
+        )
         for iss in parse_issues:
             iss.file = rel
         issues.extend(parse_issues)
         if data is None:
-            continue
+            if (
+                yaml_path in {
+                    cg_gallery_source_path,
+                    music_room_source_path,
+                }
+                and not parse_issues
+            ):
+                # Runtime treats a physically present blank catalog as an
+                # explicitly authored empty roster, not as a missing legacy
+                # catalog. Preserve that distinction so coverage warnings
+                # match what players will see.
+                data = {"entries": []}
+            else:
+                continue
         parsed[yaml_path] = data
 
-        name = yaml_path.name.lower()
-        stem = yaml_path.stem.lower()
-
-        if name == "locations.yaml":
-            issues.extend(_validate_locations_yaml(data, file=rel))
-        elif name == "characters.yaml":
-            issues.extend(_validate_characters_yaml(data, file=rel))
-        elif name == "items.yaml":
-            issues.extend(_validate_items_yaml(data, file=rel))
-        elif name == "resources.yaml":
-            issues.extend(_validate_resources_yaml(data, file=rel))
-        elif name == "achievements.yaml":
-            issues.extend(_validate_achievements_yaml(data, file=rel))
-        elif yaml_path.parent.name == "scenes" or "scene" in stem:
+        is_scene_yaml = _is_runtime_scene_yaml(yaml_path, content_root)
+        if is_scene_yaml:
             issues.extend(_validate_scenes_yaml(
                 data, file=rel, pack_root=pack_root))
+        elif yaml_path == content_root / "locations.yaml":
+            issues.extend(_validate_locations_yaml(data, file=rel))
+        elif yaml_path == content_root / "characters.yaml":
+            issues.extend(_validate_characters_yaml(data, file=rel))
+        elif yaml_path == content_root / "items.yaml":
+            issues.extend(_validate_items_yaml(
+                data,
+                file=rel,
+                pack_root=pack_root,
+            ))
+        elif yaml_path == content_root / "resources.yaml":
+            issues.extend(_validate_resources_yaml(data, file=rel))
+        elif yaml_path == content_root / "achievements.yaml":
+            issues.extend(_validate_achievements_yaml(data, file=rel))
+        elif yaml_path == cg_gallery_source_path:
+            issues.extend(_validate_cg_gallery_yaml(
+                data,
+                file=rel,
+                pack_root=pack_root,
+            ))
+        elif yaml_path == music_room_source_path:
+            issues.extend(_validate_music_room_yaml(
+                data,
+                file=rel,
+                pack_root=pack_root,
+            ))
         else:
             # Unknown YAML — at least it parsed; no schema to check
             pass
@@ -1386,22 +2855,19 @@ def validate_pack(pack_root: Path) -> list[ValidationIssue]:
     index = _RefIndex()
 
     for yaml_path, data in parsed.items():
-        name = yaml_path.name.lower()
-        stem = yaml_path.stem.lower()
-
-        if yaml_path.parent.name == "scenes" or "scene" in stem:
+        if _is_runtime_scene_yaml(yaml_path, content_root):
             index.scene_ids |= _collect_scene_ids(data)
-        elif name == "characters.yaml":
+        elif yaml_path == content_root / "characters.yaml":
             index.character_ids |= _collect_simple_ids(data, "characters")
             ps, nm, heroines = _collect_character_portraits(data)
             index.character_portraits.update(ps)
             index.character_names.update(nm)
             index.heroine_ids |= heroines
-        elif name == "locations.yaml":
+        elif yaml_path == content_root / "locations.yaml":
             index.location_ids |= _collect_simple_ids(data, "locations")
-        elif name == "items.yaml":
+        elif yaml_path == content_root / "items.yaml":
             index.item_ids |= _collect_simple_ids(data, "items")
-        elif name == "resources.yaml":
+        elif yaml_path == content_root / "resources.yaml":
             if isinstance(data, dict) and "resources" in data:
                 for r in (data["resources"] or []):
                     if isinstance(r, dict) and "id" in r:
@@ -1410,6 +2876,10 @@ def validate_pack(pack_root: Path) -> list[ValidationIssue]:
                 for r in data:
                     if isinstance(r, dict) and "id" in r:
                         index.resource_ids.add(r["id"])
+        elif yaml_path == content_root / "endings.yaml":
+            index.ending_ids |= _collect_simple_ids(data, "endings")
+        elif yaml_path == content_root / "chapters.yaml":
+            index.chapter_ids |= _collect_simple_ids(data, "chapters")
 
     # Also collect resources from meta.yaml
     meta_path = content_root / "meta.yaml"
@@ -1420,29 +2890,169 @@ def validate_pack(pack_root: Path) -> list[ValidationIssue]:
                 if isinstance(r, dict) and "id" in r:
                     index.resource_ids.add(r["id"])
 
+    spatial_locations = _collect_spatial_location_records(
+        parsed,
+        pack_root=pack_root,
+    )
+
     # --- Step 4: cross-file reference checks ---
     for yaml_path, data in parsed.items():
         rel = _rel(pack_root, yaml_path)
-        name = yaml_path.name.lower()
-        stem = yaml_path.stem.lower()
-
-        if yaml_path.parent.name == "scenes" or "scene" in stem:
+        if _is_runtime_scene_yaml(yaml_path, content_root):
             issues.extend(_check_refs_scenes(data, file=rel, index=index))
-        elif name == "locations.yaml":
+        elif yaml_path == content_root / "locations.yaml":
             issues.extend(_check_refs_locations(data, file=rel, index=index))
+
+    if (
+        cg_gallery_source_path is not None
+        and cg_gallery_source_path in parsed
+    ):
+        cg_file = _rel(pack_root, cg_gallery_source_path)
+        cg_data = parsed[cg_gallery_source_path]
+        issues.extend(_validate_cg_gallery_refs(
+            cg_data,
+            file=cg_file,
+            character_ids=index.character_ids,
+            chapter_ids=index.chapter_ids,
+        ))
+        try:
+            catalog_assets = {
+                entry.asset
+                for entry in _cg_manifest_from_data(cg_data).entries
+            }
+            catalog_valid = True
+        except (TypeError, ValueError):
+            catalog_assets = set()
+            catalog_valid = False
+        if catalog_valid:
+            referenced_assets: set[str] = set()
+            for source_path, source_data in parsed.items():
+                if (
+                    _is_runtime_scene_yaml(source_path, content_root)
+                    or source_path == content_root / "items.yaml"
+                ):
+                    referenced_assets.update(
+                        _collect_cg_references(source_data)
+                    )
+            for asset in sorted(referenced_assets - catalog_assets):
+                issues.append(ValidationIssue(
+                    severity="warning",
+                    file=cg_file,
+                    path="entries",
+                    message=(
+                        f"劇情使用的 CG '{asset}' "
+                        "未在 cg_gallery.yaml 宣告。"
+                    ),
+                    hint=(
+                        "補上 catalog entry；未宣告 CG 只有在舊存檔或"
+                        "執行期已解鎖時才會以檔名 fallback 顯示。"
+                    ),
+                ))
+
+    if (
+        music_room_source_path is not None
+        and music_room_source_path in parsed
+    ):
+        music_file = _rel(pack_root, music_room_source_path)
+        music_data = parsed[music_room_source_path]
+        try:
+            catalog_assets = {
+                entry.asset
+                for entry in _music_manifest_from_data(music_data).entries
+            }
+            catalog_valid = True
+        except (TypeError, ValueError):
+            catalog_assets = set()
+            catalog_valid = False
+        if catalog_valid:
+            referenced_assets: set[str] = set()
+            for source_path, source_data in parsed.items():
+                if _is_runtime_scene_yaml(source_path, content_root):
+                    referenced_assets.update(
+                        _collect_music_references(source_data)
+                    )
+            meta_data = parsed.get(content_root / "meta.yaml")
+            if isinstance(meta_data, dict):
+                from .core.music_room import canonical_music_path
+
+                title_bgm = meta_data.get("title_bgm")
+                if isinstance(title_bgm, str) and title_bgm.strip():
+                    referenced_assets.add(canonical_music_path(title_bgm))
+
+            bgm_root = pack_root / "assets" / "bgm"
+            try:
+                referenced_assets.update(
+                    f"assets/bgm/{entry.name}"
+                    for entry in bgm_root.iterdir()
+                    if entry.is_file()
+                    and entry.suffix.lower() in {".ogg", ".mp3", ".wav"}
+                )
+            except OSError:
+                pass
+
+            for asset in sorted(referenced_assets - catalog_assets):
+                issues.append(ValidationIssue(
+                    severity="warning",
+                    file=music_file,
+                    path="entries",
+                    message=(
+                        f"遊戲使用或收錄的 BGM '{asset}' "
+                        "未在 music_room.yaml 宣告。"
+                    ),
+                    hint=(
+                        "補上 catalog entry；未宣告曲目只有在舊存檔或"
+                        "執行期已解鎖時才會以檔名 fallback 顯示。"
+                    ),
+                ))
 
     # --- Step 4.5: meta.yaml advisory checks (pack_format_version) ---
     meta_path = content_root / "meta.yaml"
     if meta_path in parsed:
         meta = parsed[meta_path]
         if isinstance(meta, dict):
+            meta_file = _rel(pack_root, meta_path)
             if "pack_format_version" not in meta:
                 issues.append(ValidationIssue(
                     severity="warning",
-                    file=_rel(pack_root, meta_path),
+                    file=meta_file,
                     path="pack_format_version",
                     message="meta.yaml 沒有 pack_format_version 欄位。",
                     hint='加上 `pack_format_version: "0.1"` 以鎖定 schema 版本。',
+                ))
+            issues.extend(_validate_title_metadata(
+                meta,
+                file=meta_file,
+                pack_root=pack_root,
+            ))
+            issues.extend(_validate_locale_metadata(
+                meta,
+                file=meta_file,
+                pack_root=pack_root,
+            ))
+            issues.extend(_validate_ui_skin_metadata(
+                meta,
+                file=meta_file,
+            ))
+            issues.extend(_validate_spatial_map_metadata(
+                meta,
+                file=meta_file,
+                pack_root=pack_root,
+                locations=spatial_locations,
+                scene_ids=index.scene_ids,
+            ))
+            from .dev.verification_contract import audit_expected_unreachable
+            verification_audit = audit_expected_unreachable(
+                meta,
+                scene_ids=index.scene_ids,
+                ending_ids=index.ending_ids,
+            )
+            for problem in verification_audit.issues:
+                issues.append(ValidationIssue(
+                    severity=problem.severity,
+                    file=meta_file,
+                    path=problem.path,
+                    message=problem.message,
+                    hint=problem.hint,
                 ))
 
     # --- Step 4.6: variable-manifest cross-check ---
@@ -1491,8 +3101,35 @@ def validate_pack(pack_root: Path) -> list[ValidationIssue]:
     # still gets the previous diagnostics back to the caller.
     try:
         from .dev.pack_inspector import PackInspector
+        from .dev.verification_contract import audit_expected_unreachable
         inspector = PackInspector(pack_root)
+        reachability = inspector.reachability()
+        verification_audit = audit_expected_unreachable(
+            inspector.meta,
+            scene_ids=set(inspector.scenes_by_id),
+            ending_ids={
+                str(ending["id"])
+                for ending in inspector.endings
+                if isinstance(ending, dict) and ending.get("id")
+            },
+            unreachable_scene_ids=set(reachability["unreachable"]),
+        )
+        for problem in verification_audit.issues:
+            if problem.code != "stale_scene":
+                continue
+            issues.append(ValidationIssue(
+                severity=problem.severity,
+                file=_rel(pack_root, content_root / "meta.yaml"),
+                path=problem.path,
+                message=problem.message,
+                hint=problem.hint,
+            ))
         for de in inspector.dead_ends():
+            if (
+                de.kind == "unreachable"
+                and de.target in verification_audit.active_scene_ids
+            ):
+                continue
             issues.append(ValidationIssue(
                 severity="warning",
                 file=de.file or "(pack)",

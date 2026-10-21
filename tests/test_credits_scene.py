@@ -107,19 +107,6 @@ def test_loader_isolates_malformed_credits_yaml(tmp_path: Path):
     assert not cr.is_empty()
 
 
-def test_real_tsinghua_pack_credits_carry_attribution():
-    """If the sibling Tsing-Hua pack is checked out, its CC-BY BGM attribution
-    surfaces in the resolved credits (the real ship-readiness case)."""
-    pack = Path(__file__).resolve().parents[2] / "Tsing-Hua-Strange-Tales"
-    if not pack.exists():
-        pytest.skip("Tsing-Hua pack not checked out")
-    cr = load_credits({}, pack)
-    assert not cr.is_empty()
-    flat = " ".join(cr.plain_lines())
-    # The CC-BY composer attribution must be present somewhere in the screen.
-    assert "MacLeod" in flat or "Creative Commons" in flat
-
-
 # ---------------------------------------------------------------------------
 # Scene + wiring (via GameDriver)
 # ---------------------------------------------------------------------------

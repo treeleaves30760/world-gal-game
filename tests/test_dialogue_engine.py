@@ -95,6 +95,55 @@ def test_dialogue_history_stores_clean_text():
     assert lines[-1]["text"] == "red line"
 
 
+def test_dialogue_history_stores_optional_canonical_speaker_id():
+    state = GameState()
+    state.story.add_scene(Scene(
+        id="s",
+        lines=[Line(speaker="白若雪", text="先放在這裡。")],
+    ))
+    engine = DialogueEngine(
+        state,
+        speaker_id_resolver=(
+            lambda speaker: "ruoxue" if speaker == "白若雪" else None
+        ),
+    )
+
+    presentation = engine.start_scene("s")
+
+    assert presentation.line.speaker_id == "ruoxue"
+    assert state.dialogue_history.lines[-1]["speaker"] == "白若雪"
+    assert state.dialogue_history.lines[-1]["speaker_id"] == "ruoxue"
+
+
+def test_presentation_uses_authored_speaker_as_stable_non_npc_fallback():
+    state = GameState()
+    state.story.add_scene(Scene(
+        id="s",
+        lines=[Line(speaker="校內廣播", text="請注意。")],
+    ))
+
+    presentation = DialogueEngine(state).start_scene("s")
+
+    assert presentation.line.speaker == "校內廣播"
+    assert presentation.line.speaker_id == "校內廣播"
+    assert state.dialogue_history.lines[-1]["speaker_id"] == "校內廣播"
+
+
+def test_dialogue_history_legacy_shape_without_speaker_id_stays_valid():
+    state = GameState.model_validate({
+        "dialogue_history": {
+            "lines": [{
+                "speaker": "舊角色",
+                "text": "舊存檔仍可讀。",
+                "voice": "assets/voice/legacy.ogg",
+            }],
+            "max_lines": 500,
+        },
+    })
+
+    assert state.dialogue_history.lines[0].get("speaker_id") is None
+
+
 def test_plain_text_tagless_equals_text():
     sc = Scene(id="s", lines=[Line(text="plain line")])
     eng, state = _build_engine([sc])

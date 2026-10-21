@@ -33,11 +33,11 @@ variables:
   `type` ∈ `bool|int|float|str|enum`;`enum` 用 `values` 界定值域。
 - 載入:`content_loader.load_variables` 把 manifest 掛在 `state.meta["__variables__"]`
   (私有橋接,SaveManager 會剝除,不進存檔)。
-- 列出:`wgg variables <pack>` 或 `wgg variables <pack> --check`。
+- 列出:`world-gal-game variables <pack>` 或 `world-gal-game variables <pack> --check`。
 - 玩家視角:`HeadlessSession.inspect()` 的 `variables` 欄位把每個宣告變數與**現值**
   併呈(`{key,type,category,description,default,value,is_set}`)——不再只是一坨無型別
   旗標。
-- 編輯安全:`wgg validate <pack>` 在 `variables.yaml` 存在時做**純 YAML** 交叉檢查
+- 編輯安全:`world-gal-game validate <pack>` 在 `variables.yaml` 存在時做**純 YAML** 交叉檢查
   ——用到但未宣告的旗標給 "did you mean" 警告(Agent 改旗標時的拼字守門),宣告但
   從未讀寫的給提示。沒有 `variables.yaml` 的 pack 完全不受影響。
 
@@ -48,8 +48,8 @@ variables:
 補上:
 
 ```bash
-wgg inspect-pack <pack> --dataflow                 # flags/scenes/items/resources 的 writers+readers + 條件化邊
-wgg inspect-pack <pack> --references ending_lover   # 單一符號的 writers+readers
+world-gal-game inspect-pack <pack> --dataflow                 # flags/scenes/items/resources 的 writers+readers + 條件化邊
+world-gal-game inspect-pack <pack> --references ending_lover   # 單一符號的 writers+readers
 ```
 
 - 對每個 flag / scene / item / resource 收集 `SymbolUsage`(writer 站點 + reader
@@ -57,6 +57,8 @@ wgg inspect-pack <pack> --references ending_lover   # 單一符號的 writers+re
   `choice:lover_event.confess`、`ending:ending_lover`)。**讀取也掃 endings /
   achievements / clues / quests 的 `requires`**——所以「只在結局被讀」的旗標也找得到
   reader。
+- 對外掛採保守的對稱推論：effect / condition 的 `kind` 只要包含小寫 `flag`，
+  其 `target` 就分別記為 flag writer / reader，避免自訂條件被誤報為 write-only。
 - 走的是 `load_pack` 後的**型別模型**,看到的與 runtime 一致。
 - 額外揪出 write-only 旗標(例:demo_pack 的 `quest_done` 是 `3w / 0r`)。
 - 給了 `declared_flags` 時順帶回報 `undeclared_flags` / `unused_declared_flags`。
@@ -77,12 +79,12 @@ wgg inspect-pack <pack> --references ending_lover   # 單一符號的 writers+re
 契約已論證 in-process 的理由,但**語言無關的 CLI 路徑每次呼叫都重啟 Python +
 重載 pack**——這跟 MCP 的 per-call RPC 是同一級成本,只是換地方付。
 
-`wgg session` 把它解決掉:**載入一次**,然後從 stdin 逐行讀 JSON 指令、逐行寫 JSON
+`world-gal-game session` 把它解決掉:**載入一次**,然後從 stdin 逐行讀 JSON 指令、逐行寫 JSON
 回應(NDJSON)。沒有 server 協議重量、沒有 schema 塞爆 context、沒有 JSON-RPC 封裝
 ——就是把 `run_script` 從「一次性批次」變「常駐互動」。
 
 ```bash
-wgg session --pack demo_pack --seed 7
+world-gal-game session --pack demo_pack --seed 7
 # stdin (一行一個指令,與 run_script 的 op 詞彙完全相同):
 {"op":"__ping__"}
 {"op":"set_flag","key":"x"}
@@ -105,7 +107,7 @@ wgg session --pack demo_pack --seed 7
 對 op 動作空間做 BFS(最短路),回傳抵達目標的 op 序列:
 
 ```bash
-wgg plan --pack demo_pack --goal '{"flag":"quest_started"}' \
+world-gal-game plan --pack demo_pack --goal '{"flag":"quest_started"}' \
     --setup '[{"op":"start_scene","scene":"prologue"}]'
 ```
 
@@ -127,7 +129,7 @@ wgg plan --pack demo_pack --goal '{"flag":"quest_started"}' \
 跑過的 transcript 對照 pack 的總量:
 
 ```bash
-wgg coverage games/demo_pack --script games/demo_pack/scripts/test_lover_route.json
+world-gal-game coverage games/demo_pack --script games/demo_pack/scripts/test_lover_route.json
 #   scenes   6/11 (54.5%)  missing: ending_alone, ending_friend, ...
 #   lines    39/67 (58.2%)
 #   choices  3/9 (33.3%)
@@ -172,12 +174,12 @@ ops / read-log / hooks 全部再觸發一次。effects 在該行**首次播放�
 ## 速查
 
 ```bash
-wgg variables <pack> [--check]                       # 宣告變數清單(+ 用到未宣告/宣告未用)
-wgg inspect-pack <pack> --dataflow                   # writers/readers + 條件化邊
-wgg inspect-pack <pack> --references <symbol>         # 單一符號的衝擊面
-wgg session --pack <pack> [--seed N]                  # 常駐 NDJSON 控制面(stdin/stdout)
-wgg plan --pack <pack> --goal '<json>' [--setup '<json>']   # 目標導向路徑搜尋
-wgg coverage <pack> [--script s.json]                 # scene/line/choice/ending 覆蓋率
+world-gal-game variables <pack> [--check]                       # 宣告變數清單(+ 用到未宣告/宣告未用)
+world-gal-game inspect-pack <pack> --dataflow                   # writers/readers + 條件化邊
+world-gal-game inspect-pack <pack> --references <symbol>         # 單一符號的衝擊面
+world-gal-game session --pack <pack> [--seed N]                  # 常駐 NDJSON 控制面(stdin/stdout)
+world-gal-game plan --pack <pack> --goal '<json>' [--setup '<json>']   # 目標導向路徑搜尋
+world-gal-game coverage <pack> [--script s.json]                 # scene/line/choice/ending 覆蓋率
 ```
 
 相關文件:[ai-native-contract.md](ai-native-contract.md)、[headless.md](headless.md)、

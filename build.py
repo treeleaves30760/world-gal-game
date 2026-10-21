@@ -3,8 +3,8 @@
 Usage:
     python build.py <pack_path> [options]
 
-Run ``python build.py --help`` for the full option list.  For the ``wgg``
-entry point, use ``wgg build <pack_path>``.
+Run ``python build.py --help`` for the full option list. For the registered
+console entry point, use ``world-gal-game build <pack_path>``.
 """
 from __future__ import annotations
 

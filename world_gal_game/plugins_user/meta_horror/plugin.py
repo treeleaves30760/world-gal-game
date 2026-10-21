@@ -11,7 +11,7 @@ Inline dialogue ops (use inside a line's ``text:``):
   magenta→cyan chromatic flash). The optional arg scales intensity (default 1).
 - ``[[whoami]]`` — replaced by the player's *real* OS account name (falls back
   to the in-game name). "I know who you are."
-- ``[[corrupt:那是青衣的聲音]]`` — replaced by a glitch-corrupted version of the
+- ``[[corrupt:那是若雪的聲音]]`` — replaced by a glitch-corrupted version of the
   given text (deterministic, so a rollback replays identically).
 
 Effect form (use in a line/scene ``effects:`` list):

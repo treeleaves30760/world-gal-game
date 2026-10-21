@@ -43,6 +43,43 @@ jobs:
       - name: Self-check demo pack (schema + refs + smoke)
         run: uv run python main.py self-check games/demo_pack
 
+  runtime-reliability:
+    # Host-sensitive source-runtime evidence is deliberately separate from
+    # self-check. Numeric limits in this portable dummy-SDL policy are
+    # observational; process/protocol, determinism, cache and plugin failures
+    # remain blocking.
+    runs-on: ubuntu-latest
+    env:
+      SDL_VIDEODRIVER: dummy
+      SDL_AUDIODRIVER: dummy
+      PYGAME_HIDE_SUPPORT_PROMPT: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install Python
+        run: uv python install 3.12
+
+      - name: Sync dependencies + runtime evidence extra
+        run: uv sync --extra runtime
+
+      - name: Run demo-pack runtime reliability gate
+        run: >-
+          uv run python -m world_gal_game.cli runtime-check games/demo_pack
+          --policy games/demo_pack/content/runtime_reliability.yaml
+          --report artifacts/runtime-reliability/demo-pack-linux.json
+
+      - name: Upload runtime reliability evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: runtime-reliability-${{ runner.os }}-${{ github.run_attempt }}
+          path: artifacts/runtime-reliability/demo-pack-linux.json
+          if-no-files-found: error
+          retention-days: 14
+
   web-smoke:
     # Web build is the optional extra. This job stages + attempts a pygbag
     # build but never blocks CI: continue-on-error keeps a missing/incompatible

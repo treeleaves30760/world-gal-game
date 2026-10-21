@@ -180,6 +180,43 @@ def test_unregister_plugin_removes_entries(clean_pack_migrations):
     assert reg.list_entries()[0].plugin_id == "pluginB"
 
 
+def test_same_plugin_hot_reload_replaces_edge():
+    reg = PackMigrationRegistry()
+
+    def first(data: dict) -> dict:
+        data["implementation"] = "first"
+        return data
+
+    def reloaded(data: dict) -> dict:
+        data["implementation"] = "reloaded"
+        return data
+
+    reg.register(PackMigrationEntry(
+        "0.3", "0.4", first, pack_id="demo", plugin_id="pluginA",
+    ))
+    reg.register(PackMigrationEntry(
+        "0.3", "0.4", reloaded, pack_id="demo", plugin_id="pluginA",
+    ))
+
+    entries = reg.list_entries()
+    assert len(entries) == 1
+    assert entries[0].fn is reloaded
+
+
+def test_different_plugin_cannot_replace_owned_edge():
+    reg = PackMigrationRegistry()
+    reg.register(PackMigrationEntry(
+        "0.3", "0.4", lambda data: data,
+        pack_id="demo", plugin_id="pluginA",
+    ))
+
+    with pytest.raises(ValueError, match="duplicate pack migration edge"):
+        reg.register(PackMigrationEntry(
+            "0.3", "0.4", lambda data: data,
+            pack_id="demo", plugin_id="pluginB",
+        ))
+
+
 def test_chain_empty_when_already_current():
     reg = PackMigrationRegistry()
     assert reg.chain(from_version="0.3", to_version="0.3", pack_id="demo") == []

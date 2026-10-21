@@ -62,11 +62,11 @@ def test_apply_advance_time():
 
 def test_set_flag_if_unset_keeps_first_truthy_value():
     s = GameState()
-    out1 = s.apply(Effect(kind="set_flag_if_unset", target="first_met", value="qingyi"))
-    out2 = s.apply(Effect(kind="set_flag_if_unset", target="first_met", value="yuening"))
+    out1 = s.apply(Effect(kind="set_flag_if_unset", target="first_met", value="ruoxue"))
+    out2 = s.apply(Effect(kind="set_flag_if_unset", target="first_met", value="qianqiu"))
     assert out1["set"] is True
     assert out2["set"] is False
-    assert s.events.get_flag("first_met") == "qingyi"
+    assert s.events.get_flag("first_met") == "ruoxue"
 
 
 def test_scene_hooks_support_full_conditions_when_state_is_supplied():

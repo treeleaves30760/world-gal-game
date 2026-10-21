@@ -425,13 +425,22 @@ class InspectFieldRegistry:
     def list_keys(self) -> list[str]:
         return sorted(self._entries.keys())
 
-    def collect(self, state: "GameState") -> dict[str, Any]:
+    def collect(
+        self,
+        state: "GameState",
+        *,
+        capture: list[Any] | None = None,
+    ) -> dict[str, Any]:
         """Run every registered producer, returning {key: value}."""
-        from .errors import PluginRuntimeError, isolate  # local
+        from .errors import isolate  # local
         out: dict[str, Any] = {}
         for key in sorted(self._entries):
             entry = self._entries[key]
-            with isolate(entry.plugin_id, f"inspect_field:{key}"):
+            with isolate(
+                entry.plugin_id,
+                f"inspect_field:{key}",
+                capture=capture,
+            ):
                 out[key] = entry.fn(state)
         return out
 
@@ -677,7 +686,7 @@ def effect(kind: str,
     ``args`` optionally binds a pydantic model describing the
     (target/value/stat) arguments for this kind. It is used for JSON-Schema
     export in the capability manifest and for build/lint-time validation
-    (``wgg validate``); it changes neither the ``(state, eff)`` handler
+    (``world-gal-game validate``); it changes neither the ``(state, eff)`` handler
     signature nor the tolerant runtime dispatch in ``GameState.apply``.
     """
     def deco(fn: Callable) -> Callable:

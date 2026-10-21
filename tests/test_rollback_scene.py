@@ -16,7 +16,7 @@ os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
 
 import pygame
 
-from world_gal_game.core.story_graph import Scene, Line
+from world_gal_game.core.story_graph import Choice, Line, Scene
 
 
 @pytest.fixture(autouse=True, scope="module")
@@ -83,6 +83,71 @@ def test_backspace_rewinds_to_previous_line(driver):
     assert ds._current_line.text == "line-A"
     # At the first displayed line there is nothing earlier to rewind to.
     assert ds._history.can_rewind() is False
+
+
+def test_choice_render_cache_releases_on_leave_not_modal_pause_and_rebuilds(
+    driver,
+):
+    driver.app.config.rollback_enabled = True
+    target = Scene(
+        id="choice_cache_target",
+        lines=[Line(text="after choice")],
+    )
+    source = Scene(
+        id="choice_cache_source",
+        lines=[Line(text="before choice")],
+        choices=[
+            Choice(
+                id="continue",
+                text="Continue",
+                next_scene=target.id,
+            ),
+            Choice(
+                id="alternate",
+                text="Alternate",
+                next_scene=target.id,
+            ),
+        ],
+    )
+    driver.app.state.story.add_scene(target)
+    ds = _open_dialogue(driver, source)
+    _advance(ds)
+    assert ds.choices.visible is True
+
+    ds.choices.draw(driver.app.screen)
+    retained_backdrop = ds.choices._fallback_backdrop_cache
+    retained_panel = ds.choices.panel._fallback_cache
+    assert retained_backdrop is not None
+    assert retained_panel is not None
+
+    releases = 0
+    original_release = ds.choices.release_render_cache
+
+    def tracked_release() -> None:
+        nonlocal releases
+        releases += 1
+        original_release()
+
+    ds.choices.release_render_cache = tracked_release  # type: ignore[method-assign]
+
+    ds.pause()
+    ds.resume()
+    assert releases == 0
+    assert ds.choices._fallback_backdrop_cache is retained_backdrop
+    assert ds.choices.panel._fallback_cache is retained_panel
+
+    ds._on_choose("continue")
+    assert releases == 1
+    assert ds.choices.visible is False
+    assert ds.choices._fallback_backdrop_cache is None
+    assert ds.choices.panel._fallback_cache is None
+    assert ds._current_line.text == "after choice"
+
+    _press_backspace(driver)
+    assert ds.choices.visible is True
+    ds.choices.draw(driver.app.screen)
+    assert ds.choices._fallback_backdrop_cache is not None
+    assert ds.choices.panel._fallback_cache is not None
 
 
 def test_rollback_disabled_leaves_no_history(driver):

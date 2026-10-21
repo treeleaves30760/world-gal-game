@@ -32,10 +32,9 @@ from .core.clue import Clue
 from .core.endings import Ending
 from .core.game_state import GameState, PlayerInfo
 from .core.inventory import Item
-from .core.map_system import MapSystem, Location, NPCPresence, SceneHook, Exit, Region
+from .core.map_system import Location, NPCPresence, SceneHook, Exit, Region
 from .core.quest import Quest, Objective
 from .core.resources import Resource
-from .core.story_graph import Condition
 from .npc.npc_base import NPC, NPCRegistry
 from .dialogue.script_loader import load_scenes_dir
 from .dialogue.script_loader import _to_conditions, _to_effects
@@ -254,6 +253,34 @@ def load_chapters(content_root: Path, state: GameState) -> None:
         content_root / "chapters.yaml")
 
 
+def load_cg_gallery_manifest(content_root: Path, state: GameState) -> None:
+    """Load optional static CG-gallery metadata.
+
+    The roster is parked on a private bridge so titles and ordering never
+    become save data.  Unlock state continues to live exclusively in
+    ``state.cg_gallery`` as asset paths, preserving every existing save.
+    """
+    from .core.cg_gallery_spec import CGGalleryManifest
+
+    state.meta["__cg_gallery_manifest__"] = CGGalleryManifest.load(
+        content_root / "cg_gallery.yaml"
+    )
+
+
+def load_music_room_manifest(content_root: Path, state: GameState) -> None:
+    """Load optional static Music Room metadata.
+
+    Titles, credits, ordering, and spoiler visibility are pack content rather
+    than player progress, so the manifest uses a private save-stripped bridge.
+    Heard-track identities remain exclusively in ``state.music_room``.
+    """
+    from .core.music_room_spec import MusicRoomManifest
+
+    state.meta["__music_room_manifest__"] = MusicRoomManifest.load(
+        content_root / "music_room.yaml"
+    )
+
+
 def load_game_meta(content_root: Path) -> dict[str, Any]:
     meta = _read_yaml(content_root / "meta.yaml") or {}
     return meta
@@ -315,6 +342,8 @@ def load_pack(content_root: Path) -> tuple[GameState, NPCRegistry, dict]:
     load_clues(content_root, state)
     load_variables(content_root, state)
     load_chapters(content_root, state)
+    load_cg_gallery_manifest(content_root, state)
+    load_music_room_manifest(content_root, state)
     meta = load_game_meta(content_root)
     load_resources(content_root, state, meta)
     if "player" in meta:

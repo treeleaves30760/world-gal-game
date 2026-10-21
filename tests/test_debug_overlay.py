@@ -65,6 +65,22 @@ def test_set_state_and_draw_no_crash(overlay: DebugOverlay) -> None:
     overlay.draw(surface)   # must not raise
 
 
+def test_set_state_surfaces_asset_cache_telemetry(overlay: DebugOverlay) -> None:
+    overlay.set_state(
+        GameState(),
+        cache_stats={
+            "image_bytes": 16 * 1024 * 1024,
+            "image_budget_bytes": 256 * 1024 * 1024,
+            "sound_bytes": 4 * 1024 * 1024,
+            "sound_budget_bytes": 64 * 1024 * 1024,
+            "retained_audio_bytes": 12 * 1024 * 1024,
+        },
+    )
+
+    assert "Images: 16.0/256 MiB" in overlay._lines
+    assert "Audio: 4.0/64 MiB (live 12.0)" in overlay._lines
+
+
 def test_draw_while_hidden_no_crash(overlay: DebugOverlay) -> None:
     overlay.visible = False
     surface = pygame.Surface((1280, 720))

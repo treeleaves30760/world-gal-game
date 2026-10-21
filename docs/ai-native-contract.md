@@ -22,10 +22,10 @@ diff / trace);要在動手前先**讀懂** pack 的狀態空間與後果(變數�
 
 ```bash
 # 完整能力快照(含已載入 plugin 的 kind):effects/conditions/hooks/widgets/...
-uv run wgg capabilities --pack demo_pack --format json
+uv run world-gal-game capabilities --pack demo_pack --format json
 
 # 只要 schema bundle(離線驗證 pack edit 用),語言無關:
-uv run wgg capabilities --pack demo_pack --schema
+uv run world-gal-game capabilities --pack demo_pack --schema
 ```
 
 `--schema` 輸出:
@@ -47,7 +47,7 @@ uv run wgg capabilities --pack demo_pack --schema
 - 完整人類可讀清單(自動生成、不手改):`docs/effects-reference.md`、
   `docs/conditions-reference.md`(用 `uv run python tools/gen_references.py` 重生,
   `--check` 可在 CI 偵測 drift)。
-- 編輯前驗證:`uv run wgg validate <pack>` 會用這些 arg model 檢查(**warning 級**,
+- 編輯前驗證:`uv run world-gal-game validate <pack>` 會用這些 arg model 檢查(**warning 級**,
   不擋既有內容),並對拼錯的 kind 給 "did you mean"。`PackEditor` 在結構化編輯時
   也會對拼錯的 effect/condition kind 回 "did you mean"。
 
@@ -72,16 +72,18 @@ sess.transcript                      # 該批次的完整 trace(見第三層)
 
 | op | 參數 | 作用 |
 |---|---|---|
-| `move` | `location` | 移動到地點(觸發 enter/auto 場景) |
-| `start_scene` | `scene` | 開始一個場景 |
+| `move` | `location`, `distant?` | 玩家移動到可達地點；`distant: true` 提交已解鎖的 graph 行程 |
+| `examine` | `scene` | 玩家調查當前地點、當下條件成立的 `trigger: examine` hook |
+| `gift` | `npc`, `item`, `count?` | 玩家送出一件持有且未鎖定的物品給當下在場 NPC；`count` 只接受 1 |
+| `start_scene` | `scene` | 開發者直接開場景，不經玩家 hook／地點／時間驗證 |
 | `next` | `count?` | 推進對白 N 行(自動跟隨轉場) |
 | `choose` | `choice` | 選一個選項 |
 | `chat` | `npc`, `message` | 與 NPC 自由對話(EchoBrain 確定性) |
-| `advance_time` | `phases?` | 推進時間 |
-| `set_flag` | `key`, `value?` | 設旗標 |
-| `adjust_affection` | `npc`, `delta`, `stat?` | 調整好感 |
+| `advance_time` | `phases?` | 逐時段推進；遇第一個可用 `enter`/`auto` hook 便停下並回傳 `phases_advanced` |
+| `set_flag` | `key`, `value?` | 開發者直接設旗標 |
+| `adjust_affection` | `npc`, `delta`, `stat?` | 開發者直接調整好感 |
 | `inspect` | — | 回傳當前 `inspect()` 快照 |
-| **`apply`** | `effect: {kind,...}` | 套用**任意** effect(走 `GameState.apply`) |
+| **`apply`** | `effect: {kind,...}` | 開發者直接套用**任意** effect(走 `GameState.apply`) |
 | **`check`** | `condition: {kind,...}` | 評估**任意** condition |
 | **`assert`** | 見下 | 斷言期望,`ok` 即 pass/fail |
 | **`affordances`** | — | 回傳當前 action space |
@@ -90,6 +92,25 @@ sess.transcript                      # 該批次的完整 trace(見第三層)
 
 `assert` 形式:`{flag, equals?}`、`{affection, gte\|lt\|equals, stat?}`、
 `{scene_played}`、`{condition: {...}}`。
+
+`move`／`examine`／`gift` 是玩家等價操作：執行當下會重驗地點、時間、flags、
+scene hook、NPC presence、inventory 與 item lock，且對話開啟時會拒絕。
+`affordances()["examine"]` 的 row 是
+`{op:"examine", scene, title}`；`affordances()["gift"]` 的 row 是
+`{op:"gift", npc, npc_name, item, item_name, count:1, owned}`。兩個陣列在
+對話中都會隱藏；地圖會鎖定、travel rows 會清空、exits 會標成 unavailable，
+避免 agent 看見玩家不能按的操作。
+
+`advance_time(phases=N)` 不是一次跳 N 格：它逐 phase 重驗 action policy，
+並在第一個可用的 `enter`／`auto` hook 出現時立即開啟該場景和停止。結果的
+`phases_advanced` 是實際推進量，可能小於 N；對話進行中則是 0 並回傳錯誤。
+`next`／`choose` 關閉對話後也會重新檢查相同的 ambient hook 邊界。
+
+Line presentation 的 typed `sound_captions` 也會跨 Python／CLI／NDJSON 原樣保留；
+這是作者確認的聲音語意，不依賴 headless mixer，也不表示對應資產已通過發行 QA。
+
+`start_scene`／`apply`（以及直接改狀態的 `set_flag`／`adjust_affection`）是
+開發者控制，適合建立聚焦測試狀態，但不能作為玩家自然可達性的證據。
 
 `apply`/`check` 讓 Agent 用**遊戲真正在用的那個 effect/condition**驅動狀態(不再
 只有 set_flag/adjust_affection);`snapshot`/`restore` 讓 Agent 做「選 A vs 選 B」的
@@ -131,9 +152,9 @@ uv run python -m world_gal_game.cli --headless \
 
 ## 傳輸層(由通用到方便)
 
-1. **檔案契約(最語言無關)**:`wgg capabilities --schema` 的 JSON Schema +
-   `run_script` 回傳的 trace/diff(JSON)+ `wgg validate`。任何語言的 Agent 都能讀寫。
-2. **CLI + JSON**:`wgg` 子命令(`--format json` / `--schema` / `--headless
+1. **檔案契約(最語言無關)**:`world-gal-game capabilities --schema` 的 JSON Schema +
+   `run_script` 回傳的 trace/diff(JSON)+ `world-gal-game validate`。任何語言的 Agent 都能讀寫。
+2. **CLI + JSON**:`world-gal-game` 子命令(`--format json` / `--schema` / `--headless
    --script`),stdout 為乾淨 JSON(pygame banner 已抑制)。
 3. **Python SDK**:`HeadlessSession`,in-process 跑,docstring 即文件。
 
@@ -142,8 +163,8 @@ uv run python -m world_gal_game.cli --headless \
 ## 速查
 
 ```bash
-uv run wgg capabilities --pack demo_pack --schema      # 每個 kind 的 JSON Schema
-uv run wgg validate <pack>                             # 編輯前驗證(warning 級 arg 檢查)
+uv run world-gal-game capabilities --pack demo_pack --schema      # 每個 kind 的 JSON Schema
+uv run world-gal-game validate <pack>                             # 編輯前驗證(warning 級 arg 檢查)
 uv run python -m world_gal_game.cli --headless --inspect --pack demo_pack
 uv run python -m world_gal_game.cli --headless --script <s.json> --pack demo_pack
 uv run python tools/gen_references.py [--check]        # 重生/檢查 reference 文件

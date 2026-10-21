@@ -10,7 +10,7 @@ state predicate, find a sequence of ops that reaches it.
 :class:`Planner` closes that gap. It runs a breadth-first search over the op
 action space (so the returned ``path`` is a shortest op sequence), restoring a
 snapshot at every node, expanding the affordances into candidate ops
-(``choose`` / ``move`` / ``start_scene`` / ``next``), and testing the goal with
+(``choose`` / ``move`` / ``examine`` / ``start_scene`` / ``next``), and testing the goal with
 ``HeadlessSession.assert_expect`` at each node. A visited-set keyed on the
 state (location, scene, line index, flags, played scenes, inventory, resources,
 affection, and the clock) collapses the ``move``/``next`` loops that would
@@ -26,6 +26,7 @@ combinatorial pack) from exploring forever; on exhaustion the planner returns
 from __future__ import annotations
 
 from collections import deque
+from copy import deepcopy
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict
@@ -121,6 +122,7 @@ class Planner:
             resources,
             affection,
             clock,
+            Planner._presentation_key(sess),
         )
 
     @staticmethod
@@ -149,12 +151,59 @@ class Planner:
             st.story.current_line_index,
             getattr(st, "current_chapter", None),
             flags,
+            Planner._presentation_key(sess),
         )
 
     @staticmethod
     def _presentation_kind(sess: HeadlessSession) -> str | None:
         pres = sess.last_presentation
         return pres.get("kind") if isinstance(pres, dict) else None
+
+    @staticmethod
+    def _presentation_key(sess: HeadlessSession) -> tuple:
+        """Fingerprint the visible boundary that controls legal actions.
+
+        A final line and the choice menu immediately after it can share the
+        same ``GameState`` cursor.  Treating the presentation as part of the
+        planner state prevents that meaningful transition from being collapsed
+        and keeps choices unavailable until they have actually been surfaced.
+        Other line/end presentation details do not change the planner action
+        space and are deliberately collapsed to avoid needless search fan-out.
+        """
+        pres = sess.last_presentation
+        if (
+            not isinstance(pres, dict)
+            or pres.get("kind") != "choice"
+            or pres.get("scene_id") != sess.state.story.current_scene
+        ):
+            return ("nonchoice",)
+        choices = pres.get("choices")
+        choice_rows = (
+            tuple(
+                (row.get("id"), row.get("enabled"))
+                for row in choices
+                if isinstance(row, dict)
+            )
+            if isinstance(choices, list)
+            else ()
+        )
+        return ("choice", choice_rows)
+
+    @staticmethod
+    def _checkpoint(
+        sess: HeadlessSession,
+    ) -> tuple[dict[str, Any], dict[str, Any] | None]:
+        """Capture state plus the presentation boundary used by affordances."""
+        return sess.snapshot(), deepcopy(sess.last_presentation)
+
+    @staticmethod
+    def _restore_checkpoint(
+        sess: HeadlessSession,
+        checkpoint: tuple[dict[str, Any], dict[str, Any] | None],
+    ) -> None:
+        state_snapshot, presentation = checkpoint
+        sess.restore(state_snapshot)
+        sess.last_presentation = deepcopy(presentation)
 
     def _examine_scenes(self, sess: HeadlessSession) -> list[str]:
         """Scene ids reachable by *examining* the current location.
@@ -190,11 +239,11 @@ class Planner:
         past an end is a no-op); the state-key dedup catches any that slip
         through as redundant.
 
-        ``explore_examines`` adds ``examine`` (``start_scene`` of an available
-        examine-trigger hook) — these read as organic player interaction, so
-        they are offered even when ``explore_scenes`` (arbitrary ``start_scene``
-        teleport) is off. ``explore_time`` offers an ``advance_time`` step, for
-        searches over packs whose progression is gated on the clock.
+        ``explore_examines`` adds the player-level ``examine`` op for an
+        available examine-trigger hook. These are offered even when
+        ``explore_scenes`` (arbitrary ``start_scene`` teleport) is off.
+        ``explore_time`` offers an ``advance_time`` step, for searches over
+        packs whose progression is gated on the clock.
         """
         actions: list[dict[str, Any]] = []
         try:
@@ -218,13 +267,15 @@ class Planner:
         elif explore_examines:
             # Organic: open examine-trigger hooks here (not arbitrary scenes).
             for sid in self._examine_scenes(sess):
-                actions.append({"op": "start_scene", "scene": sid})
+                actions.append({"op": "examine", "scene": sid})
 
         if self._presentation_kind(sess) != "end":
             actions.append({"op": "next", "count": 1})
 
         if explore_time:
-            actions.append({"op": "advance_time", "phases": 1})
+            time_action = aff.get("advance_time", {})
+            if time_action.get("available", True):
+                actions.append({"op": "advance_time", "phases": 1})
 
         return actions
 
@@ -276,10 +327,15 @@ class Planner:
                 # search still runs from there rather than crashing.
                 pass
 
-        start_snapshot = sess.snapshot()
+        start_snapshot = self._checkpoint(sess)
         start_key = key_of(sess)
 
-        frontier: deque[tuple[dict[str, Any], list[dict[str, Any]]]] = deque()
+        frontier: deque[
+            tuple[
+                tuple[dict[str, Any], dict[str, Any] | None],
+                list[dict[str, Any]],
+            ]
+        ] = deque()
         frontier.append((start_snapshot, []))
         visited: set[tuple] = {start_key}
         nodes_explored = 0
@@ -297,7 +353,7 @@ class Planner:
             snap, path = frontier.popleft()
             nodes_explored += 1
 
-            sess.restore(snap)
+            self._restore_checkpoint(sess, snap)
             try:
                 reached = bool(sess.assert_expect(goal).get("ok"))
             except Exception:
@@ -321,7 +377,7 @@ class Planner:
                     explore_scenes=explore_scenes,
                     explore_examines=explore_examines,
                     explore_time=explore_time):
-                sess.restore(snap)
+                self._restore_checkpoint(sess, snap)
                 try:
                     self._apply_action(sess, action)
                 except Exception:
@@ -330,7 +386,7 @@ class Planner:
                 if key in visited:
                     continue
                 visited.add(key)
-                child = sess.snapshot()
+                child = self._checkpoint(sess)
                 frontier.append((child, path + [action]))
 
         # exhausted == the frontier emptied AND no cap (nodes/time/depth) ever
@@ -344,15 +400,17 @@ class Planner:
     def _apply_action(sess: HeadlessSession, action: dict[str, Any]) -> None:
         """Apply one expansion op to ``sess`` via its matching method.
 
-        Mirrors the ``run_script`` dispatch for the four search ops; anything
-        else is routed through ``run_script`` so the planner stays correct even
-        if the action vocabulary grows.
+        Mirrors the ``run_script`` dispatch for the common search ops;
+        anything else is routed through ``run_script`` so the planner stays
+        correct even if the action vocabulary grows.
         """
         op = action.get("op")
         if op == "choose":
             sess.choose(action["choice"])
         elif op == "move":
             sess.move_to(action["location"])
+        elif op == "examine":
+            sess.examine(action["scene"])
         elif op == "start_scene":
             sess.start_scene(action["scene"])
         elif op == "next":

@@ -75,6 +75,18 @@ def _make_minimal_pack(root: Path) -> None:
     ]})
 
 
+def _write_pack_plugin(root: Path, plugin_id: str, body: str) -> None:
+    """Write a minimal pack-local plugin used by validator tests."""
+    plugin_dir = root / "plugins" / plugin_id
+    _write(plugin_dir / "plugin.yaml", {
+        "id": plugin_id,
+        "name": plugin_id,
+        "version": "0.1.0",
+        "entry_module": "plugin",
+    })
+    (plugin_dir / "plugin.py").write_text(body, encoding="utf-8")
+
+
 # ---------------------------------------------------------------------------
 # Test 1: valid pack produces 0 errors
 # ---------------------------------------------------------------------------
@@ -84,6 +96,86 @@ def test_valid_pack_no_errors(tmp_path: Path) -> None:
     issues = validate_pack(tmp_path)
     errors = [i for i in issues if i.severity == "error"]
     assert errors == [], f"Unexpected errors: {errors}"
+
+
+def test_locale_manifest_and_catalog_are_validated_from_pack_or_content_root(
+    tmp_path: Path,
+) -> None:
+    from world_gal_game.core.localization import message_table_digest
+
+    _make_minimal_pack(tmp_path)
+    source = {"scene_intro.line.0": "Hello."}
+    digest = message_table_digest(source)
+    _write(tmp_path / "content" / "i18n" / "messages.en.yaml", {
+        "format_version": 1,
+        "language": "en",
+        "source_language": "en",
+        "source_digest": digest,
+        "messages": source,
+    })
+    _write(tmp_path / "content" / "i18n" / "zh-Hant.yaml", {
+        "format_version": 1,
+        "language": "zh-Hant",
+        "source_language": "en",
+        "source_digest": digest,
+        "messages": {"scene_intro.line.0": "你好。"},
+    })
+    _write(tmp_path / "content" / "meta.yaml", {
+        "pack_format_version": "0.1",
+        "locale": {
+            "source": "en",
+            "default": "en",
+            "languages": {
+                "en": {
+                    "label": "English",
+                    "status": "complete",
+                    "catalog": "content/i18n/messages.en.yaml",
+                    "story_scenes": "all",
+                },
+                "zh-Hant": {
+                    "label": "繁體中文",
+                    "status": "preview",
+                    "catalog": "content/i18n/zh-Hant.yaml",
+                    "story_scenes": ["scene_intro"],
+                },
+            },
+        },
+    })
+
+    for root in (tmp_path, tmp_path / "content"):
+        locale_errors = [
+            issue
+            for issue in validate_pack(root)
+            if issue.severity == "error" and issue.path == "locale"
+        ]
+        assert locale_errors == []
+
+    (tmp_path / "content" / "i18n" / "zh-Hant.yaml").unlink()
+    locale_errors = [
+        issue
+        for issue in validate_pack(tmp_path)
+        if issue.severity == "error" and issue.path == "locale"
+    ]
+    assert len(locale_errors) == 1
+    assert "regular, non-symlink pack file" in locale_errors[0].message
+
+
+def test_malformed_legacy_locale_block_fails_closed_in_validator(
+    tmp_path: Path,
+) -> None:
+    _make_minimal_pack(tmp_path)
+    _write(tmp_path / "content" / "meta.yaml", {
+        "pack_format_version": "0.1",
+        "locale": {"ui": ["not", "a", "mapping"]},
+    })
+
+    locale_errors = [
+        issue
+        for issue in validate_pack(tmp_path)
+        if issue.severity == "error" and issue.path == "locale"
+    ]
+    assert len(locale_errors) == 1
+    assert "string mapping" in locale_errors[0].message
 
 
 # ---------------------------------------------------------------------------
@@ -154,6 +246,92 @@ def test_invalid_effect_kind_affecton(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Pack-local plugin validation
+# ---------------------------------------------------------------------------
+
+def test_pack_plugin_effect_kind_is_valid_during_validation(
+        tmp_path: Path) -> None:
+    from world_gal_game.plugins import EFFECT_REGISTRY
+
+    _make_minimal_pack(tmp_path)
+    _write_pack_plugin(
+        tmp_path,
+        "validator_effect_plugin",
+        "from world_gal_game.plugins import effect\n"
+        "\n"
+        "@effect('validator_custom_effect')\n"
+        "def apply_custom_effect(state, eff):\n"
+        "    return {'kind': eff.kind, 'ok': True}\n",
+    )
+    _write(tmp_path / "content" / "scenes" / "plugin_effect.yaml", {
+        "scenes": [{
+            "id": "scene_plugin_effect",
+            "title": "Plugin Effect",
+            "lines": [{"text": "Use the plugin."}],
+            "on_end": [{"kind": "validator_custom_effect"}],
+        }],
+    })
+
+    issues = validate_pack(tmp_path)
+
+    errors = [issue for issue in issues if issue.severity == "error"]
+    assert not any(
+        "validator_custom_effect" in issue.message for issue in errors
+    ), errors
+    assert "validator_custom_effect" not in EFFECT_REGISTRY
+
+
+def test_validate_pack_restores_entire_plugin_registry(
+        tmp_path: Path) -> None:
+    from world_gal_game.plugins import effect, restore, snapshot
+
+    _make_minimal_pack(tmp_path)
+    _write_pack_plugin(
+        tmp_path,
+        "validator_isolation_plugin",
+        "from world_gal_game.plugins import effect\n"
+        "\n"
+        "@effect('validator_transient_effect')\n"
+        "def apply_transient_effect(state, eff):\n"
+        "    return {'kind': eff.kind, 'ok': True}\n",
+    )
+
+    original = snapshot()
+    try:
+        @effect("validator_existing_effect", plugin_id="validator_test")
+        def existing_effect(state, eff):
+            return {"kind": eff.kind, "ok": True}
+
+        expected = snapshot()
+        validate_pack(tmp_path)
+        assert snapshot() == expected
+    finally:
+        restore(original)
+
+
+def test_pack_plugin_import_failure_is_validation_error(
+        tmp_path: Path) -> None:
+    _make_minimal_pack(tmp_path)
+    _write_pack_plugin(
+        tmp_path,
+        "validator_broken_plugin",
+        "raise RuntimeError('validator import exploded')\n",
+    )
+
+    issues = validate_pack(tmp_path)
+
+    failure = next(
+        issue for issue in issues
+        if "validator_broken_plugin" in issue.message
+    )
+    assert failure.severity == "error"
+    assert failure.file == "plugins/validator_broken_plugin/plugin.py"
+    assert failure.path == "entry_module"
+    assert "validator import exploded" in failure.message
+    assert failure.hint is not None
+
+
+# ---------------------------------------------------------------------------
 # Test 4: choice.next_scene points to unknown scene id -> 1 error
 # ---------------------------------------------------------------------------
 
@@ -181,6 +359,59 @@ def test_unknown_next_scene(tmp_path: Path) -> None:
         i for i in errors if "scene_does_not_exist" in i.message
     ]
     assert len(ref_errors) >= 1, f"Expected unknown scene id error, got: {errors}"
+
+
+def test_play_scene_branch_checks_default_and_case_targets(
+    tmp_path: Path,
+) -> None:
+    _make_minimal_pack(tmp_path)
+    _write(tmp_path / "content" / "scenes" / "branch.yaml", {
+        "scenes": [
+            {
+                "id": "scene_branch",
+                "title": "Branch",
+                "lines": [{"text": "Choose by state."}],
+                "on_end": [
+                    {
+                        "kind": "play_scene_branch",
+                        "target": "missing_default",
+                        "value": [
+                            {
+                                "when": {
+                                    "kind": "flag",
+                                    "target": "known_route",
+                                },
+                                "target": "scene_end",
+                            },
+                            {
+                                "when": {
+                                    "kind": "flag",
+                                    "target": "missing_route",
+                                },
+                                "target": "missing_case",
+                            },
+                        ],
+                    }
+                ],
+            }
+        ]
+    })
+
+    branch_errors = [
+        issue
+        for issue in validate_pack(tmp_path)
+        if issue.severity == "error"
+        and "play_scene_branch target" in issue.message
+    ]
+
+    assert {issue.path for issue in branch_errors} == {
+        "scenes[0].on_end[0].target",
+        "scenes[0].on_end[0].value[1].target",
+    }
+    assert {issue.message for issue in branch_errors} == {
+        "play_scene_branch target 'missing_default' 不是已知 scene id。",
+        "play_scene_branch target 'missing_case' 不是已知 scene id。",
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -386,6 +617,37 @@ def test_wellformed_richtext_no_error(tmp_path: Path) -> None:
     assert rich_errors == [], f"well-formed markup should not error: {rich_errors}"
 
 
+@pytest.mark.parametrize(
+    "markup",
+    [
+        "甲[w=inf]乙",
+        "甲[w=90000]乙",
+        "甲[w=60000][b][/b][w=60000]乙",
+    ],
+)
+def test_unbounded_inline_wait_is_a_pack_validation_error(
+    tmp_path: Path,
+    markup: str,
+) -> None:
+    _make_minimal_pack(tmp_path)
+    scenes_dir = tmp_path / "content" / "scenes"
+    _write(scenes_dir / "wait_unbounded.yaml", {"scenes": [
+        {
+            "id": "scene_wait_unbounded",
+            "title": "Unbounded wait",
+            "lines": [{"text": markup}],
+        }
+    ]})
+
+    issues = validate_pack(tmp_path)
+    rich_errors = [
+        issue for issue in issues
+        if issue.severity == "error" and "富文本" in issue.message
+    ]
+
+    assert rich_errors, f"expected bounded-wait error, got: {issues}"
+
+
 # ---------------------------------------------------------------------------
 # C-WS2.3: animation / easing name validity (error)
 # ---------------------------------------------------------------------------
@@ -521,11 +783,11 @@ def _pack_with_heroine_portraits(root: Path) -> None:
     _make_minimal_pack(root)
     _write(root / "content" / "characters.yaml", {"characters": [
         {"id": "hero_a", "name": "Hero A"},
-        {"id": "qingyi", "name": "林青衣",
-         "portrait": "assets/characters/qingyi/normal.png",
+        {"id": "ruoxue", "name": "白若雪",
+         "portrait": "assets/characters/ruoxue/normal.png",
          "portrait_set": {
-             "smile": "assets/characters/qingyi/smile.png",
-             "sad": "assets/characters/qingyi/sad.png",
+             "smile": "assets/characters/ruoxue/smile.png",
+             "sad": "assets/characters/ruoxue/sad.png",
          }},
     ]})
 
@@ -536,13 +798,13 @@ def test_missing_expression_in_portrait_spec_warns(tmp_path: Path) -> None:
     _pack_with_heroine_portraits(tmp_path)
     _write(tmp_path / "content" / "scenes" / "expr.yaml", {"scenes": [
         {"id": "scene_expr", "title": "E", "lines": [
-            {"speaker": "林青衣", "text": "...",
-             "portrait": {"character": "qingyi", "expression": "distant"}},
+            {"speaker": "白若雪", "text": "...",
+             "portrait": {"character": "ruoxue", "expression": "distant"}},
         ]},
     ]})
     warns = _expr_warnings(validate_pack(tmp_path))
     assert len(warns) == 1
-    assert "distant" in warns[0].message and "qingyi" in warns[0].message
+    assert "distant" in warns[0].message and "ruoxue" in warns[0].message
     # The hint enumerates the declared expressions to guide the fix.
     assert warns[0].hint and ("smile" in warns[0].hint
                               or "distant" in warns[0].hint)
@@ -554,7 +816,7 @@ def test_missing_expression_line_level_warns(tmp_path: Path) -> None:
     _pack_with_heroine_portraits(tmp_path)
     _write(tmp_path / "content" / "scenes" / "expr.yaml", {"scenes": [
         {"id": "scene_expr", "title": "E", "lines": [
-            {"speaker": "林青衣", "text": "...", "expression": "distant"},
+            {"speaker": "白若雪", "text": "...", "expression": "distant"},
         ]},
     ]})
     warns = _expr_warnings(validate_pack(tmp_path))
@@ -568,11 +830,11 @@ def test_declared_and_default_expressions_do_not_warn(tmp_path: Path) -> None:
     _pack_with_heroine_portraits(tmp_path)
     _write(tmp_path / "content" / "scenes" / "expr.yaml", {"scenes": [
         {"id": "scene_expr", "title": "E", "lines": [
-            {"speaker": "林青衣", "text": "a", "expression": "smile"},
-            {"speaker": "林青衣", "text": "b", "expression": "normal"},
-            {"speaker": "林青衣", "text": "c", "expression": "default"},
-            {"speaker": "林青衣", "text": "d",
-             "portrait": {"character": "qingyi", "expression": "sad"}},
+            {"speaker": "白若雪", "text": "a", "expression": "smile"},
+            {"speaker": "白若雪", "text": "b", "expression": "normal"},
+            {"speaker": "白若雪", "text": "c", "expression": "default"},
+            {"speaker": "白若雪", "text": "d",
+             "portrait": {"character": "ruoxue", "expression": "sad"}},
         ]},
     ]})
     assert _expr_warnings(validate_pack(tmp_path)) == []
@@ -602,13 +864,13 @@ def _mismatch_warnings(issues: list[ValidationIssue]) -> list[ValidationIssue]:
 
 
 def _pack_with_npc_and_heroine(root: Path) -> None:
-    """Pack with one heroine (yuening, is_heroine) and one ordinary declared
+    """Pack with one heroine (qianqiu, is_heroine) and one ordinary declared
     character (senpai), so both mismatch sub-cases can be exercised."""
     _make_minimal_pack(root)
     _write(root / "content" / "characters.yaml", {"characters": [
         {"id": "hero_a", "name": "Hero A"},
-        {"id": "yuening", "name": "沈月凝", "is_heroine": True,
-         "portrait": "assets/characters/yuening/normal.png",
+        {"id": "qianqiu", "name": "夏千秋", "is_heroine": True,
+         "portrait": "assets/characters/qianqiu/normal.png",
          "portrait_set": {"normal": "n.png", "scared": "s.png"}},
         {"id": "senpai", "name": "研究生學長"},
     ]})
@@ -622,12 +884,12 @@ def test_speaker_portrait_mismatch_incidental_npc_with_heroine_portrait(
     _write(tmp_path / "content" / "scenes" / "mm.yaml", {"scenes": [
         {"id": "scene_mm", "title": "M", "lines": [
             {"speaker": "研究生學長", "text": "...",
-             "portrait": {"character": "yuening", "expression": "normal"}},
+             "portrait": {"character": "qianqiu", "expression": "normal"}},
         ]},
     ]})
     warns = _mismatch_warnings(validate_pack(tmp_path))
     assert len(warns) == 1, f"expected one mismatch warning, got: {warns}"
-    assert "研究生學長" in warns[0].message and "yuening" in warns[0].message
+    assert "研究生學長" in warns[0].message and "qianqiu" in warns[0].message
     assert warns[0].hint  # carries a fix hint
 
 
@@ -653,8 +915,8 @@ def test_speaker_matches_portrait_no_warning(tmp_path: Path) -> None:
     _pack_with_npc_and_heroine(tmp_path)
     _write(tmp_path / "content" / "scenes" / "ok.yaml", {"scenes": [
         {"id": "scene_ok", "title": "OK", "lines": [
-            {"speaker": "沈月凝", "text": "...",
-             "portrait": {"character": "yuening", "expression": "normal"}},
+            {"speaker": "夏千秋", "text": "...",
+             "portrait": {"character": "qianqiu", "expression": "normal"}},
         ]},
     ]})
     assert _mismatch_warnings(validate_pack(tmp_path)) == []
@@ -666,7 +928,7 @@ def test_narration_line_never_flagged(tmp_path: Path) -> None:
     _write(tmp_path / "content" / "scenes" / "narr.yaml", {"scenes": [
         {"id": "scene_narr", "title": "N", "lines": [
             {"text": "the camera lingers on her face",
-             "portrait": {"character": "yuening"}},
+             "portrait": {"character": "qianqiu"}},
         ]},
     ]})
     assert _mismatch_warnings(validate_pack(tmp_path)) == []
@@ -679,7 +941,7 @@ def test_player_token_speaker_never_flagged(tmp_path: Path) -> None:
     _write(tmp_path / "content" / "scenes" / "pc.yaml", {"scenes": [
         {"id": "scene_pc", "title": "PC", "lines": [
             {"speaker": "{player_name}", "text": "「我幫你。」",
-             "portrait": {"character": "yuening", "expression": "normal"}},
+             "portrait": {"character": "qianqiu", "expression": "normal"}},
         ]},
     ]})
     assert _mismatch_warnings(validate_pack(tmp_path)) == []
@@ -694,7 +956,7 @@ def test_multi_portrait_reaction_shot_not_flagged(tmp_path: Path) -> None:
         {"id": "scene_multi", "title": "Multi", "lines": [
             {"speaker": "研究生學長", "text": "...", "portraits": [
                 {"character": "senpai", "slot": "left"},
-                {"character": "yuening", "slot": "right"},
+                {"character": "qianqiu", "slot": "right"},
             ]},
         ]},
     ]})

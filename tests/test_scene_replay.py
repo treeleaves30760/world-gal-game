@@ -148,6 +148,23 @@ def _open_replay(driver):
     return scene
 
 
+def _complete_replay_trace(state: GameState, scene_id: str) -> None:
+    """View one authored scene until its fail-closed trace is complete."""
+    engine = DialogueEngine(state)
+    presentation = engine.start_scene(scene_id)
+    for _ in range(500):
+        if state.read_log.replay_entry(scene_id) is not None:
+            return
+        if presentation.kind == "choice":
+            choice = next(
+                item for item in presentation.choices if item.enabled
+            )
+            presentation = engine.choose(choice.id)
+        else:
+            presentation = engine.next_line()
+    raise AssertionError(f"scene did not produce a replay trace: {scene_id}")
+
+
 def test_replay_overlay_opens_and_is_overlay(driver):
     scene = _open_replay(driver)
     assert scene.is_overlay is True
@@ -160,19 +177,21 @@ def test_replay_overlay_opens_and_is_overlay(driver):
 def test_empty_read_log_renders_gracefully(driver):
     """No completed scenes -> the empty message branch, no crash."""
     driver.app.state.read_log.scenes.clear()
+    driver.app.state.read_log.replay_archive.clear()
     scene = _open_replay(driver)
     assert scene.describe()["replayable"] == []
     driver.advance_frames(2)
     assert type(driver.app.manager.current).__name__ == "SceneReplayScene"
 
 
-def test_list_reflects_read_log_scenes(driver):
-    """The replayable list is exactly the read-log scenes the pack defines."""
+def test_list_reflects_completed_trace_backed_scenes(driver):
+    """The list exposes only complete traces for scenes the pack still has."""
     story = driver.app.state.story
     known = list(story.scenes.keys())
     assert known, "demo_pack should define scenes"
     driver.app.state.read_log.scenes.clear()
-    driver.app.state.read_log.mark_scene_done(known[0])
+    driver.app.state.read_log.replay_archive.clear()
+    _complete_replay_trace(driver.app.state, known[0])
     # An id the pack does not define must be filtered out of the list.
     driver.app.state.read_log.mark_scene_done("ghost_scene_not_in_pack")
     scene = _open_replay(driver)
@@ -186,7 +205,8 @@ def test_clicking_row_starts_replay_without_touching_live_state(driver):
     story = driver.app.state.story
     sid = next(iter(story.scenes.keys()))
     driver.app.state.read_log.scenes.clear()
-    driver.app.state.read_log.mark_scene_done(sid)
+    driver.app.state.read_log.replay_archive.clear()
+    _complete_replay_trace(driver.app.state, sid)
     scene = _open_replay(driver)
     driver.advance_frames(1)  # populate _row_rects via a draw pass
 
@@ -213,7 +233,8 @@ def test_advancing_the_replay_does_not_mutate_live_state(driver):
     story = driver.app.state.story
     sid = next(iter(story.scenes.keys()))
     driver.app.state.read_log.scenes.clear()
-    driver.app.state.read_log.mark_scene_done(sid)
+    driver.app.state.read_log.replay_archive.clear()
+    _complete_replay_trace(driver.app.state, sid)
     scene = _open_replay(driver)
     driver.advance_frames(1)
     live_before = driver.app.state.model_dump(mode="json")

@@ -49,7 +49,7 @@ uv run python -m pygbag --version
 uv run python build.py games/demo_pack --target web
 
 # Or via the console script:
-wgg build games/demo_pack --target web
+world-gal-game build games/demo_pack --target web
 ```
 
 The builder stages a self-contained tree (engine + the pack's `content/` and
@@ -70,7 +70,7 @@ uv run python -m pygbag world_gal_game/web_main.py
 Or use the build's serve mode (stages the pack, then serves):
 
 ```bash
-wgg build games/demo_pack --target web --serve
+world-gal-game build games/demo_pack --target web --serve
 # then open http://localhost:8000
 ```
 

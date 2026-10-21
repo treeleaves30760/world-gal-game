@@ -10,6 +10,7 @@ import pygame
 
 from .base import Widget
 from ..fonts import FontRegistry
+from ..text_breaking import hard_break_before_latest, latest_soft_break
 
 
 class Label(Widget):
@@ -74,8 +75,13 @@ def _wrap_lines(text: str, font: pygame.font.Font, max_width: int) -> list[str]:
             test = line + ch
             w, _ = font.size(test)
             if w > max_width and line:
-                out_lines.append(line)
-                line = ch
+                line = test
+                while len(line) > 1 and font.size(line)[0] > max_width:
+                    boundary = latest_soft_break(line)
+                    if boundary is None:
+                        boundary = hard_break_before_latest(line)
+                    out_lines.append(line[:boundary])
+                    line = line[boundary:]
             else:
                 line = test
         if line:

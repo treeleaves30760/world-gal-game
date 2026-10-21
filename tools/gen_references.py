@@ -55,8 +55,8 @@ Effect 是「我要改變遊戲狀態」的宣告。所有 effect 都長這個�
 "set_flag:met_heroine_1"      # = {kind: set_flag, target: met_heroine_1}
 ```
 
-每個 kind 的 `args` 欄位附完整型別（取自 `wgg capabilities --schema` 的 JSON
-Schema），可用來離線驗證 pack。"""
+每個 kind 的 `args` 欄位附完整型別（取自
+`world-gal-game capabilities --schema` 的 JSON Schema），可用來離線驗證 pack。"""
 
 _CONDITION_INTRO = """\
 Condition 是「判斷一件事是否成立」的宣告，用在 `Choice.requires` /

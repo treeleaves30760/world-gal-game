@@ -4,7 +4,9 @@ Stages, in order:
 
 1. **schema** — `validator.validate_pack` (pydantic + extra-field checks)
 2. **refs** — same `validate_pack` pass collects cross-file ref errors
-3. **dead_ends** — `PackInspector.dead_ends()` (orphan / unreachable / no-op)
+3. **dead_ends** — `PackInspector.dead_ends()` (orphan / unreachable / no-op),
+   minus strictly validated ``verification.expected_unreachable`` scene
+   exceptions that are still objectively unreachable
 4. **softlock** — `SoftLockChecker` (every choice-bearing scene must offer ≥1
    selectable option on every reachable path; catches a menu that can become
    all-locked with no fallthrough — the stance-gated-climax defect class)
@@ -87,12 +89,17 @@ class SelfCheckReport:
 
 
 class SelfCheck:
-    """Run the five verification stages against a pack."""
+    """Run the seven verification stages against a pack."""
 
     def __init__(self, pack_root: Path | str,
                  *, stop_on_failure: bool = True,
                  skip_smoke: bool = False,
                  skip_visual: bool = True,
+                 strict_visual_baselines: bool = False,
+                 visual_scenarios: list[dict[str, Any]] | None = None,
+                 visual_baselines_dir: Path | None = None,
+                 visual_candidates_dir: Path | None = None,
+                 smoke_seed: int | None = None,
                  skip_softlock: bool = False,
                  skip_reachability: bool = False,
                  reachability_deep: bool = False,
@@ -105,6 +112,18 @@ class SelfCheck:
         # baselines, and CI doesn't always have those — opt in explicitly).
         self.skip_smoke = skip_smoke
         self.skip_visual = skip_visual
+        # When visual checking is enabled, production CI can require every
+        # scenario to have a pre-existing, human-reviewed baseline. This avoids
+        # the development bootstrap rule ("first render becomes baseline")
+        # turning a missing quality gate into a false pass.
+        self.strict_visual_baselines = strict_visual_baselines
+        # Production verification pins an explicit scenario document instead
+        # of silently inheriting a future default-set change.  Ordinary
+        # authoring keeps the representative engine defaults.
+        self.visual_scenarios = visual_scenarios
+        self.visual_baselines_dir = visual_baselines_dir
+        self.visual_candidates_dir = visual_candidates_dir
+        self.smoke_seed = smoke_seed
         # Soft-lock linter (static, fast) runs by default.
         self.skip_softlock = skip_softlock
         # Reachability (the strand guard) runs by default. The default verdict
@@ -164,7 +183,7 @@ class SelfCheck:
             if self._should_stop(reach, report):
                 return report
 
-        # Stage 5: smoke routes
+        # Stage 6: smoke routes
         if self.skip_smoke:
             report.stages.append(StageResult(
                 name="smoke", ok=True, skipped=True,
@@ -176,7 +195,7 @@ class SelfCheck:
             if self._should_stop(smoke, report):
                 return report
 
-        # Stage 6: visual (optional)
+        # Stage 7: visual (optional)
         if self.skip_visual:
             report.stages.append(StageResult(
                 name="visual", ok=True, skipped=True,
@@ -234,6 +253,7 @@ class SelfCheck:
 
     def _run_dead_ends(self) -> StageResult:
         from .pack_inspector import PackInspector
+        from .verification_contract import audit_expected_unreachable
         try:
             ins = PackInspector(self.pack_root)
         except Exception as exc:
@@ -242,17 +262,84 @@ class SelfCheck:
                 summary=f"inspector failed to load pack: {exc}",
                 details={"error": str(exc)},
             )
-        de = ins.dead_ends()
-        details = [
+        raw_dead_ends = ins.dead_ends()
+        reachability = ins.reachability()
+        audit = audit_expected_unreachable(
+            ins.meta,
+            scene_ids=set(ins.scenes_by_id),
+            ending_ids={
+                str(ending["id"])
+                for ending in ins.endings
+                if isinstance(ending, dict) and ending.get("id")
+            },
+            unreachable_scene_ids=set(reachability["unreachable"]),
+        )
+
+        raw_items = [
             {"kind": d.kind, "target": d.target, "file": d.file,
              "detail": d.detail}
-            for d in de
+            for d in raw_dead_ends
         ]
+        blocking_items: list[dict[str, Any]] = []
+        ignored: list[dict[str, Any]] = []
+        for dead_end, payload in zip(raw_dead_ends, raw_items, strict=True):
+            expected = (
+                audit.scene_ref(dead_end.target)
+                if dead_end.kind == "unreachable"
+                else None
+            )
+            if expected is None:
+                blocking_items.append(payload)
+                continue
+            ignored.append({
+                **payload,
+                "case_id": expected.case_id,
+                "reason": expected.reason,
+            })
+
+        relevant_issue_codes = {
+            "invalid_contract", "unknown_scene", "duplicate_scene",
+            "stale_scene",
+        }
+        contract_issues = [
+            issue.to_dict()
+            for issue in audit.issues
+            if issue.code in relevant_issue_codes
+        ]
+        stale = [
+            ref.to_dict(status="reachable")
+            for ref in audit.stale_scenes
+        ]
+        ok = not blocking_items and not contract_issues
+        if blocking_items:
+            summary = f"{len(blocking_items)} unexpected dead-end(s)"
+        elif contract_issues:
+            summary = "expected-unreachable scene contract is invalid or stale"
+        elif ignored:
+            summary = (
+                "no unexpected dead-ends; "
+                f"{len(ignored)} expected unreachable scene(s) ignored"
+            )
+        else:
+            summary = "no dead-ends"
+
         return StageResult(
             name="dead_ends",
-            ok=not de,
-            summary=(f"{len(de)} dead-end(s)" if de else "no dead-ends"),
-            details={"items": details},
+            ok=ok,
+            summary=summary,
+            details={
+                # Preserve the raw PackInspector findings for auditability and
+                # backward-compatible report consumers.
+                "items": raw_items,
+                "blocking_items": blocking_items,
+                "expected": [
+                    ref.to_dict(status="unreachable")
+                    for ref in audit.active_scenes
+                ],
+                "ignored": ignored,
+                "stale_expectations": stale,
+                "contract_issues": contract_issues,
+            },
         )
 
     def _run_softlock(self) -> StageResult:
@@ -280,7 +367,7 @@ class SelfCheck:
     def _run_smoke(self) -> StageResult:
         from .smoke_runner import SmokeRunner
         try:
-            sr = SmokeRunner(self.pack_root)
+            sr = SmokeRunner(self.pack_root, seed=self.smoke_seed)
         except Exception as exc:
             return StageResult(
                 name="smoke", ok=False,
@@ -308,9 +395,14 @@ class SelfCheck:
         the stage. ``unverified`` verdicts (the bounded organic search ran out
         of budget, or a route had no lock-in flag to seed precisely) are surfaced
         as a warning but do **not** fail the stage — degrade gracefully rather
-        than emit a false failure. A pack that declares no endings is skipped.
+        than emit a false failure. A strictly validated
+        ``verification.expected_unreachable`` ending may remain a strand for
+        old-save/direct-replay compatibility; it is reported but does not block
+        the stage. If that ending becomes reachable, the stale exception fails
+        verification. A pack that declares no endings is skipped.
         """
         from .reachability import EndingReachabilityChecker
+        from .verification_contract import audit_expected_unreachable
         try:
             chk = EndingReachabilityChecker(self.pack_root)
             results = chk.check_all(
@@ -324,35 +416,90 @@ class SelfCheck:
                 summary=f"reachability check raised: {exc}",
                 details={"error": str(exc)},
             )
-        if not results:
+
+        statuses = {result.ending_id: result.status for result in results}
+        audit = audit_expected_unreachable(
+            chk._meta,
+            ending_ids=set(statuses),
+            ending_statuses=statuses,
+        )
+        relevant_issue_codes = {
+            "invalid_contract", "unknown_ending", "duplicate_ending",
+            "stale_ending",
+        }
+        contract_issues = [
+            issue.to_dict()
+            for issue in audit.issues
+            if issue.code in relevant_issue_codes
+        ]
+        if not results and not audit.declared_endings and not contract_issues:
             return StageResult(
                 name="reachability", ok=True, skipped=True,
                 summary="no declared endings; skipped",
             )
+
         strands = [r for r in results if r.status == "strand"]
+        blocking_strands = [
+            result
+            for result in strands
+            if result.ending_id not in audit.active_ending_ids
+        ]
+        ignored: list[dict[str, Any]] = []
+        for result in strands:
+            expected = audit.ending_ref(result.ending_id)
+            if expected is None:
+                continue
+            ignored.append({
+                **result.to_dict(),
+                "case_id": expected.case_id,
+                "reason": expected.reason,
+            })
         unverified = [r for r in results if r.status == "unverified"]
         ok_count = sum(1 for r in results if r.status == "ok")
-        ok = not strands
-        if strands:
-            summary = (f"{len(strands)} strand(s): "
-                       + ", ".join(r.ending_id for r in strands))
+        ok = not blocking_strands and not contract_issues
+        if blocking_strands:
+            summary = (f"{len(blocking_strands)} unexpected strand(s): "
+                       + ", ".join(r.ending_id for r in blocking_strands))
+        elif contract_issues:
+            summary = "expected-unreachable ending contract is invalid or stale"
         else:
             summary = (f"{ok_count}/{len(results)} ending(s) reachable"
                        + (f", {len(unverified)} unverified"
-                          if unverified else ""))
+                          if unverified else "")
+                       + (f", {len(ignored)} expected strand(s) ignored"
+                          if ignored else ""))
         return StageResult(
             name="reachability", ok=ok, summary=summary,
             details={
+                # ``strands`` remains the objective raw checker output.
                 "strands": [r.to_dict() for r in strands],
+                "blocking_strands": [
+                    r.to_dict() for r in blocking_strands
+                ],
                 "unverified": [r.to_dict() for r in unverified],
                 "reachable": [r.to_dict() for r in results if r.status == "ok"],
+                "expected": [
+                    ref.to_dict(status="strand")
+                    for ref in audit.active_endings
+                ],
+                "ignored": ignored,
+                "stale_expectations": [
+                    ref.to_dict(status=statuses.get(ref.target, "missing"))
+                    for ref in audit.stale_endings
+                ],
+                "contract_issues": contract_issues,
             },
         )
 
     def _run_visual(self) -> StageResult:
         from .visual_check import VisualCheck
         try:
-            vc = VisualCheck(self.pack_root)
+            vc = VisualCheck(
+                self.pack_root,
+                baselines_dir=self.visual_baselines_dir,
+                candidates_dir=self.visual_candidates_dir,
+                strict_baselines=self.strict_visual_baselines,
+            )
         except Exception as exc:
             return StageResult(
                 name="visual", ok=False,
@@ -360,7 +507,11 @@ class SelfCheck:
                 details={"error": str(exc)},
             )
         try:
-            rep = vc.run(VisualCheck.default_scenarios())
+            rep = vc.run(
+                self.visual_scenarios
+                if self.visual_scenarios is not None
+                else VisualCheck.default_scenarios()
+            )
         except Exception as exc:
             return StageResult(
                 name="visual", ok=False,

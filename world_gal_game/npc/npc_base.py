@@ -132,7 +132,7 @@ class NPCRegistry(BaseModel):
         return self.npcs.get(npc_id)
 
     def by_name(self, name: str) -> NPC | None:
-        """Resolve a dialogue ``speaker`` (a display name like "林青衣") back to
+        """Resolve a dialogue ``speaker`` (a display name like "白若雪") back to
         its NPC. The registry is keyed by id, but lines carry the display name,
         so match on ``.name`` first and fall back to an id lookup (a pack may
         use the id as the speaker)."""

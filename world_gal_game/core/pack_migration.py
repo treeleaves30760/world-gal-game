@@ -31,7 +31,7 @@ Design notes:
 from __future__ import annotations
 
 import threading
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Callable
 
 from .save_manager import SaveError
@@ -126,23 +126,27 @@ class PackMigrationRegistry:
     # -- mutating ------------------------------------------------------
 
     def register(self, entry: PackMigrationEntry) -> None:
-        """Register ``entry``. Re-registering the identical (from, to, fn,
-        pack_id, plugin_id) tuple is a no-op so module re-import (hot reload,
-        repeated tests) stays idempotent. A *different* fn for the same
-        (from, to, pack_id) edge replaces nothing and is rejected as a
-        duplicate edge.
+        """Register ``entry``.
+
+        Re-registering an edge from the same plugin owner replaces the
+        previous callable. Dynamic plugin reloads create a fresh function
+        object even when the source is unchanged, so identity-only
+        deduplication would make repeated pack loads fail. A competing
+        plugin attempting to own the same ``(from, to, pack_id)`` edge is
+        still rejected.
         """
         with self._lock:
-            for existing in self._entries:
+            for index, existing in enumerate(self._entries):
                 same_edge = (
                     existing.from_version == entry.from_version
                     and existing.to_version == entry.to_version
                     and existing.pack_id == entry.pack_id
                 )
                 if same_edge:
-                    if (existing.fn is entry.fn
-                            and existing.plugin_id == entry.plugin_id):
-                        return  # idempotent
+                    if existing.plugin_id == entry.plugin_id:
+                        if existing.fn is not entry.fn:
+                            self._entries[index] = entry
+                        return
                     raise ValueError(
                         f"duplicate pack migration edge "
                         f"{entry.from_version} -> {entry.to_version} "

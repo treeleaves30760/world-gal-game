@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -57,63 +58,74 @@ class PendingInput:
 class GameDriver:
     """Drive a real pygame App in headless mode for AI inspection."""
 
-    def __init__(self, pack: str | None = None,
-                 screen_size: tuple[int, int] = (1280, 720),
-                 dev_mode: bool = False,
-                 frame_dt: float = 1 / 60):
+    def __init__(
+        self,
+        pack: str | None = None,
+        screen_size: tuple[int, int] = (1280, 720),
+        dev_mode: bool = False,
+        frame_dt: float = 1 / 60,
+        seed: int | None = None,
+        *,
+        isolated_runtime: bool = False,
+    ):
         _ensure_headless_env()
         if dev_mode:
             os.environ.setdefault("WGG_DEV", "1")
-        # Import inside __init__ so pygame env vars are honored.
-        from ..config import EngineConfig
-        from ..app import GalGameApp
-        cfg = EngineConfig(screen_size=screen_size)
-        if pack is not None:
-            cfg.default_pack = pack
-        self.cfg = cfg
-        self.app = GalGameApp(config=cfg, headless=True)
-        self.frame_dt = frame_dt
-        self._pending = PendingInput(mouse_pos=(0, 0))
-        # Force-draw once so widgets get laid out.
-        self.advance_frames(1)
+        self._writable_sandbox: tempfile.TemporaryDirectory[str] | None = None
+        self._isolate_user_plugins = isolated_runtime
+        self._previous_user_plugin_root = os.environ.get(
+            "WGG_USER_PLUGIN_ROOT",
+        )
+        writable_override = None
+        if isolated_runtime:
+            self._writable_sandbox = tempfile.TemporaryDirectory(
+                prefix="wgg-game-driver-",
+            )
+            writable_override = Path(self._writable_sandbox.name)
+            os.environ["WGG_USER_PLUGIN_ROOT"] = str(
+                writable_override / "user-plugins",
+            )
+        try:
+            # Import inside __init__ so pygame env vars are honored.  Keep the
+            # complete construction path inside the cleanup boundary: a bad
+            # pack, config validation error, or first-frame renderer failure
+            # must not strand the temporary player root or plugin override.
+            from ..config import EngineConfig
+            from ..app import GalGameApp
+            cfg = EngineConfig(
+                screen_size=screen_size,
+                seed=seed,
+                writable_root_override=writable_override,
+            )
+            if pack is not None:
+                cfg.default_pack = pack
+            self.cfg = cfg
+            self.app = GalGameApp(config=cfg, headless=True)
+            self.frame_dt = frame_dt
+            self._pending = PendingInput(mouse_pos=(0, 0))
+            # Force-draw once so widgets get laid out.
+            self.advance_frames(1)
+        except BaseException:
+            self._cleanup_runtime_isolation()
+            raise
 
     # ---------- frame stepping -----------------------------------------
 
     def advance_frames(self, count: int = 1) -> None:
-        from ..ui.input import InputState
         for _ in range(count):
             events = list(self._pending.events)
             self._pending.clear()
-            inp = InputState(events=events)
+            inp = self.app._input_router.collect(
+                events,
+                dt=self.frame_dt,
+                touch_mode=self.app.config.touch_mode,
+                binding_overrides=getattr(
+                    self.app.config,
+                    "input_bindings",
+                    {},
+                ),
+            )
             inp.mouse_pos = self._pending.mouse_pos or (0, 0)
-            # Mirror what InputState.collect() does for the events we
-            # injected (mouse_clicked / confirm / advance_dialogue /
-            # cancel / wheel / quit). We can't call collect() directly
-            # because it reads pygame.mouse.get_pos() which is not set
-            # in dummy mode.
-            for e in events:
-                if e.type == pygame.QUIT:
-                    inp.quit_requested = True
-                elif e.type == pygame.MOUSEBUTTONDOWN:
-                    if e.button == 1:
-                        inp.mouse_clicked = True
-                        inp.advance_dialogue = True
-                    elif e.button == 3:
-                        inp.mouse_rclicked = True
-                    elif e.button == 4:
-                        inp.mouse_wheel += 1
-                    elif e.button == 5:
-                        inp.mouse_wheel -= 1
-                elif e.type == pygame.MOUSEWHEEL:
-                    inp.mouse_wheel += e.y
-                elif e.type == pygame.KEYDOWN:
-                    inp.keys_down.add(e.key)
-                    if e.key in (pygame.K_RETURN, pygame.K_KP_ENTER,
-                                 pygame.K_SPACE, pygame.K_z):
-                        inp.confirm = True
-                        inp.advance_dialogue = True
-                    if e.key in (pygame.K_ESCAPE, pygame.K_x):
-                        inp.cancel = True
             self.app.manager.update(self.frame_dt, inp)
             self.app.manager.draw(self.app.screen)
 
@@ -140,6 +152,24 @@ class GameDriver:
             pygame.event.Event(pygame.KEYUP, key=key, mod=0)
         )
 
+    def press_action(self, action: str) -> bool:
+        """Schedule the first keyboard binding for a semantic action.
+
+        Returns ``False`` when an optional action is intentionally unbound.
+        This keeps high-level driver workflows faithful to the player's live
+        control profile instead of silently relying on factory-default keys.
+        """
+        from ..ui.input_bindings import BindingProfile
+
+        profile = BindingProfile(
+            getattr(self.app.config, "input_bindings", {})
+        )
+        keys = profile.keys_for(action)
+        if not keys:
+            return False
+        self.press_key(keys[0])
+        return True
+
     def press_space(self, count: int = 1, frames_between: int = 8) -> None:
         for _ in range(count):
             self.press_key(pygame.K_SPACE)
@@ -162,47 +192,90 @@ class GameDriver:
         self.advance_frames(2)
 
     def skip_dialogue(self, max_frames: int = 600) -> None:
-        """Hammer Space until exploration is on top of the stack."""
+        """Advance dialogue until exploration or a player decision is reached.
+
+        The driver must never turn a presentation helper into an implicit
+        narrative choice.  In particular, a single enabled choice may be
+        focused for normal keyboard/controller usability, but ``skip_dialogue``
+        still stops before activating it.
+        """
+        from ..scenes.dialogue_scene import DialogueScene
         from ..scenes.exploration import ExplorationScene
+        from ..ui.input_bindings import InputAction
         for _ in range(max_frames // 4):
             cur = self.app.manager.current
             if isinstance(cur, ExplorationScene):
                 return
-            self.press_key(pygame.K_SPACE)
+            if (
+                isinstance(cur, DialogueScene)
+                and cur.choices is not None
+                and cur.choices.visible
+            ):
+                return
+            if not self.press_action(InputAction.CONFIRM_ADVANCE):
+                return
             self.advance_frames(4)
 
     def travel_to(self, label: str, *, settle: int = 12) -> bool:
-        """Travel to a destination through the card-based picker.
+        """Travel through the spatial map and its confirmation sheet.
 
-        Mirrors the human flow: open the destination picker (M) from
-        exploration, click the card whose location name matches ``label``
-        (substring), then confirm 前往 in the preview. Returns True when the
-        move was issued (False if the picker/card/前往 button wasn't found,
-        e.g. the destination is locked so 前往 is disabled).
+        Mirrors the human flow: open the map (M), select the authored marker,
+        then confirm 前往 in the existing destination detail sheet. Returns
+        True when the move was issued (False when the marker/confirmation is
+        unavailable).
         """
         from ..scenes.exploration import ExplorationScene
         from ..scenes.destination_picker import DestinationPickerScene
+        from ..scenes.map_scene import MapScene
+        from ..ui.input_bindings import InputAction
         if isinstance(self.app.manager.current, ExplorationScene):
-            self.press_key(pygame.K_m)
+            if not self.press_action(InputAction.OPEN_MAP):
+                return False
             self.advance_frames(4)
+        if isinstance(self.app.manager.current, MapScene):
+            target_id = next(
+                (
+                    location.id
+                    for location in self.app.state.map.locations.values()
+                    if location.name == label
+                ),
+                None,
+            )
+            marker = self.find_widget(label=label)
+            if marker is None:
+                toggle = self.find_widget(label="顯示一般探索")
+                if toggle is not None:
+                    self.click(tuple(toggle["rect_center"]))
+                    self.advance_frames(2)
+                    marker = self.find_widget(label=label)
+            world = self.app.manager.current
+            marker_target = (
+                marker.get("target_id") if marker is not None else None
+            )
+            target_id = marker_target or target_id
+            # A spatial-map node may use a concise authored label while the
+            # caller supplies the location's formal name. Resolve that name
+            # through the current catalog, then use the same marker callback;
+            # never fall back to mutating travel directly.
+            if (
+                target_id
+                and world.map_view is not None
+                and target_id in world.map_view._node_rects
+            ):
+                world.map_view._focused_id = target_id
+                world._on_node_click(target_id)
+                self.advance_frames(3)
+            elif marker is not None:
+                self.click(tuple(marker["rect_center"]))
+                self.advance_frames(3)
+            else:
+                return False
         if not isinstance(self.app.manager.current, DestinationPickerScene):
             return False
-        card = self.find_widget(label=label)
-        if card is None:
-            return False
-        # Destination card rects in the dev catalogue are content-space and may
-        # not correspond to the current scrolled screen position.  Select by
-        # data when possible; fall back to a click for non-card widgets.
-        if card.get("path", "").startswith("_cards"):
-            try:
-                card_index = int(card["path"].split("[")[1].split("]")[0])
-                dest, _button = self.app.manager.current._cards[card_index]
-                self.app.manager.current._open_preview(dest.loc.id)
-                self.advance_frames(1)
-            except Exception:
-                self.click(tuple(card["rect_center"]))
-                self.advance_frames(3)
-        else:
+        if self.app.manager.current.describe().get("selected") is None:
+            card = self.find_widget(label=label)
+            if card is None:
+                return False
             self.click(tuple(card["rect_center"]))
             self.advance_frames(3)
         go = self.find_widget(label="前往")
@@ -243,6 +316,7 @@ class GameDriver:
             "quests_completed": [q.id for q in st.quests.completed()],
             "current_scene_id": st.story.current_scene,
             "current_line_index": st.story.current_line_index,
+            "asset_cache": self.app.assets.cache_stats(),
         }
         out["widgets"] = self._widget_catalogue()
         return out
@@ -279,9 +353,47 @@ class GameDriver:
 
     def _inspect_attr(self, name: str, attr: Any) -> list[dict]:
         from ..ui.widgets.button import Button
+        from ..ui.widgets.choice_menu import ChoiceMenu
+        from ..ui.widgets.map_view import MapView
+        from ..ui.widgets.quick_menu import QuickMenuBar
         out: list[dict] = []
         if isinstance(attr, Button):
             out.append(self._button_entry(name, attr))
+        elif isinstance(attr, ChoiceMenu):
+            if not attr.visible:
+                return out
+            for i, button in enumerate(attr.buttons):
+                if not button.visible:
+                    continue
+                out.append(self._button_entry(
+                    f"{name}.buttons[{i}]",
+                    button,
+                ))
+        elif isinstance(attr, QuickMenuBar):
+            for i, button in enumerate(attr.visible_buttons()):
+                out.append(self._button_entry(
+                    f"{name}.visible_buttons[{i}]",
+                    button,
+                ))
+        elif isinstance(attr, MapView):
+            for node in attr.nodes:
+                node_id = node["id"]
+                rect = attr._node_rects.get(node_id)
+                if rect is None:
+                    continue
+                out.append({
+                    "_id": ("map_node", id(attr), node_id),
+                    "path": f"{name}.nodes[{node_id}]",
+                    "label": node.get("name"),
+                    "enabled": node_id != attr.current_id,
+                    "visible": attr.visible,
+                    "has_on_click": attr.on_click is not None,
+                    "rect": [rect.x, rect.y, rect.width, rect.height],
+                    "rect_center": [rect.centerx, rect.centery],
+                    "style": node.get("marker_kind"),
+                    "tooltip": node.get("description"),
+                    "target_id": node_id,
+                })
         elif isinstance(attr, (list, tuple)):
             for i, item in enumerate(attr):
                 if isinstance(item, Button):
@@ -312,6 +424,7 @@ class GameDriver:
             "rect": [rect.x, rect.y, rect.width, rect.height],
             "rect_center": [rect.centerx, rect.centery],
             "style": getattr(btn, "style", None),
+            "tooltip": getattr(btn, "tooltip", None),
         }
         if extra:
             info.update(extra)
@@ -323,10 +436,10 @@ class GameDriver:
                     visible_only: bool = True) -> dict | None:
         """Find a button matching label substring / path substring.
 
-        The exploration UI may hide local exits behind a card-based destination
-        picker.  For headless tests/debug scripts that ask for a visible
+        The exploration UI hides travel targets behind the spatial map. For
+        headless tests/debug scripts that ask for a visible
         destination by label (for example ``校門口`` while standing in the
-        dorm), transparently open the picker and search once more.  Direct
+        dorm), transparently open the map and search once more. Direct
         action buttons still match on the first pass and are unchanged.
         """
         def label_matches(w_label: str | None) -> bool:
@@ -368,6 +481,7 @@ class GameDriver:
 
         from ..scenes.exploration import ExplorationScene
         from ..scenes.destination_picker import DestinationPickerScene
+        from ..scenes.map_scene import MapScene
         if isinstance(self.app.manager.current, ExplorationScene):
             # Search the visible travel button without recursing into the
             # destination-picker fallback again.
@@ -383,6 +497,22 @@ class GameDriver:
             if travel is not None:
                 self.click(tuple(travel["rect_center"]))
                 self.advance_frames(4)
+                if isinstance(self.app.manager.current, MapScene):
+                    marker = search()
+                    if marker is None:
+                        toggle = next(
+                            (
+                                item for item in self._widget_catalogue()
+                                if item.get("label") == "顯示一般探索"
+                                and item.get("visible", True)
+                            ),
+                            None,
+                        )
+                        if toggle is not None:
+                            self.click(tuple(toggle["rect_center"]))
+                            self.advance_frames(2)
+                            marker = search()
+                    return marker
                 if isinstance(self.app.manager.current, DestinationPickerScene):
                     card = search()
                     if card is None:
@@ -436,13 +566,28 @@ class GameDriver:
             pygame.quit()
         except Exception:
             pass
+        finally:
+            self._cleanup_runtime_isolation()
+
+    def _cleanup_runtime_isolation(self) -> None:
+        if self._isolate_user_plugins:
+            if self._previous_user_plugin_root is None:
+                os.environ.pop("WGG_USER_PLUGIN_ROOT", None)
+            else:
+                os.environ["WGG_USER_PLUGIN_ROOT"] = (
+                    self._previous_user_plugin_root
+                )
+            self._isolate_user_plugins = False
+        if self._writable_sandbox is not None:
+            self._writable_sandbox.cleanup()
+            self._writable_sandbox = None
 
 
 # ---------- CLI ------------------------------------------------------------
 
 
 def _cli_main(argv: list[str] | None = None) -> int:
-    """`wgg debug <script.json>` driver.
+    """``world-gal-game debug <script.json>`` driver.
 
     Script format:
     {
@@ -461,8 +606,9 @@ def _cli_main(argv: list[str] | None = None) -> int:
       ]
     }
     """
-    import argparse, sys
-    p = argparse.ArgumentParser(prog="wgg debug",
+    import argparse
+    import sys
+    p = argparse.ArgumentParser(prog="world-gal-game debug",
                                 description="Drive a game pack headlessly "
                                             "for AI-assisted debugging.")
     p.add_argument("script", nargs="?", type=Path,

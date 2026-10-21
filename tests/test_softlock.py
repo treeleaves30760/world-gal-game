@@ -39,14 +39,14 @@ _META = """
 
 _CHARACTERS = """
     characters:
-      - {id: yuening, name: "沈月凝", is_heroine: true, route_id: yuening}
+      - {id: qianqiu, name: "夏千秋", is_heroine: true, route_id: qianqiu}
 """
 
 _VARIABLES = """
     variables:
       - {key: intro_done, type: bool, default: false, category: progress}
       - {key: route_chosen, type: bool, default: false, category: progress}
-      - {key: route_yuening, type: bool, default: false, category: progress}
+      - {key: route_qianqiu, type: bool, default: false, category: progress}
       - {key: stance_together, type: bool, default: false, category: progress}
       - {key: stance_alone, type: bool, default: false, category: progress}
       - {key: arc_done, type: bool, default: false, category: progress}
@@ -73,7 +73,7 @@ locations:
     exits: []
     scene_hooks:
       - {scene_id: route_choice, trigger: auto, requires_flags: [intro_done], forbids_flags: [route_chosen]}
-      - {scene_id: climax, trigger: auto, requires_flags: [route_yuening]}
+      - {scene_id: climax, trigger: auto, requires_flags: [route_qianqiu]}
 """
 
 _SCENES_BROKEN = """
@@ -88,16 +88,16 @@ scenes:
     location: lab
     lines: [{text: pick}]
     choices:
-      - id: pick_yuening
-        text: yuening
+      - id: pick_qianqiu
+        text: qianqiu
         effects:
           - {kind: set_flag, target: route_chosen, value: true}
-          - {kind: set_flag, target: route_yuening, value: true}
+          - {kind: set_flag, target: route_qianqiu, value: true}
         next_scene: climax
   - id: climax
     title: Climax
     location: lab
-    route: yuening
+    route: qianqiu
     lines: [{text: climax}]
     choices:
       - id: turn_with_her
@@ -142,16 +142,16 @@ scenes:
     location: lab
     lines: [{text: pick}]
     choices:
-      - id: pick_yuening
-        text: yuening
+      - id: pick_qianqiu
+        text: qianqiu
         effects:
           - {kind: set_flag, target: route_chosen, value: true}
-          - {kind: set_flag, target: route_yuening, value: true}
+          - {kind: set_flag, target: route_qianqiu, value: true}
         next_scene: stance
   - id: stance
     title: Stance
     location: lab
-    route: yuening
+    route: qianqiu
     lines: [{text: "pick a stance"}]
     choices:
       - id: insist_together
@@ -165,7 +165,7 @@ scenes:
   - id: climax
     title: Climax
     location: lab
-    route: yuening
+    route: qianqiu
     lines: [{text: climax}]
     choices:
       - id: turn_with_her
@@ -302,17 +302,17 @@ scenes:
         text: go
         effects:
           - {kind: set_flag, target: route_chosen, value: true}
-          - {kind: set_flag, target: route_yuening, value: true}
+          - {kind: set_flag, target: route_qianqiu, value: true}
         next_scene: pivot
   - id: pivot
     title: Pivot
     location: lab
-    route: yuening
+    route: qianqiu
     lines: [{text: pivot}]
     choices:
       - id: warm
         text: warm
-        requires: [{kind: affection_gte, target: yuening, value: 50}]
+        requires: [{kind: affection_gte, target: qianqiu, value: 50}]
         next_scene: resolved
       - id: cool
         text: cool
@@ -334,7 +334,7 @@ locations:
     exits: []
     scene_hooks:
       - {scene_id: route_choice, trigger: auto, requires_flags: [intro_done], forbids_flags: [route_chosen]}
-      - {scene_id: pivot, trigger: auto, requires_flags: [route_yuening]}
+      - {scene_id: pivot, trigger: auto, requires_flags: [route_qianqiu]}
 """
     _write_common((tmp_path / "p") / "content", loc, scenes)
     assert SoftLockChecker(tmp_path / "p").check() == []

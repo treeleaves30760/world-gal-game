@@ -21,6 +21,7 @@ from __future__ import annotations
 import pygame
 
 from .base import Scene, SceneContext
+from ..ui.input_bindings import BindingProfile, InputAction
 from ..ui.movie_player import (
     build_image_sequence, resolve_movie_player,
 )
@@ -82,8 +83,16 @@ class MoviePlayerScene(Scene):
         except Exception:
             self._finish()
             return
-        # Any advance / cancel key or click skips (when allowed).
-        if self._skippable and (inp.advance_dialogue or inp.cancel):
+        # Authored movies remain narrative content under reduced motion, but a
+        # looping/unskippable full-motion clip must never trap an accessibility
+        # user.  The same player.skip -> on_done path is used, so progression is
+        # identical to an ordinary authored skip.
+        can_skip = self._skippable or self.ctx.motion.reduced
+        if can_skip and (
+            inp.advance_dialogue
+            or inp.cancel
+            or bool(getattr(inp, "mouse_clicked", False))
+        ):
             try:
                 self._player.skip()
             except Exception:
@@ -99,9 +108,16 @@ class MoviePlayerScene(Scene):
                 self._player.draw(surface)
             except Exception:
                 pass
-        if self._skippable and not self._ended:
+        if (self._skippable or self.ctx.motion.reduced) and not self._ended:
+            bindings = BindingProfile(
+                getattr(self.ctx.config, "input_bindings", {}),
+            )
             hint = self.ctx.fonts.render(
-                "點擊 / 空白鍵 跳過", 14,
+                (
+                    "點擊 / "
+                    f"{bindings.primary_display(InputAction.CONFIRM_ADVANCE)} 跳過"
+                ),
+                14,
                 (*self.ctx.theme.text_mute[:3], 170))
             sw, sh = surface.get_size()
             surface.blit(hint, (sw - hint.get_width() - 20,
@@ -114,4 +130,7 @@ class MoviePlayerScene(Scene):
             "frame_count": getattr(self._player, "frame_count", None),
             "ended": self._ended,
             "skippable": self._skippable,
+            "effective_skippable": (
+                self._skippable or self.ctx.motion.reduced
+            ),
         }

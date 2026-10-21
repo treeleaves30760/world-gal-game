@@ -26,6 +26,8 @@ from typing import Any, Iterable, Literal
 
 import yaml
 
+from .scene_transitions import iter_scene_transitions
+
 
 # ----------------------------------------------------------------------
 # Internal data model
@@ -94,6 +96,8 @@ class PackInspector:
         self.items_by_id: dict[str, dict[str, Any]] = {}
         self.achievements: list[dict[str, Any]] = []
         self.quests: list[dict[str, Any]] = []
+        self.endings: list[dict[str, Any]] = []
+        self._has_endings_manifest = False
         self.resources_by_id: dict[str, dict[str, Any]] = {}
         self._load()
 
@@ -119,6 +123,7 @@ class PackInspector:
         self._load_items()
         self._load_achievements()
         self._load_quests()
+        self._load_endings()
         self._load_resources()
         self._load_scenes()
 
@@ -185,6 +190,18 @@ class PackInspector:
         if isinstance(data, list):
             self.quests = data
 
+    def _load_endings(self) -> None:
+        path = self.content_root / "endings.yaml"
+        self._has_endings_manifest = path.is_file()
+        data = self._read_yaml(path)
+        if isinstance(data, dict):
+            data = data.get("endings") or []
+        if isinstance(data, list):
+            self.endings = [
+                row for row in data
+                if isinstance(row, dict) and row.get("id")
+            ]
+
     def _load_resources(self) -> None:
         data = self._read_yaml(self.content_root / "resources.yaml")
         if isinstance(data, dict):
@@ -230,23 +247,17 @@ class PackInspector:
             if isinstance(ns, str) and ns:
                 out.append(("choice", ns))
             for eff in choice.get("effects") or []:
-                if isinstance(eff, dict) and eff.get("kind") == "play_scene":
-                    tgt = eff.get("target") or eff.get("value")
-                    if isinstance(tgt, str) and tgt:
-                        out.append(("choice_effect", tgt))
+                for transition in iter_scene_transitions(eff):
+                    out.append(("choice_effect", transition.target))
         for eff in raw.get("on_end") or []:
-            if isinstance(eff, dict) and eff.get("kind") == "play_scene":
-                tgt = eff.get("target") or eff.get("value")
-                if isinstance(tgt, str) and tgt:
-                    out.append(("on_end", tgt))
+            for transition in iter_scene_transitions(eff):
+                out.append(("on_end", transition.target))
         for line in raw.get("lines") or []:
             if not isinstance(line, dict):
                 continue
             for eff in line.get("effects") or []:
-                if isinstance(eff, dict) and eff.get("kind") == "play_scene":
-                    tgt = eff.get("target") or eff.get("value")
-                    if isinstance(tgt, str) and tgt:
-                        out.append(("line_effect", tgt))
+                for transition in iter_scene_transitions(eff):
+                    out.append(("line_effect", transition.target))
         sid = raw["id"]
         tags = raw.get("tags") or []
         is_ending = (
@@ -268,6 +279,18 @@ class PackInspector:
 
     def summary(self) -> dict[str, Any]:
         """A high-level rollup. Cheap, JSON-friendly."""
+        ending_scene_count = sum(
+            1 for scene in self.scenes_by_id.values() if scene.is_ending
+        )
+        # ``endings.yaml`` is the player-facing catalogue and may contain
+        # several flags unlocked from one terminal scene. Fall back to the
+        # historical scene-id/tag heuristic for legacy packs without a
+        # manifest. Expose both numbers so structural reachability and declared
+        # completion are never conflated again.
+        ending_count = (
+            len(self.endings)
+            if self._has_endings_manifest else ending_scene_count
+        )
         return {
             "pack_root": str(self.pack_root),
             "title": self.meta.get("title"),
@@ -282,8 +305,9 @@ class PackInspector:
                 "achievements": len(self.achievements),
                 "quests": len(self.quests),
                 "resources": len(self.resources_by_id),
-                "endings": sum(1 for s in self.scenes_by_id.values()
-                               if s.is_ending),
+                "endings": ending_count,
+                "declared_endings": len(self.endings),
+                "ending_scenes": ending_scene_count,
                 "chapters": len(self.chapters()),
             },
         }

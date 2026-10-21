@@ -2,7 +2,7 @@
 
 > **學習路徑**：軌道 4b · 寫插件擴充引擎本體  
 > **前置條件**：讀完 [architecture.md](architecture.md)（懂 GameState 與 effect 分派）+ [pack-format.md](pack-format.md)  
-> **下一步**：實際寫一支插件，跑 `wgg capabilities --pack <pack>` 看自己的擴充點被列出來  
+> **下一步**：實際寫一支插件，跑 `world-gal-game capabilities --pack <pack>` 看自己的擴充點被列出來
 > **完整索引**：[docs/README.md](README.md)
 
 ---
@@ -19,7 +19,7 @@ Phase 6 表演層加上 ambient backend）：
 |---|---|---|
 | `@effect(kind)` | 新 effect 種類 | 1 |
 | `@condition(kind)` | 新 condition 種類 | 1 |
-| `@hook(event)` | 訂閱 lifecycle 事件 | 1（已 7 個事件，Phase 2 擴到 16 個） |
+| `@hook(event)` | 訂閱 lifecycle 事件 | 1（目前定義 18 個名稱；17 個會自動發送） |
 | `@inspect_field(key)` | 加 inspect 欄位 | 1 |
 | `@widget(name)` | 新 pygame widget | 2 |
 | `@scene(scene_id)` | 新 Scene 類別 | 2 |
@@ -234,6 +234,64 @@ class ScoreBadge:
     def draw(self, surface): ...
 ```
 
+#### Pack-owned system UI skin
+
+需要換掉整套系統畫面 chrome 時，不要複製 `SaveScene`、`SettingsScene` 或把
+遊戲專屬版型寫進 core。註冊一個 widget，並宣告固定 protocol：
+
+```python
+@widget(
+    "my_pack_system_chrome",
+    signature={"protocol": "ui_chrome/v1"},
+)
+class MyPackSystemChrome:
+    def __init__(self, *, options, assets, fonts, theme):
+        ...
+
+    def render(self, request):
+        # 回傳 request.size 的 pygame.Surface；不處理則回 None。
+        ...
+```
+
+`meta.yaml` 以 `ui_skin.renderer` 選取它。`ChromeRequest` 只包含有限、
+可快取的狀態：`part`、`screen`、`variant`、`size`、`density`、
+`enabled`、`hovered`、`focused`、`selected`、`emphasis`。引擎用
+`SystemChromeHost` 隔離 constructor/render、檢查回傳尺寸並限制 cache；
+失敗只停用此 renderer，不會讓遊戲崩潰。
+
+v1 的穩定 `part` 是 `backdrop`、`panel`、`divider`、`button`、`card`、
+`footer`、`focus`，目前的 system `screen` 是 `menu`、`save`、`load`、
+`settings`、`gallery`、`map`、`travel`。共用 `Button` 發出的
+`button` / `focus` request
+一律使用 `<role>:<style>` variant（例如 `action:primary`）；Save/Load
+捲動列上的手動 action chip 則使用 `button/action`。Save/Load 另以
+`card/new|slot|special`、`footer/hint|success|error`、
+`panel/confirmation` 與 `backdrop/modal` 表達存檔列、狀態和確認層；
+Menu、Settings、Gallery 都會發出 `footer/hint`；Map 與 Travel 則共用同一
+個 skin seam，讓地圖選點到確認移動不會切回 stock chrome。完整且具 screen 範圍的
+[ui_chrome/v1 request matrix](theme-and-locale.md#ui_chromev1-request-matrix)
+是 renderer authoring 的權威表。
+
+Renderer 是 paint seam，不是 input seam：不得改場景 rect、文字、disabled
+語意、hit-test、44px 操作區或鍵盤／手把順序。這些仍由 engine 最後繪製與驗證。
+Functional、control、status 文案（包含按鈕標籤、提示、存讀檔狀態與錯誤）
+由 core 與 localization 擁有；pack renderer 只能增加 chrome 或不承載操作／
+狀態的靜態裝飾微文案。
+
+v1 保留既有矩陣組合的名稱與語意，但允許新增 screen、part、variant、Button
+role/style 或有限狀態組合。Renderer 遇到未知組合必須回傳 `None`，不可假設
+呼叫順序、次數、座標或尺寸固定；移除、改名、重新解釋既有組合或改變
+`Button` variant 文法才需要新的 protocol version。沒有 `ui_skin` 時不會建立
+renderer，system screens 使用當版 engine 的 stock fallback 行為；不保證不同
+engine 版本、平台、字型、locale 或解析度之間 byte-for-byte 相同。
+
+Plugin 可公開嚴格的 Pydantic `OptionsModel`，讓 pack validator 檢查
+`ui_skin.options`。Capability Manifest 的 widget entry 會同步輸出
+`options_schema`；未宣告或 schema reflection 失敗時則輸出帶
+`unavailable` reason 的明確 sentinel。Plugin-defined validator 或 schema
+hook 出錯只會產生 validator issue／unavailable schema，不會讓整體驗證或
+capability discovery 崩潰。
+
 ### `@scene(scene_id, *, description="", overlay=False, plugin_id=None)`  *(Phase 2)*
 
 Class decorator：註冊自訂 `Scene` 子類別。透過 `SCENE_REGISTRY.spawn(scene_id, ctx)`
@@ -326,6 +384,14 @@ class WiggleBackend:
 `update(dt, **ctx)` 的 `**ctx` 讓場景餵入每幀訊號;目前標準鍵是 `talking: bool`
 (該槽角色正在說話且台詞還在打字),layered 後端用它驅動嘴型。不在乎的後端忽略即可。
 
+減少動態由引擎強制執行，不依賴第三方後端自行判斷：`reduce_motion` 開啟時，
+DialogueScene 不呼叫 `update()`，並優先以 `base_surface()` 走靜態繪製；偏好關閉後
+同一實例才繼續更新。constructor、`update()`、`base_surface()`、`draw()` 的簽章不變。
+因此後端必須讓 `base_surface()` 回傳能辨識角色／表情的安全靜止幀；回傳 `None` 時
+引擎再用原本的靜態 portrait fallback。外掛不能自行建立繞過 engine policy 的全域時鐘。
+一般 runtime hook 若需要調整自己的有限回饋，可讀取 `PluginContext.motion`；早期
+`pack.before_load`／`pack.after_load` 階段尚無 App service，因此該欄位允許為 `None`。
+
 ```yaml
 # 場景 YAML — 對白 line 上的 portraits（PortraitSpec list）
 - text: "嗨！"
@@ -385,6 +451,11 @@ class RainBackend(ParticleBackend):     # ParticleBackend 處理 spawn/積分/�
 `alpha`（0-255 整體不透明度）;其餘鍵由各後端自取（`WeatherValue` 不認得的鍵在 lint
 時被忽略,但執行期仍原樣傳入）。
 
+同樣地，減少動態由引擎擋在 backend 邊界：偏好開啟時不呼叫 `update()`，但仍呼叫
+`draw()`，所以後端應以 constructor 與 seed 產生可重現的初始靜態畫面。`set_weather`
+與 `clear_weather` 的狀態語意不變，opacity 交接由核心縮短；偏好關閉後可從凍結狀態
+繼續。既有 `cls(params, screen_size)`／`update(dt)`／`draw(surface)` 簽章不變。
+
 ```yaml
 # 場景 YAML — 對白 line 的 effects
 - text: "（窗外下起了雨。）"
@@ -401,7 +472,7 @@ class RainBackend(ParticleBackend):     # ParticleBackend 處理 spawn/積分/�
 引擎內建一個 **`ambient_weather`** 插件（`world_gal_game/plugins_user/`），提供五個
 web-safe（純 pygame、確定性、桌面/web 一致）後端：`rain`（雨絲）、`snow`（飄雪 +
 橫向擺動）、`petals`（櫻花瓣翻轉）、`sparkles`（原地閃爍光點）、`fireflies`（漫遊
-脈動的螢火）。權威清單見 `wgg capabilities`（`markup.ambient_backends`）。
+脈動的螢火）。權威清單見 `world-gal-game capabilities`（`markup.ambient_backends`）。
 
 ### 影片播放器（movie player）登錄表  *(Phase 6 / 5B)*
 
@@ -413,7 +484,7 @@ web-safe（純 pygame、確定性、桌面/web 一致）後端：`rain`（雨絲
 載入時 `register_movie_player("video", …)`,以 pyvidplayer2 播 `.mp4`/`.webm`
 （lazy import,缺依賴/缺 ffmpeg 時優雅降級;`pip install "world-gal-game[video]"`）。
 任何插件可照同樣方式登錄自己的播放器後端。播放器須實作 `update(dt)` /
-`draw(surface)` / `done` / `skip()`。已註冊清單見 `wgg capabilities`
+`draw(surface)` / `done` / `skip()`。已註冊清單見 `world-gal-game capabilities`
 （`markup.movie_players`）。
 
 ---
@@ -434,10 +505,16 @@ web-safe（純 pygame、確定性、桌面/web 一致）後端：`rain`（雨絲
 | `HookEvent.SCENE_REPLACE` | `scene.replace` | SceneManager 替換底層 scene 後 | `old`, `new` | 2 |
 | `HookEvent.DIALOGUE_BEFORE_LINE` | `dialogue.before_line` | DialogueEngine 即將呈現一句 | `scene_id`, `line_index`, `line` | 2 |
 | `HookEvent.DIALOGUE_AFTER_LINE` | `dialogue.after_line` | DialogueEngine 呈現完一句 | `scene_id`, `line_index`, `line` | 2 |
+| `HookEvent.DIALOGUE_PRESENTATION_READY` | `dialogue.presentation_ready` | DialogueScene 已完成狀態對應的 UI presentation | `presentation` | 2 |
 | `HookEvent.DIALOGUE_CHOICE_MADE` | `dialogue.choice_made` | 玩家選了一個 choice | `scene_id`, `choice_id` | 2 |
 | `HookEvent.PLAYER_MOVE` | `player.move` | `move_to` effect 成功後 | `from_location`, `to_location` | 2 |
 | `HookEvent.TIME_ADVANCE` | `time.advance` | `advance_time` effect 後 | `phases`, `day`, `time_of_day` | 2 |
+| `HookEvent.CHAPTER_CHANGE` | `chapter.change` | `set_chapter` / `advance_chapter` 成功後 | `chapter`, `previous`, `title`, `route`, `order` | 2 |
 | `HookEvent.APP_FRAME` | `app.frame` | App 主迴圈每幀（保留，目前未自動 fire） | `dt` | 2 |
+
+`HookEvent` 共定義 18 個常數；上表前 17 個會由目前的引擎流程發送，
+`app.frame` 則是保留 API，尚未自動發送。文件或 capability 中的「18」指已定義的
+事件名稱，不代表 18 個都已有 runtime emission point。
 
 所有 hook 只在 `state.meta["__plugin_manager__"]` 存在時 fire — 也就是「透過
 content_loader 載入的完整 pack 流程」。直接用裸 `GameState()` 不會 fire，這是
@@ -625,10 +702,12 @@ def react(ctx, **kw):
 
 ## 路線
 
-Phase 1 + 2（本文件對應的範圍）：
+目前十類擴充點：
 - `@effect` / `@condition` / `@hook` / `@inspect_field`
 - `@widget` / `@scene` / `@brain` / `@dialogue_op`
-- 14 個 hook events 涵蓋 pack / save / scene / dialogue / player / time
+- `@portrait_backend` / `@ambient_backend`
+- 18 個已定義 hook event names 涵蓋 pack / save / scene / dialogue /
+  player / time / chapter；其中 17 個目前會自動發送
 
 Phase 3 預定加入：
 - Plugin marketplace（跨 pack 共用插件）

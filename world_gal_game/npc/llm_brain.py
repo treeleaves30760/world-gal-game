@@ -52,7 +52,7 @@ def build_llm_provider(registry: NPCRegistry, brain: LLMBrain) -> Callable[..., 
             return f"（{speaker} 沒有出現。）"
         loc = state.map.current
         loc_label = loc.name if loc else "（不明地點）"
-        time_label = state.time.time_of_day.label
+        time_label = state.time.time_label()
         recent = [f"[{e.kind}] {e.title}" for e in state.events.recent(8)]
         system = npc.system_prompt(
             player_name=state.player.name,

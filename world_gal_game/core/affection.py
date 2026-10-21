@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Iterable
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, PrivateAttr
 
 
 class AffectionThreshold(BaseModel):
@@ -81,6 +81,11 @@ class AffectionTracker(BaseModel):
     """Top-level tracker for all character affections."""
 
     characters: dict[str, CharacterAffection] = Field(default_factory=dict)
+    # Runtime presentation service.  This must be instance-local: applications
+    # and headless sessions can coexist in one process, and binding one pack's
+    # language must never change another state's relationship labels.  A
+    # PrivateAttr also keeps the service out of save files/model dumps.
+    _localization: object | None = PrivateAttr(default=None)
 
     def register(self, character_id: str,
                  stats: dict[str, int] | None = None,
@@ -113,10 +118,6 @@ class AffectionTracker(BaseModel):
     def all_stats(self) -> dict[str, dict[str, int]]:
         return {cid: dict(ca.stats) for cid, ca in self.characters.items()}
 
-    # Class-level slot for a Localization instance set by the App at
-    # startup. Default is None → fall back to bundled labels.
-    _localization: object | None = None
-
     def level_label(self, character_id: str, stat: str = "affection") -> str:
         """Human-readable label for the current affection level.
 
@@ -147,4 +148,4 @@ class AffectionTracker(BaseModel):
 
     def bind_localization(self, localization) -> None:
         """Bind a Localization instance so level_label uses pack overrides."""
-        type(self)._localization = localization
+        self._localization = localization

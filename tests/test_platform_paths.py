@@ -58,7 +58,7 @@ def test_save_dir_pack_id_is_sanitized():
     save namespace can't escape the saves/ root via separators / traversal."""
     from world_gal_game.config import _sanitize_pack_id
     assert _sanitize_pack_id("../../etc/passwd") == "passwd"
-    assert _sanitize_pack_id("../Tsing-Hua-Strange-Tales") == "Tsing-Hua-Strange-Tales"
+    assert _sanitize_pack_id("../My-Story-Pack") == "My-Story-Pack"
     assert _sanitize_pack_id("my pack!") == "my_pack"
     assert _sanitize_pack_id("") == ""
     # The resolved dir is always a direct child of saves/ (single component).

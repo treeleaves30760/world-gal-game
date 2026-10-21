@@ -38,6 +38,22 @@ def tiny_pack(tmp_path: Path) -> Path:
     afont = root / "assets" / "fonts" / "font.ttf"
     afont.parent.mkdir(parents=True, exist_ok=True)
     afont.write_bytes(b"FAKEFONT")
+    _write(root / "content" / "i18n" / "en.yaml", {
+        "format_version": 1,
+        "language": "en",
+        "source_language": "zh-Hant",
+        "source_digest": "0" * 64,
+        "messages": {"scene.line.0": "Hello"},
+    })
+    # Legacy extractor output remains supported when a manifest explicitly
+    # points at this pack-root location.
+    _write(root / "i18n" / "ja.yaml", {
+        "format_version": 1,
+        "language": "ja",
+        "source_language": "zh-Hant",
+        "source_digest": "1" * 64,
+        "messages": {"scene.line.0": "こんにちは"},
+    })
     return root
 
 
@@ -69,6 +85,10 @@ def test_stage_copies_engine_pack_and_writes_main(tiny_pack: Path,
     assert (staging / "games" / "my_web_pack" / "content" / "meta.yaml").exists()
     assert (staging / "games" / "my_web_pack" / "assets" / "fonts"
             / "font.ttf").exists()
+    assert (staging / "games" / "my_web_pack" / "content" / "i18n"
+            / "en.yaml").exists()
+    assert (staging / "games" / "my_web_pack" / "i18n"
+            / "ja.yaml").exists()
 
     # 3) templated entry point at the staging root names the pack.
     main_py = (staging / "main.py").read_text(encoding="utf-8")

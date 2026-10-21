@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pygame
 
-from .easing import resolve
+from .easing import canonical_name, resolve
 from .layout import fit_rect
 
 # numpy is optional (not a hard dependency / may be absent under pygbag/WASM).
@@ -29,6 +29,7 @@ class FadeTransition:
         self.t = 0.0
         self.done = False
         self.on_complete = on_complete
+        self.easing_name = canonical_name(easing)
         self._ease = resolve(easing)
 
     def update(self, dt: float) -> None:
@@ -60,6 +61,7 @@ class PortraitCrossfade:
         self.new = new
         self.duration = max(0.01, duration)
         self.t = 0.0
+        self.easing_name = canonical_name(easing)
         self._ease = resolve(easing)
 
     def update(self, dt: float) -> None:
@@ -158,6 +160,7 @@ class SceneTransition:
             self.color = (0, 0, 0)
         self.mask = mask
         self.t = 0.0
+        self.easing_name = canonical_name(easing)
         self._ease = resolve(easing)
         # ``mask`` silently degrades to ``dissolve`` when its prerequisites are
         # missing, so a pack that names it always renders *something* sensible.
@@ -346,6 +349,7 @@ class BackgroundFade:
         self.new = new
         self.duration = max(0.01, duration)
         self.t = 0.0
+        self.easing_name = canonical_name(easing)
         self._ease = resolve(easing)
 
     def update(self, dt: float) -> None:

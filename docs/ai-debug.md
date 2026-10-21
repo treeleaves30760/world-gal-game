@@ -1,6 +1,6 @@
 # AI Debug Driver
 
-`wgg debug` 把整個遊戲 boot 在無視窗模式，讓 AI agent / test 程式可以
+`world-gal-game debug` 把整個遊戲 boot 在無視窗模式，讓 AI agent / test 程式可以
 注入點擊與鍵盤事件、抓螢幕截圖、傾印狀態快照。
 
 設計目標是「讓 AI 自己驗證 bug」— 不用人類玩家手動操作就能 reproduce
@@ -10,7 +10,7 @@
 
 ### 1. CLI（適合 agent 與 CI）
 
-寫一個 JSON script，丟給 `wgg debug`：
+寫一個 JSON script，丟給 `world-gal-game debug`：
 
 ```bash
 cat > /tmp/repro.json <<'EOF'
@@ -56,6 +56,12 @@ assert d.snapshot()["location"] == "main_gate"
 d.screenshot("after.png")
 d.quit()
 ```
+
+需要可重現的 UI 截圖或視覺測試時，使用
+`GameDriver(pack="my_pack", isolated_runtime=True)`。這會為該 driver 建立暫時的
+settings／clear-data／save 根目錄，並將使用者 plugin root 指向同一沙盒內的空目錄；
+`quit()` 或初始化失敗都會還原環境並清除沙盒。一般互動除錯若刻意要重現玩家現有設定，
+則維持預設 `False`。
 
 ## 可用的 actions（CLI script）
 
@@ -119,7 +125,7 @@ d.quit()
 
 ## 跟一般 headless 模式的差別
 
-| | `wgg --headless --inspect` | `wgg debug` |
+| | `world-gal-game --headless --inspect` | `world-gal-game debug` |
 |---|---|---|
 | 用途 | 一次性 JSON dump | 多步驟驅動 |
 | 輸入注入 | scripted commands（高階） | 真實 pygame events（低階） |
@@ -128,7 +134,7 @@ d.quit()
 | 適合場景 | CI 通關驗證 | 視覺 bug 重現、widget 行為測試 |
 
 兩者互補：`--headless --inspect` 適合「整條路線跑完最終 state 對嗎」，
-`wgg debug` 適合「**這個按鈕到底有沒有反應**」「**畫面長這樣對嗎**」。
+`world-gal-game debug` 適合「**這個按鈕到底有沒有反應**」「**畫面長這樣對嗎**」。
 
 ## 寫一份典型的 bug repro
 
@@ -154,6 +160,6 @@ d.quit()
 
 ## 給 AI agent 的 prompt 範例
 
-> 「我在懷疑 Foo 按鈕沒反應。請寫一個 wgg debug script 通過 click 後
+> 「我在懷疑 Foo 按鈕沒反應。請寫一個 world-gal-game debug script 通過 click 後
 > 對比 snapshot，如果 state 真的沒變化就到 exploration.py 找這個按鈕
 > 的 on_click handler，回報 root cause。」

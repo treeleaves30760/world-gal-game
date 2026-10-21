@@ -1,5 +1,6 @@
-"""Tests for touch input + coordinate transform added in B0.
+"""Legacy one-frame touch helper and coordinate-transform tests.
 
+Cross-frame release/tap/drag behavior is covered by ``test_input_router.py``.
 Touch events are synthesized directly, so no real display is required.
 """
 from __future__ import annotations
@@ -56,7 +57,8 @@ def test_collect_applies_transform_to_mouse_pos():
 
 
 def test_fingerdown_maps_to_click_and_advance():
-    # Window 1280x720, identity transform: normalized (0.5, 0.5) -> (640, 360).
+    # InputState.collect is the legacy stateless helper. The persistent runtime
+    # InputRouter activates on release instead.
     down = _finger(pygame.FINGERDOWN, 0.5, 0.5)
     inp = InputState.collect([down], transform=lambda p: (int(p[0]), int(p[1])),
                              window_size=(1280, 720))

@@ -42,6 +42,7 @@ class InventoryScene(Scene):
             fonts=self.ctx.fonts, theme=self.ctx.theme,
             font_size=15, style="ghost",
             on_click=(lambda: on_close() if on_close else None),
+            motion=self.ctx.motion,
         )
         # Cards = (rect, item_id, owned_count) -- recomputed each draw.
         self._cards: list[tuple[pygame.Rect, str, int]] = []
@@ -80,6 +81,7 @@ class InventoryScene(Scene):
                 title = item.name
                 desc = item.description
                 icon_path = item.icon
+            giftable = item is not None and not item.locked
             card = pygame.Surface((self._scroll.rect.width - 14, card_h),
                                   pygame.SRCALPHA)
             pygame.draw.rect(card, (255, 255, 255, 22),
@@ -113,16 +115,27 @@ class InventoryScene(Scene):
             card.blit(d, (100, 44))
             # gift hint when picking
             if self.pick_for_npc:
-                hint = self.ctx.fonts.render("→ 點擊送出", 14,
-                                              self.ctx.theme.accent)
+                hint = self.ctx.fonts.render(
+                    "→ 點擊送出" if giftable else "劇情道具，不能送出",
+                    14,
+                    (
+                        self.ctx.theme.accent
+                        if giftable
+                        else self.ctx.theme.text_mute
+                    ),
+                )
                 card.blit(hint, (100, 70))
             # blit card and remember its hit rect (in scroll-area coords)
             surface.blit(card, (0, y))
-            self._cards.append(
-                (pygame.Rect(self._scroll.rect.x,
-                             self._scroll.rect.y + y - self._scroll.scroll_y,
-                             card.get_width(), card_h),
-                 item_id, count))
+            if not self.pick_for_npc or giftable:
+                self._cards.append(
+                    (pygame.Rect(
+                        self._scroll.rect.x,
+                        self._scroll.rect.y + y - self._scroll.scroll_y,
+                        card.get_width(),
+                        card_h,
+                    ), item_id, count),
+                )
             y += card_h + 10
         return y
 

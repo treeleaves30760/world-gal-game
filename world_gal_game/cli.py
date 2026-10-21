@@ -16,6 +16,17 @@ import time
 from pathlib import Path
 
 
+def _resolve_cli_pack(pack: str) -> Path | None:
+    """Resolve a CLI pack name or path with the runtime's search semantics."""
+    from world_gal_game.config import EngineConfig
+
+    try:
+        return EngineConfig().pack_root(pack)
+    except FileNotFoundError as exc:
+        print(f"[error] {exc}", file=sys.stderr)
+        return None
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="world-gal-game",
@@ -33,6 +44,14 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--fps", type=int, default=60)
     p.add_argument("--text-speed", type=float, default=None,
                    help="characters per second (0 = instant)")
+    p.add_argument(
+        "--locale",
+        default="",
+        help=(
+            "request an authored locale for this run (for example en or "
+            "zh-Hant-TW); unsupported values use the pack fallback"
+        ),
+    )
 
     # headless / inspection
     p.add_argument("--headless", action="store_true",
@@ -67,23 +86,21 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def validate_main(argv: list[str]) -> int:
-    """Entry point for `wgg validate <pack> [--json]`."""
+    """Entry point for `world-gal-game validate <pack> [--json]`."""
     import argparse
     import json as _json
 
     p = argparse.ArgumentParser(prog="world-gal-game validate",
                                 description="Validate a game pack's YAML content.")
-    p.add_argument("pack", help="path to the pack directory")
+    p.add_argument("pack", help="pack name or path")
     p.add_argument("--json", action="store_true",
                    help="output issues as machine-readable JSON")
     args = p.parse_args(argv)
 
-    from pathlib import Path
     from world_gal_game.validator import validate_pack
 
-    pack_path = Path(args.pack).resolve()
-    if not pack_path.exists():
-        print(f"[error] pack 目錄不存在：{pack_path}", file=sys.stderr)
+    pack_path = _resolve_cli_pack(args.pack)
+    if pack_path is None:
         return 1
 
     issues = validate_pack(pack_path)
@@ -116,7 +133,7 @@ def validate_main(argv: list[str]) -> int:
 
 
 def inspect_pack_main(argv: list[str]) -> int:
-    """Entry point for ``wgg inspect-pack <pack>``."""
+    """Entry point for ``world-gal-game inspect-pack <pack>``."""
     import argparse
     import json as _json
 
@@ -124,7 +141,7 @@ def inspect_pack_main(argv: list[str]) -> int:
         prog="world-gal-game inspect-pack",
         description="Print structural analysis of a game pack (scenes, "
                     "locations, NPCs, reachability, dead-ends, graph).")
-    p.add_argument("pack", help="path to the pack directory")
+    p.add_argument("pack", help="pack name or path")
     p.add_argument("--format", choices=["text", "json", "mermaid", "dot"],
                    default="text",
                    help="text (default), json (full dump), mermaid (graph), "
@@ -159,9 +176,8 @@ def inspect_pack_main(argv: list[str]) -> int:
         return 0
 
     from world_gal_game.dev.pack_inspector import PackInspector
-    pack_path = Path(args.pack).resolve()
-    if not pack_path.exists():
-        print(f"[error] pack 目錄不存在：{pack_path}", file=sys.stderr)
+    pack_path = _resolve_cli_pack(args.pack)
+    if pack_path is None:
         return 1
 
     # Dataflow / cross-reference view (loads the pack for typed fidelity).
@@ -219,7 +235,7 @@ def inspect_pack_main(argv: list[str]) -> int:
     print(f"  root:        {summary['pack_root']}")
     print(f"  start:       location={summary['start_location']!r} "
           f"intro_scene={summary['intro_scene']!r}")
-    print(f"  counts:      "
+    print("  counts:      "
           + ", ".join(f"{k}={v}" for k, v in summary["counts"].items()))
     if not args.no_reachability:
         r = inspector.reachability()
@@ -238,14 +254,14 @@ def inspect_pack_main(argv: list[str]) -> int:
 
 
 def edit_main(argv: list[str]) -> int:
-    """Entry point for ``wgg edit <pack> <op> [args]``."""
+    """Entry point for ``world-gal-game edit <pack> <op> [args]``."""
     import argparse
     import json as _json
 
     p = argparse.ArgumentParser(
         prog="world-gal-game edit",
         description="Structured edits to a game pack (comment-preserving).")
-    p.add_argument("pack", help="path to the pack directory")
+    p.add_argument("pack", help="pack name or path")
     p.add_argument("op", nargs="?", choices=[
         "add-scene", "add-choice", "update-line", "add-npc",
         "add-location", "add-item",
@@ -275,9 +291,8 @@ def edit_main(argv: list[str]) -> int:
                    help="don't write; print diff and exit")
     args = p.parse_args(argv)
 
-    pack_path = Path(args.pack).resolve()
-    if not pack_path.exists():
-        print(f"[error] pack 目錄不存在：{pack_path}", file=sys.stderr)
+    pack_path = _resolve_cli_pack(args.pack)
+    if pack_path is None:
         return 1
 
     payload: dict | None = None
@@ -315,27 +330,33 @@ def edit_main(argv: list[str]) -> int:
             editor.update_line(args.scene_id, args.line_index, payload)
         elif args.op == "add-npc":
             if payload is None:
-                print("[error] --payload required", file=sys.stderr); return 2
+                print("[error] --payload required", file=sys.stderr)
+                return 2
             editor.add_npc(payload, into_file=args.into_file)
         elif args.op == "add-location":
             if payload is None:
-                print("[error] --payload required", file=sys.stderr); return 2
+                print("[error] --payload required", file=sys.stderr)
+                return 2
             editor.add_location(payload, into_file=args.into_file)
         elif args.op == "add-item":
             if payload is None:
-                print("[error] --payload required", file=sys.stderr); return 2
+                print("[error] --payload required", file=sys.stderr)
+                return 2
             editor.add_item(payload, into_file=args.into_file)
         elif args.op == "remove-scene":
             if not args.target_id:
-                print("[error] remove-scene needs --id", file=sys.stderr); return 2
+                print("[error] remove-scene needs --id", file=sys.stderr)
+                return 2
             editor.remove_scene(args.target_id)
         elif args.op == "remove-npc":
             if not args.target_id:
-                print("[error] remove-npc needs --id", file=sys.stderr); return 2
+                print("[error] remove-npc needs --id", file=sys.stderr)
+                return 2
             editor.remove_npc(args.target_id)
         elif args.op == "remove-location":
             if not args.target_id:
-                print("[error] remove-location needs --id", file=sys.stderr); return 2
+                print("[error] remove-location needs --id", file=sys.stderr)
+                return 2
             editor.remove_location(args.target_id)
 
         if args.gen_migration:
@@ -370,7 +391,7 @@ def edit_main(argv: list[str]) -> int:
 
 
 def capabilities_main(argv: list[str]) -> int:
-    """Entry point for ``wgg capabilities``."""
+    """Entry point for ``world-gal-game capabilities``."""
     import argparse
     p = argparse.ArgumentParser(
         prog="world-gal-game capabilities",
@@ -416,7 +437,7 @@ def variables_main(argv: list[str]) -> int:
         description="List a pack's declared narrative-state variables "
                     "(content/variables.yaml) — the typed state schema. With "
                     "--check, cross-checks declared vs. used flags.")
-    p.add_argument("pack", help="path to the pack directory")
+    p.add_argument("pack", help="pack name or path")
     p.add_argument("--format", choices=["text", "json"], default="text")
     p.add_argument("--check", action="store_true",
                    help="cross-check declared vs. used: report used-but-"
@@ -424,9 +445,8 @@ def variables_main(argv: list[str]) -> int:
                         "pack).")
     args = p.parse_args(argv)
 
-    pack_path = Path(args.pack).resolve()
-    if not pack_path.exists():
-        print(f"[error] pack 目錄不存在：{pack_path}", file=sys.stderr)
+    pack_path = _resolve_cli_pack(args.pack)
+    if pack_path is None:
         return 1
 
     from world_gal_game.dev.pack_inspector import PackInspector
@@ -471,16 +491,15 @@ def chapters_main(argv: list[str]) -> int:
         description="List a pack's declared chapter/act/route structure "
                     "(content/chapters.yaml). With --check, cross-checks chapter "
                     "scene references against the pack's real scenes.")
-    p.add_argument("pack", help="path to the pack directory")
+    p.add_argument("pack", help="pack name or path")
     p.add_argument("--format", choices=["text", "json"], default="text")
     p.add_argument("--check", action="store_true",
                    help="report unknown scene refs and scenes covered by no "
                         "chapter.")
     args = p.parse_args(argv)
 
-    pack_path = Path(args.pack).resolve()
-    if not pack_path.exists():
-        print(f"[error] pack 目錄不存在：{pack_path}", file=sys.stderr)
+    pack_path = _resolve_cli_pack(args.pack)
+    if pack_path is None:
         return 1
 
     from world_gal_game.dev.pack_inspector import PackInspector
@@ -536,7 +555,7 @@ def session_main(argv: list[str]) -> int:
 
 
 def plan_main(argv: list[str]) -> int:
-    """Entry point for ``wgg plan`` — goal-directed path search."""
+    """Entry point for ``world-gal-game plan`` — goal-directed path search."""
     import argparse
     import json as _json
     p = argparse.ArgumentParser(
@@ -585,22 +604,52 @@ def coverage_main(argv: list[str]) -> int:
         prog="world-gal-game coverage",
         description="Report scene/line/choice/ending coverage of a script run "
                     "against the pack's totals.")
-    p.add_argument("pack", help="path to the pack directory")
-    p.add_argument("--script", default=None,
-                   help="JSON script (a list of ops or {commands:[...]}) to "
-                        "run; omitted = report the totals with zero coverage.")
+    p.add_argument("pack", help="pack name or path")
+    script_group = p.add_mutually_exclusive_group()
+    script_group.add_argument("--script", default=None,
+                              help="JSON script (a list of ops or {commands:[...]}) to "
+                                   "run; omitted = report the totals with zero coverage.")
+    script_group.add_argument(
+        "--all-scripts",
+        action="store_true",
+        help=(
+            "run and union every scripts/test_*.json observation using the "
+            "authoritative absolute pack path"
+        ),
+    )
     p.add_argument("--seed", type=int, default=None)
     p.add_argument("--format", choices=["text", "json"], default="text")
     args = p.parse_args(argv)
 
-    pack_path = Path(args.pack).resolve()
-    if not pack_path.exists():
-        print(f"[error] pack 目錄不存在：{pack_path}", file=sys.stderr)
+    pack_path = _resolve_cli_pack(args.pack)
+    if pack_path is None:
         return 1
 
     from world_gal_game.config import EngineConfig
     from world_gal_game.dev.coverage import CoverageTracker
     from world_gal_game.headless import HeadlessSession
+
+    if args.all_scripts:
+        from world_gal_game.dev.production_check import _run_coverage_union
+
+        union = _run_coverage_union(
+            pack_path,
+            seed=args.seed if args.seed is not None else 42,
+        )
+        if args.format == "json":
+            print(_json.dumps(union, ensure_ascii=False, indent=2))
+        else:
+            coverage = union["coverage"]
+            for name in ("scenes", "lines", "choices", "endings"):
+                bucket = coverage[name]
+                line = (
+                    f"  {name:8} {bucket['seen']}/{bucket['total']} "
+                    f"({bucket['pct']}%)"
+                )
+                if bucket["missing"] and name in ("scenes", "endings"):
+                    line += f"  missing: {', '.join(bucket['missing'])}"
+                print(line)
+        return 0 if union["ok"] else 1
 
     tracker = CoverageTracker(pack_path)
     sess = HeadlessSession.open(EngineConfig(seed=args.seed), pack=str(pack_path))
@@ -669,7 +718,7 @@ def docs_main(argv: list[str]) -> int:
 
 
 def context_main(argv: list[str]) -> int:
-    """Entry point for ``wgg context <pack>`` — one aggregate JSON view."""
+    """Entry point for ``world-gal-game context <pack>`` — aggregate JSON."""
     import argparse
     import json as _json
     p = argparse.ArgumentParser(
@@ -678,7 +727,7 @@ def context_main(argv: list[str]) -> int:
                     "+ dataflow digest + coverage totals + structural gaps into "
                     "a single JSON object — the lowest-token way to orient an "
                     "agent before editing.")
-    p.add_argument("pack", help="path to the pack directory")
+    p.add_argument("pack", help="pack name or path")
     p.add_argument("--script", default=None,
                    help="JSON script (a list of ops or {commands:[...]}) to run "
                         "for real coverage; omitted = totals only.")
@@ -689,9 +738,8 @@ def context_main(argv: list[str]) -> int:
     p.add_argument("--format", choices=["json", "text"], default="json")
     args = p.parse_args(argv)
 
-    pack_path = Path(args.pack).resolve()
-    if not pack_path.exists():
-        print(f"[error] pack 目錄不存在：{pack_path}", file=sys.stderr)
+    pack_path = _resolve_cli_pack(args.pack)
+    if pack_path is None:
         return 1
 
     script = None
@@ -731,7 +779,7 @@ def impact_main(argv: list[str]) -> int:
                     "endings/scenes are gated on it (and may become unreachable "
                     "if its writers change), and a planner baseline of which "
                     "at-risk endings are reachable today.")
-    p.add_argument("pack", help="path to the pack directory")
+    p.add_argument("pack", help="pack name or path")
     p.add_argument("--symbol", required=True,
                    help="the flag/scene/item/resource id to analyze")
     p.add_argument("--type", dest="symbol_type", default=None,
@@ -743,9 +791,8 @@ def impact_main(argv: list[str]) -> int:
     p.add_argument("--format", choices=["json", "text"], default="json")
     args = p.parse_args(argv)
 
-    pack_path = Path(args.pack).resolve()
-    if not pack_path.exists():
-        print(f"[error] pack 目錄不存在：{pack_path}", file=sys.stderr)
+    pack_path = _resolve_cli_pack(args.pack)
+    if pack_path is None:
         return 1
 
     from world_gal_game.dev.agent_endpoints import analyze_impact
@@ -778,13 +825,12 @@ def brief_main(argv: list[str]) -> int:
         description="A minimal pack digest (compact scene adjacency + ending "
                     "reachability + key:type variables + gaps) — the cheapest "
                     "read before editing. `--format text` is the tersest form.")
-    p.add_argument("pack", help="path to the pack directory")
+    p.add_argument("pack", help="pack name or path")
     p.add_argument("--format", choices=["json", "text"], default="json")
     args = p.parse_args(argv)
 
-    pack_path = Path(args.pack).resolve()
-    if not pack_path.exists():
-        print(f"[error] pack 目錄不存在：{pack_path}", file=sys.stderr)
+    pack_path = _resolve_cli_pack(args.pack)
+    if pack_path is None:
         return 1
 
     from world_gal_game.dev.agent_endpoints import pack_brief
@@ -804,13 +850,12 @@ def card_main(argv: list[str]) -> int:
         description="A focused, compact view of one symbol (scene / flag / item "
                     "/ resource / npc / location): edges + guard logic for a "
                     "scene, writers/readers + gated endings for a flag.")
-    p.add_argument("pack", help="path to the pack directory")
+    p.add_argument("pack", help="pack name or path")
     p.add_argument("--symbol", required=True, help="the symbol id to describe")
     args = p.parse_args(argv)
 
-    pack_path = Path(args.pack).resolve()
-    if not pack_path.exists():
-        print(f"[error] pack 目錄不存在：{pack_path}", file=sys.stderr)
+    pack_path = _resolve_cli_pack(args.pack)
+    if pack_path is None:
         return 1
 
     from world_gal_game.dev.agent_endpoints import symbol_card
@@ -820,7 +865,7 @@ def card_main(argv: list[str]) -> int:
 
 
 def contract_main(argv: list[str]) -> int:
-    """Entry point for ``wgg contract <pack>`` — behavioural regression check."""
+    """Run ``world-gal-game contract <pack>`` behavioural regression checks."""
     import argparse
     import json as _json
     p = argparse.ArgumentParser(
@@ -829,16 +874,15 @@ def contract_main(argv: list[str]) -> int:
                     "reachable / unreachable / holds / path_reaches expectations "
                     "verified in one call. Exit non-zero if any fail — a "
                     "behavioural regression gate to pair with structural impact.")
-    p.add_argument("pack", help="path to the pack directory")
+    p.add_argument("pack", help="pack name or path")
     p.add_argument("--contract", default=None,
                    help="path to the contract file (default: <pack>/contracts.yaml)")
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--format", choices=["json", "text"], default="text")
     args = p.parse_args(argv)
 
-    pack_path = Path(args.pack).resolve()
-    if not pack_path.exists():
-        print(f"[error] pack 目錄不存在：{pack_path}", file=sys.stderr)
+    pack_path = _resolve_cli_pack(args.pack)
+    if pack_path is None:
         return 1
 
     from world_gal_game.dev.contract import check_contract
@@ -862,18 +906,17 @@ def contract_main(argv: list[str]) -> int:
 
 
 def smoke_main(argv: list[str]) -> int:
-    """Entry point for ``wgg smoke <pack>`` — runs every scripts/test_*.json."""
+    """Run every script through ``world-gal-game smoke <pack>``."""
     import argparse
     import json as _json
     p = argparse.ArgumentParser(prog="world-gal-game smoke",
                                 description="Run every scripts/test_*.json in a pack.")
-    p.add_argument("pack", help="path to the pack directory")
+    p.add_argument("pack", help="pack name or path")
     p.add_argument("--format", choices=["text", "json"], default="text")
     args = p.parse_args(argv)
 
-    pack_path = Path(args.pack).resolve()
-    if not pack_path.exists():
-        print(f"[error] pack 目錄不存在：{pack_path}", file=sys.stderr)
+    pack_path = _resolve_cli_pack(args.pack)
+    if pack_path is None:
         return 1
     from world_gal_game.dev.smoke_runner import SmokeRunner
     report = SmokeRunner(pack_path).run()
@@ -899,26 +942,50 @@ def smoke_main(argv: list[str]) -> int:
 
 
 def visual_check_main(argv: list[str]) -> int:
-    """Entry point for ``wgg visual-check <pack>``."""
+    """Entry point for ``world-gal-game visual-check <pack>``."""
     import argparse
     import json as _json
-    p = argparse.ArgumentParser(prog="world-gal-game visual-check",
-                                description="Render scenarios and diff against baselines.")
-    p.add_argument("pack", help="path to the pack directory")
+    p = argparse.ArgumentParser(
+        prog="world-gal-game visual-check",
+        description=(
+            "Render scenarios and diff against baselines. Generated candidates "
+            "default to <pack>/visual_candidates/visual_check/."
+        ),
+    )
+    p.add_argument("pack", help="pack name or path")
     p.add_argument("--update-baselines", action="store_true",
                    help="overwrite baselines with the current render (use after intended UI changes)")
-    p.add_argument("--scenarios", default=None,
-                   help="JSON file with scenarios; falls back to the default set")
+    p.add_argument(
+        "--strict-baselines",
+        action="store_true",
+        help=(
+            "fail when any baseline is missing instead of creating it "
+            "(recommended for CI/release gates)"
+        ),
+    )
+    p.add_argument(
+        "--scenarios",
+        default=None,
+        help=(
+            "JSON scenario list; view can be title, onboarding, dialogue, choice, "
+            "exploration, spatial_map_story_priority, "
+            "spatial_map_all_reachable, travel_confirmation, "
+            "destination_list, menu, history, save, load, settings, "
+            "cg_gallery, music_room (aliases: music, jukebox), "
+            "scene_replay (alias: replay), or flowchart. Entries can also "
+            "set scene_id/dev_flags/dev_location/dev_time; "
+            "falls back to the representative default set"
+        ),
+    )
     p.add_argument("--format", choices=["text", "json"], default="text")
     args = p.parse_args(argv)
 
-    pack_path = Path(args.pack).resolve()
-    if not pack_path.exists():
-        print(f"[error] pack 目錄不存在：{pack_path}", file=sys.stderr)
+    pack_path = _resolve_cli_pack(args.pack)
+    if pack_path is None:
         return 1
     from world_gal_game.dev.visual_check import VisualCheck
 
-    vc = VisualCheck(pack_path)
+    vc = VisualCheck(pack_path, strict_baselines=args.strict_baselines)
     if args.scenarios:
         scenarios = _json.loads(Path(args.scenarios).read_text(encoding="utf-8"))
     else:
@@ -927,14 +994,7 @@ def visual_check_main(argv: list[str]) -> int:
     if args.update_baselines:
         # Force-promote: capture, then copy candidate → baseline.
         for sc in scenarios:
-            vc.capture(
-                name=sc["name"],
-                dev_start=sc.get("dev_start"),
-                dev_location=sc.get("dev_location"),
-                dev_time=sc.get("dev_time"),
-                dev_flags=sc.get("dev_flags"),
-                autoplay=sc.get("autoplay", 0.6),
-            )
+            vc.capture_scenario(sc)
             vc.update_baseline(name=sc["name"])
             print(f"[updated] {sc['name']}")
         return 0
@@ -954,12 +1014,12 @@ def visual_check_main(argv: list[str]) -> int:
 
 
 def self_check_main(argv: list[str]) -> int:
-    """Entry point for ``wgg self-check <pack>``."""
+    """Entry point for ``world-gal-game self-check <pack>``."""
     import argparse
     import json as _json
     p = argparse.ArgumentParser(prog="world-gal-game self-check",
-                                description="Full 5-stage pack verification.")
-    p.add_argument("pack", help="path to the pack directory")
+                                description="Full 7-stage pack verification.")
+    p.add_argument("pack", help="pack name or path")
     p.add_argument("--skip-smoke", action="store_true")
     p.add_argument("--skip-softlock", action="store_true",
                    help="skip the soft-lock linter stage")
@@ -977,22 +1037,51 @@ def self_check_main(argv: list[str]) -> int:
                    help="(--reachability-deep) per-ending node cap")
     p.add_argument("--include-visual", action="store_true",
                    help="also run the visual stage (off by default)")
+    p.add_argument(
+        "--strict-visual-baselines",
+        action="store_true",
+        help=(
+            "run the visual stage and fail on missing baselines; implies "
+            "--include-visual and is intended for CI/release gates"
+        ),
+    )
+    p.add_argument(
+        "--visual-scenarios",
+        type=Path,
+        default=None,
+        help="explicit JSON scenario list (pins the visual matrix)",
+    )
+    p.add_argument(
+        "--smoke-seed",
+        type=int,
+        default=None,
+        help="deterministic seed for every smoke script",
+    )
     p.add_argument("--no-stop-on-failure", action="store_true",
                    help="run every stage even if earlier ones fail")
     p.add_argument("--format", choices=["text", "json"], default="text")
     args = p.parse_args(argv)
 
-    pack_path = Path(args.pack).resolve()
-    if not pack_path.exists():
-        print(f"[error] pack 目錄不存在：{pack_path}", file=sys.stderr)
+    pack_path = _resolve_cli_pack(args.pack)
+    if pack_path is None:
         return 1
 
     from world_gal_game.dev.self_check import SelfCheck
+    visual_scenarios = None
+    if args.visual_scenarios is not None:
+        visual_scenarios = _json.loads(
+            args.visual_scenarios.read_text(encoding="utf-8")
+        )
     sc = SelfCheck(
         pack_path,
         stop_on_failure=not args.no_stop_on_failure,
         skip_smoke=args.skip_smoke,
-        skip_visual=not args.include_visual,
+        skip_visual=not (
+            args.include_visual or args.strict_visual_baselines
+        ),
+        strict_visual_baselines=args.strict_visual_baselines,
+        visual_scenarios=visual_scenarios,
+        smoke_seed=args.smoke_seed,
         skip_softlock=args.skip_softlock,
         skip_reachability=args.skip_reachability,
         reachability_deep=args.reachability_deep,
@@ -1015,6 +1104,164 @@ def self_check_main(argv: list[str]) -> int:
         print()
         print("self-check: " + ("OK" if report.ok else "FAIL"))
     return 0 if report.ok else 1
+
+
+def runtime_check_main(argv: list[str]) -> int:
+    """Run the fresh-process runtime reliability gate.
+
+    This command is intentionally separate from ``self-check``.  It starts
+    multiple real App processes and writes host-sensitive release evidence;
+    the normal authoring loop remains fast and deterministic.
+    """
+    import json as _json
+
+    parser = argparse.ArgumentParser(
+        prog="world-gal-game runtime-check",
+        description=(
+            "Run fresh-process startup/first-frame and deterministic semantic "
+            "soak probes. Always attempts to write a JSON evidence report."
+        ),
+    )
+    parser.add_argument("pack", help="pack name or path")
+    parser.add_argument(
+        "--policy",
+        type=Path,
+        default=None,
+        help=(
+            "strict runtime policy YAML; defaults to "
+            "<pack>/content/runtime_reliability.yaml"
+        ),
+    )
+    parser.add_argument(
+        "--report",
+        "--output",
+        dest="report",
+        type=Path,
+        default=Path("artifacts/runtime-reliability/report.json"),
+        help="JSON evidence artifact path",
+    )
+    parser.add_argument("--format", choices=("text", "json"), default="text")
+    args = parser.parse_args(argv)
+
+    resolved = _resolve_cli_pack(args.pack)
+    pack_root = resolved or Path(args.pack).expanduser().resolve()
+    policy_path = args.policy or pack_root / "content" / "runtime_reliability.yaml"
+    from world_gal_game.dev.runtime_reliability import run_runtime_check
+
+    report = run_runtime_check(
+        pack_root,
+        policy_path=policy_path,
+        report_path=args.report,
+    )
+    if args.format == "json":
+        print(_json.dumps(report, ensure_ascii=False, indent=2, allow_nan=False))
+    else:
+        status = "ok" if report["ok"] else report["status"]
+        print(f"runtime-check: {status}")
+        print(f"report: {args.report.expanduser().resolve()}")
+        startup = report.get("summary", {}).get("fresh_process_startup", {})
+        frames = report.get("summary", {}).get("frame_time", {})
+        memory = report.get("summary", {}).get("memory", {})
+        if startup:
+            print(
+                "fresh-process app-ready p95: "
+                f"{startup.get('app_ready_p95_ms')} ms; first-frame p95: "
+                f"{startup.get('first_frame_p95_ms')} ms"
+            )
+        if frames:
+            print(
+                f"frame p95/p99/max: {frames.get('p95_ms')} / "
+                f"{frames.get('p99_ms')} / {frames.get('max_ms')} ms"
+            )
+        if memory:
+            print(
+                f"RSS current/peak max: {memory.get('current_rss_max_bytes')} / "
+                f"{memory.get('peak_rss_max_bytes')} bytes"
+            )
+        for failure in report.get("failures", []):
+            print(f"[FAIL] {failure['code']}: {failure['message']}")
+    return 0 if report["ok"] else 1
+
+
+def production_check_main(argv: list[str]) -> int:
+    """Run the fail-closed aggregate source-release preflight."""
+    import json as _json
+
+    parser = argparse.ArgumentParser(
+        prog="world-gal-game production-check",
+        description=(
+            "Run strict self-check, approved visual, union coverage, narrative "
+            "contract, and calibrated runtime gates; always attempt one JSON artifact."
+        ),
+    )
+    parser.add_argument("pack", help="pack name or path")
+    parser.add_argument(
+        "--policy",
+        type=Path,
+        default=None,
+        help="strict policy; defaults to <pack>/content/production.yaml",
+    )
+    parser.add_argument(
+        "--report",
+        type=Path,
+        required=True,
+        help="aggregate JSON evidence path (must be outside both Git worktrees)",
+    )
+    parser.add_argument("--format", choices=("text", "json"), default="text")
+    args = parser.parse_args(argv)
+
+    resolved = _resolve_cli_pack(args.pack)
+    pack_root = resolved or Path(args.pack).expanduser().resolve()
+    policy_path = args.policy or pack_root / "content" / "production.yaml"
+    from world_gal_game.dev.production_check import run_production_check
+
+    report = run_production_check(
+        pack_root,
+        policy_path=policy_path,
+        report_path=args.report,
+    )
+    if args.format == "json":
+        print(_json.dumps(report, ensure_ascii=False, indent=2, allow_nan=False))
+    else:
+        print(f"production-check: {report['status']}")
+        print(f"report: {args.report.expanduser().resolve()}")
+        for name, gate in report.get("gates", {}).items():
+            marker = "ok" if gate.get("ok") else "FAIL"
+            print(f"[{marker}] {name}")
+        for failure in report.get("failures", []):
+            print(f"[FAIL] {failure['code']}: {failure['message']}")
+    return 0 if report["ok"] else 1
+
+
+def production_verify_main(argv: list[str]) -> int:
+    """Verify a saved production artifact against the current source tree."""
+    import json as _json
+
+    parser = argparse.ArgumentParser(
+        prog="world-gal-game production-verify",
+        description="Verify artifact schema, semantics, freshness, and current inputs.",
+    )
+    parser.add_argument("report", type=Path, help="production-check JSON artifact")
+    parser.add_argument("--pack", required=True, help="current pack name or path")
+    parser.add_argument("--format", choices=("text", "json"), default="text")
+    args = parser.parse_args(argv)
+
+    pack_path = _resolve_cli_pack(args.pack)
+    if pack_path is None:
+        return 1
+    from world_gal_game.dev.production_check import verify_production_report
+
+    result = verify_production_report(
+        args.report,
+        pack_root=pack_path,
+    )
+    if args.format == "json":
+        print(_json.dumps(result, ensure_ascii=False, indent=2, allow_nan=False))
+    else:
+        print("production-verify: " + ("pass" if result["ok"] else "fail"))
+        for failure in result.get("failures", []):
+            print(f"[FAIL] {failure['code']}: {failure['message']}")
+    return 0 if result["ok"] else 1
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1069,6 +1316,12 @@ def main(argv: list[str] | None = None) -> int:
         return visual_check_main(_args[1:])
     if _args[:1] == ["self-check"]:
         return self_check_main(_args[1:])
+    if _args[:1] == ["runtime-check"]:
+        return runtime_check_main(_args[1:])
+    if _args[:1] == ["production-check"]:
+        return production_check_main(_args[1:])
+    if _args[:1] == ["production-verify"]:
+        return production_verify_main(_args[1:])
 
     args = build_parser().parse_args(argv)
 
@@ -1083,6 +1336,7 @@ def main(argv: list[str] | None = None) -> int:
         fps=args.fps,
         fullscreen=args.fullscreen,
         default_pack=args.pack,
+        locale=args.locale,
     )
     if args.text_speed is not None:
         config.text_speed = args.text_speed
@@ -1123,60 +1377,79 @@ def _run_screenshot_mode(app, args) -> int:
     import pygame
     from world_gal_game.ui.input import InputState
 
-    # Apply pre-state flags so we can screenshot mid-route states.
-    if args.dev_flags:
-        for k, v in json.loads(args.dev_flags).items():
-            app.state.events.set_flag(k, v)
-    if args.dev_affection:
-        for k, v in json.loads(args.dev_affection).items():
-            app.state.affection.adjust(k, int(v))
-    if args.dev_time:
-        from world_gal_game.core.time_system import TimeOfDay
-        try:
-            app.state.time.set_phase(TimeOfDay(args.dev_time))
-        except ValueError:
-            pass
-    if args.dev_location and args.dev_location in app.state.map.locations:
-        app.state.map.move_to(args.dev_location)
+    def apply_dev_state() -> None:
+        """Apply screenshot overrides to the current, initialized state."""
+        if args.dev_flags:
+            for k, v in json.loads(args.dev_flags).items():
+                app.state.events.set_flag(k, v)
+        if args.dev_affection:
+            for k, v in json.loads(args.dev_affection).items():
+                app.state.affection.adjust(k, int(v))
+        if args.dev_time:
+            from world_gal_game.core.time_system import TimeOfDay
+            try:
+                app.state.time.set_phase(TimeOfDay(args.dev_time))
+            except ValueError:
+                pass
+        if args.dev_location and args.dev_location in app.state.map.locations:
+            app.state.map.move_to(args.dev_location)
 
     # Skip the title screen if requested.
-    if args.dev_start:
-        ds = args.dev_start
+    ds = args.dev_start
+    new_game_screens = {
+        "explore",
+        "map",
+        "affection",
+        "log",
+        "save",
+        "settings",
+        "menu",
+        "achievements",
+        "inventory",
+    }
+    needs_new_game = bool(
+        ds
+        and (
+            ds in new_game_screens
+            or ds.startswith("scene:")
+            or ds.startswith("npc:")
+        )
+    )
+    if needs_new_game:
+        app._start_new_game()
+        app.manager.commit_pending()
+
+    # New-game initialization may replace time, location, flags, and route
+    # state. Apply screenshot overrides only after that initialization, but
+    # before constructing the requested screen so its authored conditions see
+    # the final state.
+    apply_dev_state()
+
+    if ds:
         if ds == "explore":
-            app._start_new_game()
+            pass
         elif ds.startswith("scene:"):
-            app._start_new_game()
-            app.manager.commit_pending()
             app._start_dialogue(ds.split(":", 1)[1])
         elif ds == "map":
-            app._start_new_game(); app.manager.commit_pending()
             app._open_map()
         elif ds == "affection":
-            app._start_new_game(); app.manager.commit_pending()
             app._open_affection()
         elif ds == "log":
-            app._start_new_game(); app.manager.commit_pending()
             app._open_event_log()
         elif ds == "save":
-            app._start_new_game(); app.manager.commit_pending()
             app._open_save_menu()
         elif ds == "load":
             app._open_load_menu()
         elif ds == "settings":
-            app._start_new_game(); app.manager.commit_pending()
             app._open_settings()
         elif ds == "menu":
-            app._start_new_game(); app.manager.commit_pending()
             app._open_menu()
         elif ds == "achievements":
-            app._start_new_game(); app.manager.commit_pending()
             app.state.achievements.check(app.state)
             app._open_achievements()
         elif ds == "inventory":
-            app._start_new_game(); app.manager.commit_pending()
             app._open_inventory()
         elif ds.startswith("npc:"):
-            app._start_new_game(); app.manager.commit_pending()
             app._open_npc_actions(ds.split(":", 1)[1])
 
     start = time.monotonic()
