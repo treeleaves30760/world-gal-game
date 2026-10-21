@@ -27,6 +27,12 @@ qa_shots/
 tmp/
 *.save.json
 QA_REPORT*.md
+# runtime user settings written next to the engine in dev runs
+/settings.json
+# generated evidence / debug output (may contain local absolute paths)
+artifacts/
+debug_out/
+visual_candidates/
 
 # pytest / build caches
 .pytest_cache/
@@ -45,9 +51,6 @@ QA_REPORT*.md
 
 # OS image caches under games/<pack>/assets — keep, they're game content
 
-# Docusaurus docs site (Node tooling lives at repo root; docs content is docs/).
-# Build output goes to site/ (not build/, which PyInstaller uses).
+# The documentation website (Docusaurus) lives in a separate repo,
+# World-Gal-Game-Web, which syncs docs/ from here at build time.
 node_modules/
-/site/
-.docusaurus/
-.cache-loader/
