@@ -1,0 +1,36 @@
+# Rebuild the documentation website when the engine is tagged.
+#
+# The website (treeleaves30760/World-Gal-Game-Web) syncs docs/ from this repo
+# at build time and only deploys on tags / dispatches. Pushing a v* tag here
+# sends a `docs-updated` repository_dispatch so the site rebuilds from that tag.
+#
+# ONE-TIME SETUP: create a fine-grained personal access token scoped to the
+# World-Gal-Game-Web repository with "Contents: Read and write", then store it
+# in this repo as the secret WEBSITE_DISPATCH_TOKEN.
+
+name: Notify website
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  dispatch:
+    name: Dispatch docs-updated
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send repository_dispatch to the website repo
+        env:
+          TOKEN: ${{ secrets.WEBSITE_DISPATCH_TOKEN }}
+          REF: ${{ github.ref_type == 'tag' && github.ref_name || 'main' }}
+        run: |
+          if [ -z "$TOKEN" ]; then
+            echo "::warning::WEBSITE_DISPATCH_TOKEN is not set; skipping website rebuild."
+            exit 0
+          fi
+          curl -fsS -X POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $TOKEN" \
+            https://api.github.com/repos/treeleaves30760/World-Gal-Game-Web/dispatches \
+            -d "{\"event_type\":\"docs-updated\",\"client_payload\":{\"ref\":\"$REF\"}}"

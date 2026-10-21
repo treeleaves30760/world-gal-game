@@ -135,8 +135,9 @@ device, accessibility, legal, or reviewer-identity proof.
   private or closed-source; never name them, their characters, places or
   evidence in engine code, tests, docs or commit messages. Use generic fixtures.
 - **`docs/` is the single source of documentation.** The website lives in the
-  separate `World-Gal-Game-Web` repo and syncs `docs/*.md` at build time — edit
-  docs here, not there.
+  separate `World-Gal-Game-Web` repo (VitePress) and syncs `docs/*.md` at build
+  time — edit docs here, not there. The site only redeploys when a `v*` tag is
+  pushed (here or there); `notify-website.yml` forwards engine tags.
 - **pydantic v2 + YAML packs.** Model first, then serialize.
 - **Engine changes affect every pack.** Before changing core schema, confirm
   `smoke demo_pack` still passes; schema changes need a `pack_format_version`

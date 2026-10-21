@@ -8,7 +8,7 @@ World Gal-Game 是一個以 Python + pygame 寫成的視覺小說引擎。它的
 讀懂一款遊戲的結構、無視窗地把它玩一遍、做結構化修改、再用可重跑的檢查證明
 修改沒有弄壞任何路線。
 
-- 文件網站：<https://treeleaves30760.github.io/World-Gal-Game-Web/>（原始文件就在本 repo 的 [`docs/`](docs/README.md)）
+- 文件網站：[world-gal-game.夜橘.com](https://world-gal-game.xn--essy41b.com/)（原始文件就在本 repo 的 [`docs/`](docs/README.md)）
 - 路線圖：[ROADMAP.md](ROADMAP.md)
 - 給 AI 協作者的入口：[AGENTS.md](AGENTS.md)（任何 agent）、[CLAUDE.md](CLAUDE.md)（Claude Code）、[llms.txt](llms.txt)（機器可讀地圖）
 
