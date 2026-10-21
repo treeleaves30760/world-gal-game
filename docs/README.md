@@ -1,7 +1,13 @@
 # World Gal-Game · 文件總覽
 
-完整的「從零做出一款 Gal-Game」教學指引。引擎本身（`world_gal_game/`）只負責跑
-遊戲；遊戲內容打包成 **pack**，全部走 YAML。**99% 的遊戲開發不用碰一行 Python**。
+World Gal-Game 是一個**讓 AI 成為一等開發者**的 Gal-Game / 視覺小說引擎：人類用
+YAML 撰寫遊戲，AI agent 能無視窗地遊玩、檢查、結構化修改並驗證同一款遊戲，第三方
+則以外掛擴充引擎。引擎本身（`world_gal_game/`）只負責跑遊戲；遊戲內容打包成
+**pack**，全部走 YAML。**99% 的遊戲開發不用碰一行 Python**。
+
+這個資料夾是所有文件的唯一來源；文件網站
+（[World-Gal-Game-Web](https://github.com/treeleaves30760/World-Gal-Game-Web)）
+在建置時直接同步這裡的 Markdown。
 
 需要更高層的方向感 / 路線圖請看 [../ROADMAP.md](https://github.com/treeleaves30760/world-gal-game/blob/main/ROADMAP.md)；
 AI 協作者進場速查 [../CLAUDE.md](https://github.com/treeleaves30760/world-gal-game/blob/main/CLAUDE.md)。
@@ -38,7 +44,7 @@ AI 協作者進場速查 [../CLAUDE.md](https://github.com/treeleaves30760/world
 | [resources.md](resources.md) | 自訂資源（金錢、體力、學分…）、`gain_resource` |
 | [quests.md](quests.md) | 任務系統、目標追蹤、Quest Log UI |
 | [achievements.md](achievements.md) | 成就、隱藏成就、觸發條件 |
-| [presentation-and-extras.md](presentation-and-extras.md) | CG鑑賞 / 音樂室 / 場景重溫 / 結局 + 完成度、Auto / Skip、NVL、鏡頭 / 畫面特效、角色語音、快速 / 自動存檔 |
+| [presentation-and-extras.md](presentation-and-extras.md) | CG鑑賞 / 音樂室 / 場景重溫 / 結局 + 完成度、Auto / Skip、NVL、鏡頭 / 畫面特效、角色語音、精確續讀、快速 / 自動存檔 |
 | [theme-and-locale.md](theme-and-locale.md) | 換色、換語系、`affection_levels` 在地化 |
 | [cookbook.md](cookbook.md) | 常見模式食譜（鎖路線、限時事件、商店折扣…） |
 
@@ -48,10 +54,10 @@ AI 協作者進場速查 [../CLAUDE.md](https://github.com/treeleaves30760/world
 
 | 文件 | 內容 |
 |---|---|
-| [effects-reference.md](effects-reference.md) | 全部 23 個內建 effect kind + 範例 + 邊界情況 |
-| [conditions-reference.md](conditions-reference.md) | 全部 16 個內建 condition kind |
+| [effects-reference.md](effects-reference.md) | 自動生成的全部內建 effect kind + 範例 + 邊界情況 |
+| [conditions-reference.md](conditions-reference.md) | 自動生成的全部內建 condition kind |
 
-引擎還支援**外掛擴充更多 kind** — 跑 `wgg capabilities --pack <p>` 拿到該 pack
+引擎還支援**外掛擴充更多 kind** — 跑 `world-gal-game capabilities --pack <p>` 拿到該 pack
 實際可用的全套清單。
 
 ### 軌道 4 · 進階
@@ -66,13 +72,13 @@ AI 協作者進場速查 [../CLAUDE.md](https://github.com/treeleaves30760/world
 | [ai-native-world-model.md](ai-native-world-model.md) | variables / dataflow / planner / coverage / rollback；`context` / `impact` 聚合端點 |
 | [session-protocol.md](session-protocol.md) | 暖 NDJSON session：行框、訊息形狀、batch 原子性、錯誤格式 |
 | [headless.md](headless.md) | `HeadlessSession`：無視窗跑遊戲、抓玩家狀態 |
-| [ai-debug.md](ai-debug.md) | `wgg debug`：注入點擊、截圖、widget 查找 |
+| [ai-debug.md](ai-debug.md) | `world-gal-game debug`：注入點擊、截圖、widget 查找 |
 
 #### 4b. 寫插件擴充引擎本體
 
 | 文件 | 用途 |
 |---|---|
-| [plugins.md](plugins.md) | 用 `@effect` / `@condition` / `@hook` / `@scene` / `@widget` / `@brain` / `@dialogue_op` / `@portrait_backend` 加新功能 |
+| [plugins.md](plugins.md) | 用十類擴充點（含 `@portrait_backend` / `@ambient_backend`）加新功能 |
 
 #### 4c. 美術素材生成
 
@@ -85,7 +91,10 @@ AI 協作者進場速查 [../CLAUDE.md](https://github.com/treeleaves30760/world
 | 文件 | 用途 |
 |---|---|
 | [architecture.md](architecture.md) | 模組分層、資料流、加新 widget / scene 的範本 |
+| [destination-schedule-map.md](destination-schedule-map.md) | 行程型空間地圖的 `TravelPlan`、遠距確認、抵達事件與 GUI/headless 契約 |
 | [distribution.md](distribution.md) | 把 pack 打包成可執行檔、上 PyPI、發佈 |
+| [stable-line-identity.md](stable-line-identity.md) | 以 `Line.loc_id` 綁定已讀／續讀／Backlog／在地化的台詞 identity 規格 |
+| [commercial-quality-benchmark.md](commercial-quality-benchmark.md) | 對照商業 GalGame 的能力、缺口、證據與下一階段 production gates |
 
 ---
 
@@ -108,7 +117,7 @@ uv run world-gal-game --pack my_game
 要驗證 pack 沒寫錯：
 
 ```bash
-uv run world-gal-game self-check my_game        # 跑完整 5 階段驗證
+uv run world-gal-game self-check my_game        # 跑 7 階段管線；visual 預設需另行啟用
 uv run world-gal-game inspect-pack my_game      # 看 pack 結構分析
 ```
 
@@ -118,21 +127,23 @@ uv run world-gal-game inspect-pack my_game      # 看 pack 結構分析
 
 | 你想做的事 | CLI | Python API |
 |---|---|---|
-| 啟動遊戲（GUI） | `wgg --pack <p>` | `world_gal_game.run(pack=...)` |
-| 看玩家狀態 JSON | `wgg --headless --inspect --pack <p>` | `HeadlessSession.inspect()` |
-| 跑腳本通關 | `wgg --headless --script s.json --pack <p>` | `HeadlessSession.run_script(...)` |
-| 截圖 | `wgg --screenshot out.png --pack <p>` | (內含於 CLI) |
-| 注入點擊 / debug UI | `wgg debug repro.json` | `dev.driver.GameDriver` |
-| 整套驗證（5 階段） | `wgg self-check <p>` | `dev.self_check.SelfCheck` |
-| YAML schema + refs 驗證 | `wgg check <p>` | `validator.validate_pack` |
-| pack 拓樸分析 | `wgg inspect-pack <p>` | `dev.pack_inspector.PackInspector` |
-| 結構化編輯 pack | `wgg edit <p> add-scene ...` | `dev.pack_editor.PackEditor` |
-| 跑全 smoke 腳本 | `wgg smoke <p>` | `dev.smoke_runner.SmokeRunner` |
-| 視覺回歸測試 | `wgg visual-check <p>` | `dev.visual_check.VisualCheck` |
-| 看引擎能力清單 | `wgg capabilities [--pack <p>]` | `dev.capability_manifest.build_manifest()` |
+| 啟動遊戲（GUI） | `world-gal-game --pack <p>` | `world_gal_game.run(pack=...)` |
+| 看玩家狀態 JSON | `world-gal-game --headless --inspect --pack <p>` | `HeadlessSession.inspect()` |
+| 跑腳本通關 | `world-gal-game --headless --script s.json --pack <p>` | `HeadlessSession.run_script(...)` |
+| 截圖 | `world-gal-game --screenshot out.png --pack <p>` | (內含於 CLI) |
+| 注入點擊 / debug UI | `world-gal-game debug repro.json` | `dev.driver.GameDriver` |
+| 整套驗證（7 階段，visual 預設 opt-in） | `world-gal-game self-check <p>` | `dev.self_check.SelfCheck` |
+| YAML schema + refs 驗證 | `world-gal-game check <p>` | `validator.validate_pack` |
+| pack 拓樸分析 | `world-gal-game inspect-pack <p>` | `dev.pack_inspector.PackInspector` |
+| 結構化編輯 pack | `world-gal-game edit <p> add-scene ...` | `dev.pack_editor.PackEditor` |
+| 跑全 smoke 腳本 | `world-gal-game smoke <p>` | `dev.smoke_runner.SmokeRunner` |
+| 視覺回歸測試 | `world-gal-game visual-check <p> [--strict-baselines]` | `dev.visual_check.VisualCheck` |
+| Fail-closed 來源發行預檢 | `world-gal-game production-check <p>` | `dev.production_check.run_production_check` |
+| 重驗 production artifact | `world-gal-game production-verify <report> --pack <p>` | `dev.production_check.verify_production_report` |
+| 看引擎能力清單 | `world-gal-game capabilities [--pack <p>]` | `dev.capability_manifest.build_manifest()` |
 | 產生 placeholder 圖 | (內含於 Python API) | `dev.asset_studio.placeholder_image` |
 
-完整 CLI 列表執行 `wgg --help`。
+完整 CLI 列表執行 `world-gal-game --help`。
 
 ---
 
@@ -153,7 +164,31 @@ uv run world-gal-game inspect-pack my_game      # 看 pack 結構分析
 階段路線、缺口、未完成功能：[../ROADMAP.md](https://github.com/treeleaves30760/world-gal-game/blob/main/ROADMAP.md)。
 
 當前進度：
-- Phase 1：插件系統 MVP + Capability Manifest + PackEditor + dead-end 偵測 — ✅ 完成
-- Phase 2：擴大插件擴充點（widget/scene/brain/dialogue_op）+ AI 端對端開發 loop
-  （smoke / visual / self-check / asset_studio）— ✅ 完成
-- Phase 3：pack marketplace、LLM NPC v2、AI 自主從 spec 產 pack — 待開工
+
+- 引擎能力：資料驅動核心、十類插件擴充、AI 開發工具鏈、主要 VN 呈現 /
+  extras、影片路徑，以及 exact dialogue resume 已實作。
+- 2026-07-26 玩家可靠度：選擇肢鍵盤 / 手把導覽、1280×720 /
+  1920×1080 標題版面，以及 UI presentation 完成後才觸發的安全 autosave
+  邊界已加入測試。
+- 2026-07-31 語意輸入里程碑：完整自動化鍵盤 / 手把 action path、persisted
+  Controls 重綁與衝突交換、動態提示及 capture no-through 已完成；地圖局部實測為
+  MapScene 20.75 ms、detail 16.56 ms、0 full clone。實體控制器、不同鍵盤
+  配置、身障玩家與人工核准 baseline 仍是外部 release gate。
+- 2026-08-02 Music Room v1：選填 `content/music_room.yaml` 提供正式標題、credit、
+  使用情境、`loc_id`、排序與 spoiler-safe `hidden` roster；缺檔時保留 legacy
+  `assets/bgm/` discovery。已聽進度會經 current-pack media authority 安全地併入
+  ClearData，UI 支援語意鍵盤 / 手把、滑鼠 / 觸控、可見焦點與音訊 snapshot restore。
+  格式與玩家契約分別見 [pack-format.md](pack-format.md#music_roomyaml選填) 與
+  [presentation-and-extras.md](presentation-and-extras.md#音樂室music-room)。
+- 台詞持久化 identity：production pack 以 immutable `Line.loc_id` 綁定 Read／Skip、
+  active cursor、resume、Backlog、Scene Replay 與 localization；舊 index 只作 legacy
+  fallback。導入與跨版本遷移規格見
+  [stable-line-identity.md](stable-line-identity.md)。
+- 來源碼層的 fail-closed `production-check` 已實作：它要求完整七階段
+  self-check、17 個語意 view × 720p/1080p 的 34 張人工核准 baseline、全腳本聯集
+  coverage、narrative contract、具完整數值上限的 runtime gate，以及 clean、全追蹤
+  且執行前後不變的 Git 來源。仍待各 pack 的正式 baselines、真實打包目標、效能 /
+  accessibility / localization / 實素材音影片證明。
+
+「引擎有這項能力」不代表「商業發行品質已證明」；後者只有在對應 production
+gate 於實際目標與商業規模 pack 上通過後才能宣稱。

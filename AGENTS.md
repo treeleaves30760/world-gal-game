@@ -36,10 +36,11 @@ edits.
 
 ## Invocation
 
-The console script is `world-gal-game`. In a source checkout you may also use
-`uv run python -m world_gal_game.cli <subcommand>` (the `wgg` shorthand used in
-docs is not a registered script). Subcommands take a pack **name** (`demo_pack`)
-or a **path**; where state evolves, pass `--seed N` for determinism
+The registered console script is `world-gal-game`. In a source checkout you may
+also use `uv run python -m world_gal_game.cli <subcommand>`. Developer
+subcommands take a pack **name** (`demo_pack`) or a **path**, including an
+absolute pack outside configured search roots. Where state evolves, pass
+`--seed N` for determinism
 (`EngineConfig.seed` pins `GameState.rng()`).
 
 ```bash
@@ -98,15 +99,28 @@ Comment-preserving (ruamel.yaml), `--dry-run` + `diff()`. CLI: `edit <pack> …`
 A plugin (`plugins/<id>/` + `plugin.yaml` + entry module) registers handlers via
 ten decorators: `@effect`, `@condition`, `@hook`, `@inspect_field`, `@widget`,
 `@scene`, `@brain`, `@dialogue_op`, `@portrait_backend`, `@ambient_backend`.
-16 lifecycle
-`HookEvent`s. Scan roots: `world_gal_game/plugins_user/`,
+`HookEvent` defines 18 constants; 17 are currently emitted by the engine, while
+`app.frame` is reserved and is not fired automatically. Scan roots:
+`world_gal_game/plugins_user/`,
 `~/.world-gal-game/plugins/`, `<pack>/plugins/`. See
 [docs/plugins.md](docs/plugins.md),
 [docs/ai-developer-guide.md](docs/ai-developer-guide.md).
 
 ### Self-verify
-`world_gal_game.dev.self_check.SelfCheck` (schema → refs → dead_ends → smoke →
-visual). CLI: `self-check <pack>`, `smoke <pack>`, `visual-check <pack>`.
+`world_gal_game.dev.self_check.SelfCheck` (schema → refs → dead_ends → softlock
+→ reachability → smoke → optional visual). CLI: `self-check <pack>`,
+`smoke <pack>`, `visual-check <pack>`.
+Default `VisualCheck` candidates are isolated under
+`<pack>/visual_candidates/visual_check/`; explicit candidate directories retain
+exact-path semantics, and baselines remain under `<pack>/visual_baselines/`.
+
+For source-release evidence, `production-check <pack>` requires the exact
+seven-stage self-check, 17 semantic visual views at 720p/1080p (34 explicitly
+approved baselines), 100% union coverage, a non-empty narrative contract,
+calibrated numeric runtime limits, and clean tracked Git inputs.
+`production-verify <report> --pack <pack>` rechecks the expiring artifact
+against current sources. This is source preflight, not packaged-target,
+device, accessibility, legal, or reviewer-identity proof.
 
 ---
 
@@ -117,6 +131,12 @@ visual). CLI: `self-check <pack>`, `smoke <pack>`, `visual-check <pack>`.
   pure registry dispatch.
 - **No decorative emoji** — not in UI, docs, commit messages, or output.
   Functional symbols (arrows, `→`, `✓` in tables) are fine.
+- **Only the bundled `demo_pack` is a public example.** External packs may be
+  private or closed-source; never name them, their characters, places or
+  evidence in engine code, tests, docs or commit messages. Use generic fixtures.
+- **`docs/` is the single source of documentation.** The website lives in the
+  separate `World-Gal-Game-Web` repo and syncs `docs/*.md` at build time — edit
+  docs here, not there.
 - **pydantic v2 + YAML packs.** Model first, then serialize.
 - **Engine changes affect every pack.** Before changing core schema, confirm
   `smoke demo_pack` still passes; schema changes need a `pack_format_version`
@@ -146,6 +166,7 @@ visual). CLI: `self-check <pack>`, `smoke <pack>`, `visual-check <pack>`.
 | Coverage tracker | `world_gal_game/dev/coverage.py` |
 | Aggregate endpoints (context / impact) | `world_gal_game/dev/agent_endpoints.py` |
 | Onboarding bundle (agent-guide / docs export) | `world_gal_game/dev/agent_bundle.py` |
+| Fail-closed production source preflight | `world_gal_game/dev/production_check.py` |
 | Pack structure analysis / editing | `world_gal_game/dev/{pack_inspector,pack_editor}.py` |
-| Five-stage self-check | `world_gal_game/dev/self_check.py` |
+| Seven-stage self-check | `world_gal_game/dev/self_check.py` |
 | Example plugin | `games/demo_pack/plugins/step_counter/` |
