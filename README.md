@@ -75,6 +75,24 @@ impact（新的死路、不可達結局、未宣告旗標）。細節見
 [ai-developer-guide](docs/ai-developer-guide.md)、[ai-native-contract](docs/ai-native-contract.md)、
 [ai-native-world-model](docs/ai-native-world-model.md)、[session-protocol](docs/session-protocol.md)。
 
+## 酒館模式：讓多個 agent 把對白演出來
+
+一個模型一次寫完所有角色的台詞，每個人都會講同一種話。`world-gal-game tavern` 把作者
+拆開：每個角色一張**角色卡**（相容酒館的 JSON / PNG 卡片）、各由一個 agent 扮演，只
+拿得到自己的卡和祕密；每一句寫完當場過**去 AI 味檢查**，不合格就退回重寫；排完的結果
+是普通的場景 YAML，遊戲執行時不需要模型。
+
+```bash
+uv run world-gal-game tavern lint games/demo_pack            # 替對白打「AI 味」分數
+uv run world-gal-game tavern prompt demo_pack --as heroine_1 # 這個角色會收到的提示詞
+uv run world-gal-game tavern enact demo_pack --backend echo \
+    --brief games/demo_pack/content/tavern/briefs/park_bench.yaml   # 離線跑一遍流程
+uv run world-gal-game tavern restage demo_pack --scene meet_heroine --backend echo
+```
+
+目前是階段性成果、屬於寫作期工具：遊戲內的即時對話尚未接上，接模型的後端也還沒做過
+端到端驗證。細節與限制見 [tavern](docs/tavern.md)。
+
 ## 引擎能力一覽
 
 - **閱讀體驗**：ADV／NVL、Auto／Skip（只略過已讀）、Backlog、Rollback、快速／自動存檔、
@@ -100,6 +118,7 @@ World-Gal-Game/
 │   ├── dev/               #   AI／開發者工具：inspector、editor、dataflow、planner、
 │   │                      #   coverage、session server、self-check、production-check…
 │   ├── npc/               #   NPC 與 Brain 介面
+│   ├── tavern/            #   酒館模式：角色卡、世界書、提示詞預設、多 agent 舞台、去 AI 味 linter
 │   ├── integrations/      #   Steam 等平台整合
 │   ├── headless.py        #   無視窗驅動（HeadlessSession）
 │   └── cli.py             #   `world-gal-game` 指令

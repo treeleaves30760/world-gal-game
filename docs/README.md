@@ -37,6 +37,7 @@ AI 協作者進場速查 [../CLAUDE.md](https://github.com/treeleaves30760/world
 |---|---|
 | [scenes.md](scenes.md) | 場景 YAML、對話、選項、`on_end` 跳轉 |
 | [characters.md](characters.md) | 角色、立繪、人設、`PortraitSpec` 多角色站位 |
+| [tavern.md](tavern.md) | 酒館模式：角色卡、世界書、多 agent 排演對白、重演既有場景、去 AI 味 linter |
 | [locations.md](locations.md) | 地圖節點、Region 分群、`scene_hooks` 自動觸發場景 |
 | [affection.md](affection.md) | 多軸好感度、門檻解鎖、自訂等級標籤 |
 | [items.md](items.md) | 物品、消耗、`use_effects`、送禮魅力值 |

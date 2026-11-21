@@ -95,6 +95,27 @@ See [docs/ai-native-world-model.md](docs/ai-native-world-model.md).
 `update_line`, `add_npc`/`add_location`/`add_item`, `remove_*`.
 Comment-preserving (ruamel.yaml), `--dry-run` + `diff()`. CLI: `edit <pack> …`.
 
+### 4b. Write dialogue with a multi-agent stage (tavern mode)
+`world_gal_game.tavern` — tavern-style character cards
+(`content/tavern/cards/<npc_id>.yaml|.json|.png`, compatible with community
+card V1/V2/V3), world books, prompt presets with an inspector, a de-slop linter,
+and a stage where **each character is a separate agent** that sees only its own
+card and secrets. Do not write every character's lines yourself in one pass —
+stage them. With no API key, pump the stage yourself and hand each request to a
+sub-agent per `speaker_id`:
+
+```bash
+world-gal-game tavern lint <pack>                       # where the tells are
+world-gal-game tavern prompt <pack> --as <npc_id>       # what that agent will see
+world-gal-game tavern enact <pack> --brief <brief.yaml> --backend relay --state s.json
+world-gal-game tavern step s.json --submit "<reply>"    # repeat until "done": true
+world-gal-game tavern step s.json --write               # add_scene via PackEditor
+world-gal-game tavern restage <pack> --scene <id> --only-flagged   # text-only edits
+```
+
+Authoring-time only: in-game live dialogue and warm-session `tavern.*` ops are
+not wired yet. See [docs/tavern.md](docs/tavern.md).
+
 ### 5. Extend the engine (write a plugin, don't edit core)
 A plugin (`plugins/<id>/` + `plugin.yaml` + entry module) registers handlers via
 ten decorators: `@effect`, `@condition`, `@hook`, `@inspect_field`, `@widget`,

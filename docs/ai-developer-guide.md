@@ -272,6 +272,24 @@ AI 看到 hint 後應該修 payload 重試，而不是放棄。
 
 ---
 
+## 6.5 寫對白：酒館模式
+
+要新增或改寫**對白**時，不要自己一口氣把所有角色的台詞寫完。`world-gal-game tavern`
+提供角色卡、提示詞檢查器、去 AI 味 linter，以及一個多 agent 舞台：每個角色各由一個
+agent 扮演，只拿得到自己的卡和祕密。沒有 API 金鑰時用 `--backend relay`，舞台把請求
+一個一個交給你，你把同一個 `speaker_id` 的請求固定交給同一個子 agent 回答：
+
+```bash
+world-gal-game tavern lint <pack>                                  # 先看哪裡有 AI 味
+world-gal-game tavern enact <pack> --brief <brief.yaml> \
+    --backend relay --state /tmp/stage.json                         # 印出第一個請求
+world-gal-game tavern step /tmp/stage.json --submit "<回覆>"        # 回答，取得下一個
+world-gal-game tavern step /tmp/stage.json --write                  # 完成後寫進 pack
+world-gal-game tavern restage <pack> --scene <id> --only-flagged    # 重演既有場景
+```
+
+完整說明見 [tavern.md](tavern.md)。
+
 ## 7. 擴充引擎（寫插件）
 
 完整文件：[plugins.md](plugins.md)。

@@ -33,9 +33,14 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# LLM-backed NPC brains are deferred — the seam is kept in
-# `world_gal_game/npc/llm_brain.py` but no provider ships in v0.1.
 dev = ["pytest>=8.0"]
+# Claude backend for tavern mode (`world-gal-game tavern enact/restage`).
+# OPTIONAL: the stage itself has no SDK dependency — it can be pumped by an
+# outer agent (`--backend relay`), an OpenAI-compatible endpoint (stdlib HTTP),
+# or the offline `echo` backend. `anthropic` is imported lazily, only when the
+# anthropic backend is actually used. In-game live NPC speech is still not
+# wired (see ROADMAP "Tavern mode").
+llm = ["anthropic>=1.0"]
 build = ["pyinstaller>=6.5"]
 # Cross-platform process RSS sampling and ready/ack descendant cleanup for the
 # independent `runtime-check` release gate. The engine itself does not need

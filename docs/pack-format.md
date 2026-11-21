@@ -27,6 +27,7 @@ my_game/
 │   ├── endings.yaml        # 選填 — 結局與完成度
 │   ├── variables.yaml      # 選填 — typed narrative state
 │   ├── chapters.yaml       # 選填 — 章／幕／路線結構
+│   ├── tavern/             # 選填 — 酒館模式：角色卡、世界書、場景簡報（見 tavern.md）
 │   ├── cg_gallery.yaml     # 選填 — CG 標題、排序與鑑賞 roster
 │   ├── music_room.yaml     # 選填 — BGM 標題、credit、排序與鑑賞 roster
 │   ├── i18n/              # 選填 — versioned source / target locale catalogs

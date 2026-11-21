@@ -1,0 +1,56 @@
+# 場景簡報：舞台照這份排一場戲，寫成 content/scenes/ 裡的一個場景。
+#
+#   world-gal-game tavern enact games/demo_pack \
+#       --brief games/demo_pack/content/tavern/briefs/park_bench.yaml --dry-run
+#
+# premise 是所有人都知道的情境；每個角色的 objective / tactic 只有扮演該角色的
+# agent 和導演看得到；beats 和 ending 只有導演看得到。
+id: park_bench
+title: "湖畔 · 長椅"
+location: park
+requires:
+  - {kind: flag, target: quest_started}
+
+premise: |
+  下午的湖畔公園沒什麼人。清雪一個人坐在長椅上，膝蓋上攤著一張從筆記本撕下來的紙，
+  看到{{user}}走過來，把紙翻到了背面。
+
+cast:
+  - id: heroine_1
+    objective: 不想讓人看到她在畫什麼，可是又有一點想被問。
+    tactic: 先把話題帶去別的地方；對方不追問的話，自己再繞回來一點點。
+
+player:
+  mode: actor
+  objective: 想知道她剛才在畫什麼。
+  tactic: 問過一次就不再直接問第二次。
+
+beats:
+  - goal: 清雪把紙藏起來，兩個人講的都是別的事。
+    max_turns: 5
+  - goal: 清雪自己提起素描本，但話只說一半。
+    must_include: [素描本]
+    max_turns: 5
+
+ending: 停在那張被翻到背面的紙上。
+order: director
+narration: light
+max_turns: 12
+
+# 選項的機制（效果、接到哪一場）由作者決定；選項的字句交給舞台寫。
+choices:
+  - id: ask_again
+    intent: 再問一次她在畫什麼
+    effects:
+      - {kind: affection, target: heroine_1, value: 2}
+  - id: let_it_go
+    intent: 不問了，陪她坐一下
+    effects:
+      - {kind: affection, target: heroine_1, value: 4}
+
+# 排這場戲之前先套用的效果：把這場戲預設的旗標和好感度準備好，
+# 世界書的條件和角色「目前跟玩家多熟」才會對得上這個時間點。
+setup:
+  - {kind: set_flag, target: quest_started, value: true}
+  - {kind: affection, target: heroine_1, value: 8}
+time: 下午

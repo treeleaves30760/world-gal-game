@@ -1322,6 +1322,9 @@ def main(argv: list[str] | None = None) -> int:
         return production_check_main(_args[1:])
     if _args[:1] == ["production-verify"]:
         return production_verify_main(_args[1:])
+    if _args[:1] == ["tavern"]:
+        from world_gal_game.tavern.cli import main as tavern_main
+        return tavern_main(_args[1:])
 
     args = build_parser().parse_args(argv)
 

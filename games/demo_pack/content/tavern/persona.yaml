@@ -1,0 +1,11 @@
+# 玩家這一邊（酒館裡的 persona）：{{user}} 是誰。
+# description 是別的角色看得到的部分；speaker 決定舞台寫出來的場景裡，
+# 主角的台詞掛誰的名字（demo_pack 的場景一律用「玩家」）。
+description: |
+  剛搬來小鎮的年輕人，還在摸索這個地方。話不多，習慣先看再開口。
+speech:
+  diction: 口語、直接，不太修飾。
+  sentence_length: 短句，常常只回幾個字。
+  habits:
+    - 好奇的時候會直接問；被擋回來就不追。
+speaker: "玩家"

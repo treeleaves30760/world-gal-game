@@ -3,15 +3,18 @@
 人物住在 `content/characters.yaml`。每個 NPC 一個 dict；
 其中可選的 `shop` 子物件讓他變商人。
 
-> **LLM brain 已 deferred 到 v2**：本版本沒有 LLM 驅動的自由對話。
-> 所有 `llm_brain` / `llm_speaker` / `llm_directive` 欄位都保留下來（會被解析、
-> 不會報錯），但執行時：
+> **用模型寫對白請看[酒館模式](tavern.md)。** 那是寫作期的工具：每個角色一張角色卡、
+> 多個 agent 各演一個角色把一場戲排出來，結果寫成普通的場景 YAML。這裡的
+> `description` / `persona` / `voice` / `backstory` / `secrets` / `likes` / `dislikes`
+> 會自動成為該角色的角色卡內容。
+>
+> **遊戲執行時的即時對話還沒有接上。** `llm_brain` / `llm_speaker` /
+> `llm_directive` 欄位都保留（會被解析、不會報錯），但執行時：
 >
 > - 標 `llm_speaker: true` 的對白 line 會顯示它的 `text:` fallback；
 > - 點 NPC card 會開出 **NPC 行動 overlay**（送禮 / 看貨），不是自由對話。
 >
-> 將來 v2 接回 ClaudeBrain 時，現有 YAML **完全不用改**；點 NPC 會多一個
-> 「自由對話」按鈕。
+> 之後接上時，現有 YAML 不用改；點 NPC 會多一個「自由對話」按鈕。
 
 ## 最小 NPC
 
@@ -66,9 +69,10 @@ heroine；如果你的 pack 要多女主角，再宣告 `heroine_2`、`heroine_3
     - {name: "朋友", value: 25, unlocks: ["heroine_1_friend"]}
     - {name: "戀人", value: 80, unlocks: ["heroine_1_lover"]}
 
-  # v2 預留欄位：當 LLM 接回時生效，目前被忽略。
+  # 預留欄位：遊戲內即時對話接上後生效，目前被忽略。
+  # （llm_model_hint 會帶進酒館模式角色卡的 model_hint。）
   llm_brain: true
-  llm_model_hint: claude-haiku-4-5
+  llm_model_hint: claude-haiku-5-5
 
   # 自由標籤；引擎不解釋，pack 可以拿來做篩選。
   tags: ["heroine", "town"]
@@ -86,6 +90,30 @@ heroine；如果你的 pack 要多女主角，再宣告 `heroine_2`、`heroine_3
 
 - 好感度 + 門檻 → [affection.md](affection.md)
 - Shop → [shops.md](shops.md)
+
+## 角色卡（酒館模式）
+
+想讓模型寫出像這個角色會說的話，光靠上面的形容欄位不夠。在
+`content/tavern/cards/<npc_id>.yaml` 補一張角色卡，寫她實際怎麼講話（範例對話、
+語氣詞、迴避的話題、不會說的話）和只有她自己知道的事：
+
+```yaml
+# content/tavern/cards/heroine_1.yaml
+name: 林清雪
+speech:
+  habits: ["被稱讚的時候不接話，改講別的。"]
+  never_says: [我很感動]
+secrets: ["素描本最後幾頁畫的是{{user}}。"]
+expression_aliases:
+  shy: [害羞, 難為情]
+mes_example: |
+  <START>
+  {{user}}: 妳畫得很好欸。
+  {{char}}: 「你吃過午餐了嗎？」
+```
+
+卡片相容酒館的 JSON / PNG 角色卡，可以直接匯入匯出。完整說明見
+[tavern.md](tavern.md)。
 
 ## 立繪表情切換
 

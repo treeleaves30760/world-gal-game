@@ -3,7 +3,13 @@
 Where the engine is going next. Read alongside [CLAUDE.md](CLAUDE.md) (AI
 onboarding) and [docs/architecture.md](docs/architecture.md) (engine internals).
 
-> Last updated: 2026-08-02. Phases 1-2.5, 5A-5C, 6, and 7 are implemented:
+> Last updated: 2026-11-22. **Phase 8 — tavern mode — has landed as an interim,
+> authoring-time milestone**: tavern-style character cards, world books, prompt
+> presets with an inspector, a de-slop linter, and a multi-agent stage that
+> writes dialogue with one agent per character. It is verified offline only;
+> real-model validation, warm-session ops, validator coverage and in-game live
+> dialogue are the next work (see [Next PRs](#next-prs) §0).
+> Phases 1-2.5, 5A-5C, 6, and 7 are implemented:
 > plugin extensibility, the AI-Coding-Native contract and world model, animated
 > portraits, image-sequence / desktop-plugin movie playback, and the warm
 > structural-edit loop. The 2026-07-26 reliability pass added exact dialogue
@@ -68,9 +74,10 @@ The engine is built around three pillars (see CLAUDE.md for the framing):
   `PluginManager` reconciles declared-vs-registered (see
   [Extension points](#extension-points-pillar-c)).
 
-Test inventory: 2,427 tests passed, with 3 environment-conditional skips and
-16 expected dummy-SDL renderer warnings, in 106.89 seconds on the 2026-08-01
-working tree. CI remains the source of truth for a given commit.
+Test inventory: 2,901 tests passed, with 3 environment-conditional skips and
+16 expected dummy-SDL renderer warnings, in 135.98 seconds on the 2026-11-22
+working tree (50 of them cover tavern mode). CI remains the source of truth for
+a given commit.
 
 ---
 
@@ -498,15 +505,81 @@ Settings information architecture P1 — engine capability done 2026-08-02:
 
 Still deferred:
 
-- **LLM-driven NPC dialogue** — wire an LLM-backed brain to `@brain` and let
-  `DialogueEngine` drive dynamic lines. (The `Brain` interface, registry, a
-  deterministic `EchoBrain` placeholder in `npc/llm_brain.py`, and a
-  `HeadlessSession.chat()` op all exist; no live LLM is wired up yet.)
+- **LLM-driven NPC dialogue at runtime** — wire an LLM-backed brain to `@brain`
+  and let `DialogueEngine` drive dynamic lines. (The `Brain` interface, registry,
+  a deterministic `EchoBrain` placeholder in `npc/llm_brain.py`, and a
+  `HeadlessSession.chat()` op all exist; no live LLM is wired up yet.) Phase 8
+  built the authoring-time half — cards, prompt assembly, the stage, backends —
+  and the runtime half should reuse it rather than `NPC.system_prompt`; see
+  Next PRs §0.
 - **Autonomous spec-to-pack** — the end-to-end "idea → pack → smoke → screenshot
   review → iterate" loop has the pieces but no official example.
 - **Cross-pack plugin sharing / distribution** — packaging mechanism undecided.
 
 ---
+
+### Phase 8 — Tavern mode: cards, multi-agent stage, de-slop — Interim (2026-11-22)
+
+The problem this phase answers: dialogue written by one model in one pass has a
+single author's blind spots — every character knows everything, wants the scene
+to succeed, answers the question that was asked, and speaks in one voice. The
+fix is structural, borrowed from tavern-style role-play front-ends and from
+visual-novel front-ends built on them: give each character a card and its own
+agent, keep each agent's knowledge private, and check every line as it arrives.
+See [docs/tavern.md](docs/tavern.md).
+
+Landed (`world_gal_game/tavern/`, `world-gal-game tavern …`):
+
+- **Character cards** — community Character Card V1 / V2 / V3 (JSON and
+  PNG-embedded) plus engine fields: a speech profile, private `secrets` /
+  `knowledge` / `goals`, affection-tier voices, and expression aliases. Engine
+  fields round-trip through the card's `extensions`. Every NPC has an effective
+  card derived from `characters.yaml`; a card file only adds what those fields
+  cannot express. `card-import` / `card-export`.
+- **World book** — keys, secondary keys with AND/NOT logic, constants,
+  probability, scan depth, recursion, inclusion groups, token budget, both
+  tavern file shapes; plus state gates using scene conditions. Every entry gets
+  a decision record explaining why it did or did not fire.
+- **Presets, macros, prompt inspector** — tavern Chat Completion presets
+  (`prompts` + `prompt_order`), card overrides with `{{original}}`, in-chat
+  depth injection, author's note, history-first budget trimming, a left-to-right
+  sandboxed macro evaluator bound to the seeded RNG and the game clock, and a
+  per-block report (`tavern prompt`).
+- **Multi-agent stage** — a pure, serialisable state machine
+  (`next_request` / `submit`). Roles: one actor per character, a director that
+  picks the next speaker and hands out one playable note, a narrator limited to
+  the protagonist's point of view, a choice writer. Knowledge is partitioned:
+  an actor's prompt never contains another character's secrets, objectives, or
+  the beats. Output goes through `PackEditor.add_scene`.
+- **Restaging** — re-perform an existing scene line by line; output is
+  text-only `update_line` edits that preserve line count, order, effects,
+  conditions and ids. Required wording (entity names, numbers, tokens) is
+  enforced; a line that keeps failing falls back to the authored text.
+- **De-slop linter** — stock phrases, rhetorical templates, named emotions,
+  therapist voice, rhythm, tics, indistinct voices, regional vocabulary and
+  script mixing, formatting leaks; a per-scene score, and the stage's retake
+  trigger. Rules for zh-Hant, zh-Hans, en and ja; pack overrides in
+  `content/tavern/style.yaml`.
+- **Expression resolution and directive tags** — free emotion words resolve to
+  the portraits a character actually has (alias → memo → containment → lexicon
+  → fuzzy) and are remembered; `<bg:>` / `<bgm:>` / `<cg:>` / `<sfx:>` resolve
+  only to assets the pack already references.
+- **Backends** — `anthropic` (official SDK, optional `llm` extra), `openai`
+  (compatible endpoints, stdlib HTTP), `echo` (offline), and `relay`: no
+  backend, an outer agent answers each request (`tavern step`), which is how a
+  coding agent runs the troupe with one sub-agent per character.
+- **Chat-log import** — a tavern `.jsonl` chat becomes a scene.
+- demo_pack ships an example card, persona, world book and brief.
+
+What "interim" means here — verified versus not:
+
+- Verified: 50 unit / CLI tests using scripted and echo backends; the full
+  suite stays green; demo_pack `validate` and `smoke` unchanged.
+- **Not verified:** no scene has been staged with a real model yet. The Claude
+  backend's request shape is checked against the installed SDK's signature and
+  the OpenAI-compatible one against a local fake server, but output quality,
+  retake rates and cost are unmeasured. Treat prompt wording and linter
+  thresholds as first drafts.
 
 ## Extension points (Pillar C)
 
@@ -543,6 +616,63 @@ filtered out by `SaveManager`, and `depends` + topological load ordering exist
 ## Next PRs
 
 In priority order.
+
+### 0. Tavern mode follow-through (current focus)
+
+Phase 8 landed the machinery; this is what turns it from "runs offline" into
+something to rely on. In order:
+
+1. **Stage a real scene and measure it.** Run `tavern enact` and
+   `tavern restage` on demo_pack with the Claude backend. Record, per run:
+   retake rate, lint score before/after, request count and tokens, and a human
+   read of whether the lines are better. Build a small fixed eval set (a few
+   briefs + a few existing scenes) so prompt and threshold changes can be
+   compared instead of guessed. Until this is done, nothing below should tune
+   wording.
+2. **Warm-session ops.** `tavern.open` / `tavern.next` / `tavern.submit` /
+   `tavern.transcript` / `tavern.commit` on `HeadlessSession` and the NDJSON
+   server, with `commit` routed through the existing `edit.*` path so it
+   returns the YAML diff *and* the world-model impact. Document them in
+   `docs/session-protocol.md`, the session-protocol schema, the agent guide and
+   recipes (`dev/agent_bundle.py`).
+3. **Validator and manifest coverage.** `validate` should check tavern files
+   with the usual "did you mean": card / brief / world-book / style / preset
+   schemas, `expression_aliases` keys against `portrait_set`, brief cast ids,
+   unknown macros. Export the models' JSON-Schema in `capabilities --schema`
+   and list tavern capabilities in the manifest. Optional `tavern lint`
+   threshold as a self-check stage.
+4. **Wiring a staged scene into the game.** A brief should be able to say how
+   its scene is reached (`hook:` on a location, or `after:` another scene) so
+   `--write` does not leave an unreachable scene behind.
+5. **`tavern chat`.** A terminal chat on the stage's human mode: swipe,
+   regenerate, branch from an earlier line, inspect the prompt, lint, and save
+   the conversation as a scene.
+6. **Runtime live dialogue.** A `TavernBrain` behind `@brain` for
+   `llm_speaker` lines and NPC free chat, built from the card and prompt
+   builder, generated off the main thread with a visible "thinking" state, and
+   failing closed to the authored `text`. Retire `NPC.system_prompt`. Not for
+   web builds.
+7. **Stage quality.** Candidates to try once item 1 gives a baseline: an
+   actor-private scratch thought kept out of everyone else's view; several
+   candidate takes per turn with the linter picking; one staged branch per
+   choice (snapshot per option); the director checking `must_include` instead
+   of only being told about it.
+8. **Restage at scale.** A resumable batch over a whole pack with one report;
+   a meaning-preservation check beyond required wording (a judge pass, or the
+   pack's narrative contract plus smoke scripts as the gate).
+9. **Authoring ergonomics.** `PackEditor` / `edit.*` ops for cards and briefs;
+   `scaffold_pack.py` writes a starter card; a brief generator from a scene
+   outline.
+10. **Language coverage.** Japanese acting / director prompt text (only the
+    linter rules exist); calibrate the pattern lists and thresholds on real
+    corpora; a reverse regional check for Simplified-Chinese packs.
+11. **A separate annotator pass.** Let the writer write prose only and have a
+    small model tag speaker / expression / background / music per line —
+    useful for imported chat logs and single-model writing.
+
+Deliberately not planned: speech synthesis, image generation, and bilingual
+(voice-language / subtitle-language) output. They belong to a chat front-end,
+not to an engine whose shipped games play without a model.
 
 ### 1. Commercial-quality benchmark and production gates
 
@@ -705,6 +835,19 @@ vs `pyproject.toml`-pinned, and seek review.
   cannot always be re-localized; true per-glyph fallback, text-expansion/reflow
   coverage, complete pack translations, and human linguistic/cultural QA remain
   open. GUI switching intentionally stays at the title boundary in v1.
+- **Tavern mode is unproven against a real model** — everything in Phase 8 is
+  tested with scripted and offline backends only. Prompt wording, retake
+  thresholds and the linter's pattern lists have not been calibrated on real
+  output; the linter is a heuristic that finds lines worth a second look, not a
+  judge of writing quality.
+- **Tavern mode is authoring-time only and CLI-only** — no warm-session
+  `tavern.*` ops, no validator / self-check / capability-manifest coverage of
+  tavern files, no `tavern chat`, and no runtime use: `llm_speaker` lines and
+  NPC free chat still fall back as before. A staged scene is not wired into the
+  game flow automatically.
+- **Restaging preserves wording it can name, not meaning** — entity names,
+  numbers and tokens are enforced; whether a rewritten line still says the same
+  thing needs a human read of the diff.
 - **No `@field` decorator** for public plugin state — plugins use
   `state.meta["__plugin:<id>__"]` for private state and `@inspect_field` for the
   read path; writing public fields into `GameState` is not yet a first-class API.
@@ -771,4 +914,5 @@ vs `pyproject.toml`-pinned, and seek review.
 | 2026-08-01 | Runtime localization v1: versioned digest-bound source/target catalogs, complete/preview scene scope, presentation-only story/UI lookup, stable line ids, per-pack preferences, title-safe GUI switch, locale font sources, headless/NDJSON boundary and web staging | engine capability done; raw UI-key completion, legacy/LLM relocalization, per-glyph fallback, expansion tests, complete translations and human linguistic QA remain open |
 | 2026-08-02 | Settings information architecture P1: four fixed responsive pages, accessibility-first 1/2/3-operation entry, stable per-page focus/scroll, stacked narrow audio rows, voiced-character filtering, live/persisted fullscreen, strict preference normalization and Menu-context restoration | engine capability done; human-approved visual baselines, real-device input/fullscreen and disabled-player review remain open |
 | — | Phase 5A native rigs: Live2D / Spine as a desktop-only plugin | open (Next PR #2) |
-| — | Phase 3: LLM NPC, autonomous spec-to-pack, cross-pack plugins | deferred |
+| 2026-11-22 | Phase 8 (interim): tavern mode — character cards (community V1/V2/V3 JSON + PNG, engine speech / private-knowledge extensions), world book with state gates and decision log, tavern presets + macros + prompt inspector, multi-agent stage (actor per character, director, narrator; knowledge partition; lint-driven retakes), text-only restaging of existing scenes, de-slop linter (zh-Hant / zh-Hans / en / ja), expression-word resolution with memo, `anthropic` / `openai` / `echo` / `relay` backends, chat-log import (`world-gal-game tavern …`, `docs/tavern.md`) | done offline; real-model validation, warm-session ops, validator coverage and runtime live dialogue remain open |
+| — | Phase 3: runtime LLM NPC, autonomous spec-to-pack, cross-pack plugins | deferred |

@@ -50,6 +50,14 @@ regenerate onboarding from code: `world-gal-game agent-guide`,
 - `session --pack <pack>`: warm NDJSON op stream (faster than process-spawn / RPC)
 - `docs export <dir|->`: self-contained onboarding bundle (works pip-installed)
 
+## Dialogue writing (tavern mode)
+
+- [docs/tavern.md](docs/tavern.md): character cards (community card V1/V2/V3 compatible), world book, prompt presets + inspector, multi-agent stage, restaging existing scenes, de-slop linter
+- `tavern cards|lint|prompt <pack>`: effective cards, slop score per scene, the exact prompt one character receives
+- `tavern enact <pack> --brief <f> [--backend anthropic|openai|echo|relay]`: stage a brief into a new scene (dry run unless `--write`)
+- `tavern restage <pack> --scene <id>`: re-perform an existing scene line by line (text-only `update_line` edits)
+- `tavern step <state>`: relay mode — an outer agent answers each request itself (one sub-agent per `speaker_id`)
+
 ## Authoring & extension
 
 - [docs/scenes.md](docs/scenes.md), [docs/locations.md](docs/locations.md), [docs/characters.md](docs/characters.md): content model
@@ -74,3 +82,5 @@ regenerate onboarding from code: `world-gal-game agent-guide`,
 - `world_gal_game/dev/coverage.py`: coverage tracker
 - `world_gal_game/dev/agent_endpoints.py`: context + impact aggregate endpoints
 - `world_gal_game/dev/agent_bundle.py`: agent-guide + docs-export onboarding bundle
+- `world_gal_game/tavern/stage.py`: multi-agent stage (pure state machine: `next_request` / `submit`)
+- `world_gal_game/tavern/slop.py`, `world_gal_game/tavern/style.py`: de-slop linter and per-language rules

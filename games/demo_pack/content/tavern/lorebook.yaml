@@ -1,0 +1,29 @@
+# 世界書：對話裡提到關鍵字時，才把對應的背景知識放進提示詞。
+# requires / forbids 用的是跟場景一樣的條件，所以同一本書可以跟著劇情走。
+name: 小鎮
+scan_depth: 4
+token_budget: 400
+entries:
+  - name: 小鎮
+    constant: true
+    order: 10
+    content: 故事發生在一個走路就能逛完的小鎮：一個廣場、一座湖畔公園、一條有雜貨鋪的小巷。鎮上的人多少都互相認識。
+
+  - name: 廣場佈告欄
+    keys: [佈告欄, 廣場]
+    content: 廣場的佈告欄是鎮上貼尋物啟事和活動公告的地方，紙常常被風吹歪。
+
+  - name: 雜貨鋪老闆
+    keys: [雜貨鋪, 老闆]
+    content: 雜貨鋪老闆話多、愛打聽。鎮上誰掉了東西，最後多半是在他那裡問到的。
+
+  - name: 素描本還沒找到
+    keys: [素描本, 本子]
+    requires: ["flag:quest_started"]
+    forbids: ["flag:quest_done"]
+    content: 清雪的素描本還沒找到。鎮上知道這件事的人不多。
+
+  - name: 素描本找回來了
+    keys: [素描本, 本子]
+    requires: ["flag:quest_done"]
+    content: 素描本已經回到清雪手上。最後幾頁她還沒讓任何人看過。

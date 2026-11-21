@@ -80,6 +80,15 @@ agent layer uses for branch exploration now also powers **player rollback**
 (`core/history.py`, Backspace in the dialogue scene) — one mechanism, two
 audiences.
 
+**Tavern mode (Phase 8) has landed as an interim, authoring-time milestone** —
+read [docs/tavern.md](docs/tavern.md). `world_gal_game/tavern/` adds tavern-style
+character cards, world books, prompt presets with an inspector, a de-slop
+linter, and a multi-agent stage in which each character is a separate agent that
+sees only its own card and secrets. Its output is ordinary scene YAML written
+through `PackEditor`. Not wired yet: in-game live dialogue, warm-session
+`tavern.*` ops, validator coverage of tavern files, and end-to-end validation
+against a real model.
+
 See [ROADMAP.md](ROADMAP.md) for the full picture.
 
 ---
@@ -181,6 +190,31 @@ code (not from `docs/`, which is not packaged in the wheel):
   `hint`.
 - CLI: `world-gal-game edit <pack> add-scene --payload '{"id":"..."}'`,
   `world-gal-game edit <pack> add-choice --scene-id ... --payload ...`, etc.
+
+### Write dialogue with a multi-agent stage (tavern mode)
+
+When asked to write or rewrite **dialogue**, do not author every character's
+lines in one pass — stage them. See [docs/tavern.md](docs/tavern.md).
+
+- `world_gal_game.tavern.card.CharacterCard` — community card V1/V2/V3
+  (JSON / PNG) plus engine fields (`speech`, private `secrets` / `knowledge` /
+  `goals`, `affection_voices`, `expression_aliases`). Pack files:
+  `content/tavern/cards/<npc_id>.yaml`; every NPC has an effective card derived
+  from `characters.yaml` even without one (`tavern.pack.TavernPack`).
+- `world_gal_game.tavern.stage.Stage` — a pure state machine with no I/O:
+  `next_request()` returns what some agent must answer (role, `speaker_id`,
+  chat messages), `submit()` takes the reply, lints it, and may ask for a
+  retake. `Stage.restage(scene, ctx)` re-performs an existing scene line by
+  line and yields text-only `update_line` edits. State serialises to JSON.
+- `world_gal_game.tavern.slop.SlopLinter` — stock phrases, rhetorical templates,
+  named emotions, therapist voice, rhythm, tics, regional vocabulary; a score
+  per scene and the retake trigger for the stage.
+- `world_gal_game.tavern.prompt.build_prompt` — preset-ordered assembly with a
+  per-block report and the world-book decision log.
+- CLI: `world-gal-game tavern cards|lint|prompt|enact|restage|step|card-export|
+  card-import|import-chat`. Backends: `anthropic` (needs the `llm` extra),
+  `openai` (compatible endpoints), `echo` (offline), `relay` (no backend — you
+  answer each request, one sub-agent per `speaker_id`).
 
 ### Extend the engine (write a plugin, don't edit core)
 
@@ -300,6 +334,9 @@ uv run python main.py
   `core/pack_migration.py`).
 - **`GameState.apply` / `evaluate` is the central dispatch.** Route every state
   change through it. Writing state fields directly is usually a bug.
+- **No `import random` outside `core/game_state.py`.** Use `GameState.rng()`, or
+  `core.game_state.seeded_rng(seed)` for tooling that runs beside a state. A
+  test enforces this.
 - **A failing plugin handler must not crash the engine.** Every effect /
   condition / hook call is wrapped in `isolate()` (log, then degrade to a safe
   default). Don't rely on the caller to catch — your handler should try/except
@@ -350,5 +387,12 @@ uv run python main.py
 | Engine capability list | `world_gal_game/dev/capability_manifest.py` |
 | Seven-stage self-check | `world_gal_game/dev/self_check.py` |
 | Fail-closed production source preflight | `world_gal_game/dev/production_check.py` |
+| Tavern mode guide (cards / stage / linter / backends) | `docs/tavern.md` |
+| Character cards + tavern interchange | `world_gal_game/tavern/{card,png_meta,pack}.py` |
+| Prompt assembly / presets / macros / world book | `world_gal_game/tavern/{prompt,preset,macros,lorebook}.py` |
+| Multi-agent stage + its prompts | `world_gal_game/tavern/{stage,stage_text}.py` |
+| De-slop linter and per-language rules | `world_gal_game/tavern/{slop,style}.py` |
+| Stage backends / stage → pack edits | `world_gal_game/tavern/{backends,commit}.py` |
+| Example card / persona / world book / brief | `games/demo_pack/content/tavern/` |
 | Example plugin | `games/demo_pack/plugins/step_counter/` |
 | End-to-end smoke (demo_pack routes) | `games/demo_pack/scripts/test_*_route.json` |

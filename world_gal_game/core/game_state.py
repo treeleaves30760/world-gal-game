@@ -42,6 +42,20 @@ from .time_system import TimeSystem
 _log = logging.getLogger("world_gal_game.core.game_state")
 
 
+def seeded_rng(seed: int | None = None) -> "random.Random":
+    """Return a standalone seedable generator.
+
+    The engine's determinism rule is that nothing draws from the global
+    ``random`` module. Code that owns a :class:`GameState` uses
+    :meth:`GameState.rng`; code that runs beside one (authoring tools that must
+    be reproducible from their own seed) gets its generator here, so this
+    module stays the single place randomness enters the engine. ``None`` seeds
+    from entropy, the same as an unseeded :meth:`GameState.rng`.
+    """
+    import random
+    return random.Random(seed)
+
+
 class PlayerInfo(BaseModel):
     name: str = "玩家"
     pronouns: str = "他"  # 他/她
