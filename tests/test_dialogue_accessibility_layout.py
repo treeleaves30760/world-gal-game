@@ -8,10 +8,13 @@ import pytest
 @pytest.mark.parametrize(
     ("size", "minimum_text_height", "expected_bar_height"),
     [
-        ((1280, 720), 17, 44),
-        ((1920, 1080), 25, 54),
-        ((960, 540), 17, 44),
-        ((800, 450), 17, 44),
+        # The floor is the quick bar's 16-point size scaled to the canvas,
+        # which is the line height of the suite's reference font
+        # (tests/conftest.py). Canvases below 720p do not scale it down.
+        ((1280, 720), 16, 44),
+        ((1920, 1080), 24, 54),
+        ((960, 540), 16, 44),
+        ((800, 450), 16, 44),
     ],
 )
 def test_quick_bar_and_status_hud_meet_canvas_text_floor(

@@ -9,8 +9,7 @@ onboarding) and [docs/architecture.md](docs/architecture.md) (engine internals).
 > writes dialogue with one agent per character. It has been run and measured
 > against one locally hosted model, and corrected against what that run showed;
 > a wider measurement, warm-session ops, validator coverage and in-game live
-> dialogue are the next work (see [Next PRs](#next-prs) §0). CI's `test` job is
-> red for a reason unrelated to this phase (see [Known gaps](#known-gaps)).
+> dialogue are the next work (see [Next PRs](#next-prs) §0).
 > Phases 1-2.5, 5A-5C, 6, and 7 are implemented:
 > plugin extensibility, the AI-Coding-Native contract and world model, animated
 > portraits, image-sequence / desktop-plugin movie playback, and the warm
@@ -78,9 +77,11 @@ The engine is built around three pillars (see CLAUDE.md for the framing):
 
 Test inventory: 2,911 tests passed, with 3 environment-conditional skips and
 16 expected dummy-SDL renderer warnings, in 124.95 seconds on the 2026-11-22
-working tree on macOS (60 of them cover tavern mode). CI's `test` job does not
-currently agree: 19 layout tests fail on the Linux runner for a font reason
-described under Known gaps.
+working tree on macOS (60 of them cover tavern mode). The suite pins one
+reference font and its own player-data root (`tests/conftest.py`,
+`tests/fonts/`), so it measures the same glyphs and starts from the same
+settings on every host; the same tree passes in a bare Linux container and in
+one with a system CJK font installed.
 
 ---
 
@@ -885,23 +886,22 @@ vs `pyproject.toml`-pinned, and seek review.
   its source's length is sent back, both added after a real model dropped a
   quest keyword and a request on the first try. Whether a rewritten line still
   says the same thing needs a human read of the diff.
-- **CI's `test` job is red, and layouts depend on the host's font** — diagnosed
-  2026-11-22. The same 19 layout tests have failed on `main` since at least
-  2026-10-21; `runtime-reliability` and `web-smoke` pass. Cause: the Linux
-  runner has no CJK font, so `FontRegistry` falls back to pygame's default
-  font, whose metrics the layout tests were never written for (reproduced in a
-  Linux container, and on macOS by forcing `match_font` to return nothing).
-  Installing Noto Sans CJK on the runner does **not** make it green: a
-  different 12–13 tests fail, because that font's line height is about 1.45 em
-  where the macOS font the tests were calibrated on is about 1.0 em (41 px
-  against 28 px at size 28), and several layouts overflow — flowchart nodes,
-  the destination-picker preview, dialogue paging, sound captions, map
-  navigation. So this is two problems: (1) tests measure whatever font the
-  host happens to have, and (2) real layout overflow under a tall CJK font,
-  which is what Linux desktops and Android ship. Options, not yet chosen:
-  bundle one reference CJK font and have the tests and demo_pack use it
-  (deterministic everywhere, costs several MB in the repo); and/or make the
-  affected layouts measure line height instead of assuming it.
+- **Layouts overflow under a tall CJK font** — found 2026-11-22 while fixing
+  CI. Several layouts assume a line is about one em tall, which holds for the
+  font macOS resolves (28 px at size 28) and not for Noto Sans CJK (41 px at
+  size 28, about 1.45 em), which is what Linux desktops and Android ship.
+  Under it, text overflows in flowchart nodes, the destination-picker preview,
+  dialogue paging, sound captions and map navigation; 12–13 layout tests fail
+  when the suite is pointed at that font. The suite does not see this any
+  more, by design: it now pins a reference font with one-em lines so that CI
+  measures the same thing everywhere (the `test` job had been red since
+  2026-10-21 because the runner has no CJK font at all and fell back to
+  pygame's Latin default; one further test passed only where a developer's
+  own `settings.json` said the onboarding had been seen, so the suite now
+  brings its own). The fix is for those layouts to measure line height
+  instead of assuming it, with a second pinned font of the tall kind to hold
+  the result; until then a pack that must look right on Linux or Android
+  should ship its own font through `bundled_font`.
 - **No `@field` decorator** for public plugin state — plugins use
   `state.meta["__plugin:<id>__"]` for private state and `@inspect_field` for the
   read path; writing public fields into `GameState` is not yet a first-class API.
@@ -970,5 +970,5 @@ vs `pyproject.toml`-pinned, and seek review.
 | — | Phase 5A native rigs: Live2D / Spine as a desktop-only plugin | open (Next PR #2) |
 | 2026-11-22 | Phase 8 (interim): tavern mode — character cards (community V1/V2/V3 JSON + PNG, engine speech / private-knowledge extensions), world book with state gates and decision log, tavern presets + macros + prompt inspector, multi-agent stage (actor per character, director, narrator; knowledge partition; lint-driven retakes), text-only restaging of existing scenes, de-slop linter (zh-Hant / zh-Hans / en / ja), expression-word resolution with memo, `anthropic` / `openai` / `echo` / `relay` backends, chat-log import (`world-gal-game tavern …`, `docs/tavern.md`) | done offline; real-model validation, warm-session ops, validator coverage and runtime live dialogue remain open |
 | 2026-11-22 | Phase 8: first runs against a real model (local, OpenAI-compatible) and the fixes they forced — rationed action rows, required speech, beat and speaker guards, narrator opening / ending, derived script tables with repair, repeated-line and action-tag rules, restage content guard; `tools/tavern_eval.py` | done |
-| 2026-11-22 | CI `test` job diagnosed: host-font dependence (no CJK font on the runner; layouts overflow under a tall CJK font) | open (Known gaps) |
+| 2026-11-22 | CI `test` job repaired: the suite pins a reference font (`tests/conftest.py`, `tests/fonts/`, SIL OFL 1.1) instead of measuring the host's, and runs on its own player-data root instead of the checkout's `settings.json`; seven tests that hard-coded one host's metrics now state their line capacity | done; layout overflow under a tall CJK font is open (Known gaps) |
 | — | Phase 3: runtime LLM NPC, autonomous spec-to-pack, cross-pack plugins | deferred |

@@ -25,6 +25,15 @@ def _pygame_init():
     pygame.quit()
 
 
+# Box widths that fit exactly 7, 9 and 10 full-width glyphs per body line in
+# the suite's reference font (tests/conftest.py). The reflow tests below count
+# revealed characters, so the line capacity has to be stated, not left to
+# whichever font the host resolves.
+_WIDE_7 = 210
+_WIDE_9 = 260
+_WIDE_10 = 284
+
+
 def _box(
     *,
     width: int = 420,
@@ -458,7 +467,7 @@ def test_active_wait_reflow_uses_downstream_side_of_new_page_boundary() -> None:
     plain = "甲乙丙丁" * 200
     wait_plain = 36
     markup = plain[:wait_plain] + "[w=2]" + plain[wait_plain:]
-    original = _box(width=220, body_lines=2, text_speed=20)
+    original = _box(width=_WIDE_10, body_lines=2, text_speed=20)
     original.set_line("測試者", markup)
     original.force_reveal()
     assert original.advance_page() is True
@@ -471,7 +480,7 @@ def test_active_wait_reflow_uses_downstream_side_of_new_page_boundary() -> None:
     assert original.body.reveal_chars == 40
     assert original.body._wait_left == pytest.approx(1.75)
 
-    restored = _box(width=180, body_lines=2, text_speed=20)
+    restored = _box(width=_WIDE_7, body_lines=2, text_speed=20)
     restored.set_line("測試者", markup)
     restored.restore_page(
         original.page_index,
@@ -495,7 +504,7 @@ def test_wait_boundary_reflow_preserves_pending_and_completed_side(
     plain = "甲" * 200
     wait_plain = 48
     markup = plain[:wait_plain] + "[w=2]" + plain[wait_plain:]
-    original = _box(width=180, body_lines=2, text_speed=20)
+    original = _box(width=_WIDE_7, body_lines=2, text_speed=20)
     original.set_line("測試者", markup)
     for _ in range(3):
         original.force_reveal()
@@ -510,7 +519,7 @@ def test_wait_boundary_reflow_preserves_pending_and_completed_side(
         assert original.body._wait_left == 0.0
     timeline = original.body.export_wait_timeline()
 
-    restored = _box(width=200, body_lines=2, text_speed=20)
+    restored = _box(width=_WIDE_9, body_lines=2, text_speed=20)
     restored.set_line("測試者", markup)
     restored.restore_page(
         original.page_index,
