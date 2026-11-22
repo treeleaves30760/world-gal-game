@@ -14,8 +14,8 @@ from world_gal_game.tavern.backends import (AnthropicBackend, BackendError, Echo
                                             OpenAICompatBackend, ScriptedBackend,
                                             make_backend, run_stage, shape_chat)
 from world_gal_game.tavern.commit import commit_stage
-from world_gal_game.tavern.stage import (SceneBrief, Stage, StageContext, StageError,
-                                         StageRequest)
+from world_gal_game.tavern.stage import (PlayerSpec, SceneBrief, Stage, StageContext,
+                                         StageError, StageRequest, Turn)
 
 BRIEF = Path("games/demo_pack/content/tavern/briefs/park_bench.yaml")
 SECRET = "最後幾頁畫的是廣場上的路人"
@@ -55,10 +55,11 @@ def test_director_run_retakes_slop_and_builds_a_valid_scene(ctx, pack):
     stage = Stage(_brief(), ctx, seed=7)
     backend = ScriptedBackend(
         by_role={
-            "director": _director("narrator|長椅和那張紙|stay", "player|隨口問|stay",
-                                  "heroine_1|不回答，反問|stay",
+            # The narrator opens and closes on its own; the director only casts.
+            "director": _director("player|隨口問|stay", "heroine_1|不回答，反問|stay",
                                   "heroine_1|提起素描本，講一半|next", "end||next"),
-            "narrator": ["湖面沒有風。\n她膝蓋上那張紙，邊緣是撕下來的毛邊。"],
+            "narrator": ["湖面沒有風。\n她膝蓋上那張紙，邊緣是撕下來的毛邊。",
+                         "那張紙還是背面朝上。"],
             "player": ["「妳在畫什麼？」"],
             "choices": ["ask_again｜所以妳到底在畫什麼\nlet_it_go｜我坐這邊可以嗎"],
         },
@@ -136,8 +137,11 @@ def test_actor_cannot_put_words_in_another_mouth(ctx):
 
 def test_stage_serialises_mid_run_and_rejects_wrong_ids(ctx):
     stage = Stage(_brief(), ctx, seed=5)
+    opening = stage.next_request()
+    assert opening.role == "narrator"                        # sets the place first
+    stage.submit(opening.id, "湖面沒有風。")
     first = stage.next_request()
-    assert stage.next_request() is first                     # idempotent
+    assert first.role == "director" and stage.next_request() is first   # idempotent
     with pytest.raises(StageError):
         stage.submit("nope", "x")
     stage.submit(first.id, "下一個：heroine_1\n提示：先講別的\n節拍：stay")
@@ -147,8 +151,8 @@ def test_stage_serialises_mid_run_and_rejects_wrong_ids(ctx):
     again = resumed.next_request()
     assert again.id == pending.id and again.messages == pending.messages
     result = resumed.submit(again.id, "<sprite:害羞>\n「沒什麼。」")
-    assert result["accepted"] and resumed.turns[0].expression == "shy"
-    assert resumed.turns[0].note == "先講別的"
+    assert result["accepted"] and resumed.turns[-1].expression == "shy"
+    assert resumed.turns[-1].note == "先講別的"
 
 
 def test_restage_changes_wording_only_and_keeps_required_words(ctx, pack):
@@ -156,8 +160,8 @@ def test_restage_changes_wording_only_and_keeps_required_words(ctx, pack):
     stage = Stage.restage(scene, ctx, seed=1)
     skipped = {step.skip_reason for step in stage.brief.script if not step.rewrite}
     assert "narration not selected" in skipped
-    # Line 4 must keep the word "素描本"; the rewrite below drops it every time.
-    stage.brief.script[4].keep = ["素描本"]
+    # Line 4 must keep "素描本" (a world-book key); the rewrite drops it every time.
+    assert stage.brief.script[4].keep == ["素描本"]
     requests: list[StageRequest] = []
 
     def responder(request: StageRequest) -> str:
@@ -167,9 +171,14 @@ def test_restage_changes_wording_only_and_keeps_required_words(ctx, pack):
             return "「我的本子不見了。」"
         if "可以幫我看看" in text:
             return "「欸，可以幫我看一下這張嗎？」"
-        return "「你有看到的話，跟我說一聲就好。」"
+        if "少了太多" not in text:
+            return "「裡面……畫了一半。」"         # natural, and half the line is gone
+        return "「裡面很多都只畫了一半。」\n「你有看到的話，跟我說一聲就好。」"
 
     run_stage(stage, ScriptedBackend(responder=responder))
+    # A rewrite that sheds most of its source is sent back with the reason.
+    assert stage.turns[5].attempts == 2 and not stage.turns[5].fallback
+    assert stage.turns[5].text == "裡面很多都只畫了一半。你有看到的話，跟我說一聲就好。"
     assert "這一句的原稿" in _all_text(requests[0])
     assert "必須原樣出現" in _all_text(next(
         r for r in requests if "弄丟了一本素描本" in r.messages[-1]["content"]))
@@ -202,6 +211,155 @@ def test_chat_mode_alternates_with_a_human_and_swipes(ctx):
     stage._pending = None
     assert stage.swipe() and stage.next_request().role == "actor"
     assert [turn.kind for turn in stage.turns] == ["player"]
+
+
+# -------------------------------------------- lessons from a live-model run
+
+
+def _solo(**updates) -> SceneBrief:
+    """Only the heroine speaks, in turn order, with nothing else in the way."""
+    base = dict(order="round_robin", narration="none", choices=[], beats=[],
+                player=PlayerSpec(mode="silent"))
+    return _brief(**{**base, **updates})
+
+
+def test_action_rows_are_rationed_and_given_a_subject(ctx):
+    def run(**updates) -> list[Turn]:
+        said = iter(["你也是來躲太陽的嗎？", "湖面今天沒什麼風。", "我等一下要回書店。",
+                     "那邊的鴨子又換位置了。"])
+        things = iter(["紙翻到背面", "筆收進口袋", "包包的拉鍊拉上", "手放回膝蓋上"])
+
+        def responder(request: StageRequest) -> str:
+            return f"「{next(said)}」\n（把{next(things)}）"
+        stage = Stage(_solo(max_turns=4, **updates), ctx, seed=1)
+        run_stage(stage, ScriptedBackend(responder=responder))
+        return stage.turns
+
+    turns = run()
+    actions = [turn for turn in turns if turn.kind == "narration"]
+    # Every reply offered an action; only every other turn keeps one.
+    assert [turn.take for turn in actions] == [0, 2]
+    assert actions[0].text == "林清雪把紙翻到背面。"            # subject and full stop
+    assert len([t for t in run(action_every=1) if t.kind == "narration"]) == 4
+    assert [t for t in run(action_every=0) if t.kind == "narration"] == []
+
+
+def test_actor_prompt_says_whether_an_action_is_on_offer(ctx):
+    stage = Stage(_solo(max_turns=2), ctx, seed=1)
+    first = stage.next_request()
+    assert "這一輪可以加一行動作" in first.messages[-1]["content"]
+    stage.submit(first.id, "「你也是來躲太陽的嗎？」\n（林清雪把紙壓在大腿底下。）")
+    second = stage.next_request()
+    assert "這一輪只寫台詞，不加動作行" in second.messages[-1]["content"]
+
+
+def test_a_turn_with_no_spoken_line_or_a_repeated_line_is_retaken(ctx):
+    stage = Stage(_brief(order="round_robin", narration="none", choices=[], beats=[],
+                         max_turns=3), ctx, seed=1)
+    backend = ScriptedBackend(by_speaker={
+        "heroine_1": ["「風變涼了。」", "「風變涼了。」", "「該回去了。」"],
+        "player": ["（你看著遠處的水面）", "「妳在畫什麼？」\n（看向那張紙）"]})
+    run_stage(stage, backend)
+    assert [(t.kind, t.text, t.attempts) for t in stage.turns] == [
+        ("dialogue", "風變涼了。", 1), ("player", "妳在畫什麼？", 2),
+        ("narration", "你看向那張紙。", 2), ("dialogue", "該回去了。", 2)]
+    retakes = [event["hits"] for event in stage.events if event["event"] == "retake"]
+    assert retakes == [["fmt.no_speech"], ["repeat.line"]]
+
+
+def test_when_retakes_run_out_broken_rows_are_repaired_or_dropped(ctx):
+    stage = Stage(_solo(max_turns=3, retakes=0), ctx, seed=1)
+    backend = ScriptedBackend(by_speaker={"heroine_1": [
+        "「風變涼了。」", "「風變涼了。」\n「紙都拿不住。」", "「路过，头发乱了。」"]})
+    run_stage(stage, backend)
+    # No retakes left: the repeated row goes, the Simplified slip is converted.
+    assert [turn.text for turn in stage.turns] == ["風變涼了。", "紙都拿不住。",
+                                                   "路過，頭髮亂了。"]
+    events = {event["event"]: event for event in stage.events}
+    assert events["rows_dropped"]["rows"] == ["風變涼了。"]
+    assert events["script_repaired"]["was"] == "路过，头发乱了。"
+    assert stage.review().by_rule() == {}
+    # A take that only repeats leaves nothing behind rather than a duplicate.
+    stage = Stage(_solo(max_turns=2, retakes=1), ctx, seed=1)
+    run_stage(stage, ScriptedBackend(default="「風變涼了。」\n（在長椅上坐下）"))
+    assert [turn.text for turn in stage.turns] == ["風變涼了。", "林清雪在長椅上坐下。"]
+
+
+def test_small_script_slips_are_mended_without_spending_a_retake(ctx):
+    stage = Stage(_solo(max_turns=2), ctx, seed=1)
+    backend = ScriptedBackend(by_speaker={"heroine_1": [
+        "「是有点凉了。」",                      # two stray characters: mended in place
+        "「这个地方我们以前说过的话还记得吗？」",   # drifted: written again
+        "「這裡我們以前來過。」"]})
+    run_stage(stage, backend)
+    assert [(turn.text, turn.attempts) for turn in stage.turns] == [
+        ("是有點涼了。", 1), ("這裡我們以前來過。", 2)]
+    kinds = [event["event"] for event in stage.events]
+    assert kinds.count("script_repaired") == 1 and kinds.count("retake") == 1
+
+
+def test_a_beat_keeps_its_promise_before_the_scene_moves_on(ctx):
+    stage = Stage(_brief(narration="none", choices=[]), ctx, seed=1)
+    seen: list[str] = []
+    lines = iter(["「你也是來躲太陽的嗎？」", "「我的素描本如果還在的話……」"])
+
+    def responder(request: StageRequest) -> str:
+        if request.role == "director":
+            seen.append(request.messages[-1]["content"])
+            # Jumps to the second beat, then tries to leave before anyone has
+            # said what that beat is for.
+            return {1: "下一個：heroine_1\n提示：先講別的\n節拍：next"}.get(
+                len(seen), "下一個：end\n節拍：next")
+        seen.append(request.messages[-1]["content"])
+        return next(lines)
+
+    run_stage(stage, ScriptedBackend(responder=responder))
+    assert stage.done and stage.beat == 2            # both beats were played
+    events = [event["event"] for event in stage.events]
+    assert events.count("end_refused") == 1 and "director_end" in events
+    assert "這一拍還沒有人在台詞裡說到：素描本" in seen[2]      # the director is told
+    assert "［這一句要說到］素描本" in seen[3]                  # and so is the actor
+    assert stage.turns[-1].text == "我的素描本如果還在的話……"
+
+
+def test_one_speaker_cannot_hold_the_floor(ctx):
+    stage = Stage(_brief(narration="none", choices=[], beats=[], max_turns=4), ctx,
+                  seed=1)
+    said = iter(["你也是來躲太陽的嗎？", "湖面今天沒什麼風。", "妳在畫什麼？",
+                 "那邊的鴨子又換位置了。"])
+    directed: list[str] = []
+
+    def responder(request: StageRequest) -> str:
+        if request.role == "director":
+            directed.append(request.messages[-1]["content"])
+            return "下一個：heroine_1\n提示：繼續躲\n節拍：stay"
+        return f"「{next(said)}」"
+
+    run_stage(stage, ScriptedBackend(responder=responder))
+    assert [t.speaker_id for t in stage.turns] == ["heroine_1", "heroine_1", "player",
+                                                   "heroine_1"]
+    assert stage.turns[2].note == ""              # the note was meant for someone else
+    assert any(e["event"] == "director_overruled" for e in stage.events)
+    assert "林清雪已經連續開口 2 次" in directed[2]
+    assert "玩家到現在還沒說過話" in directed[2]
+
+
+def test_the_narrator_opens_and_delivers_the_written_ending(ctx):
+    stage = Stage(_brief(choices=[], beats=[]), ctx, seed=1)
+    cues: list[str] = []
+
+    def responder(request: StageRequest) -> str:
+        if request.role == "narrator":
+            cues.append(request.messages[-1]["content"])
+            return "湖面沒有風。" if len(cues) == 1 else "那張紙還是背面朝上。"
+        if request.role == "director":
+            return "下一個：end" if stage.takes >= 2 else "下一個：heroine_1\n提示：躲"
+        return "「你也是來躲太陽的嗎？」"
+
+    run_stage(stage, ScriptedBackend(responder=responder))
+    assert [t.speaker_id for t in stage.turns] == ["narrator", "heroine_1", "narrator"]
+    assert "開場" in cues[0]
+    assert "這場戲的最後一個畫面：停在那張被翻到背面的紙上" in cues[1]
 
 
 # -------------------------------------------------------------------- backends
@@ -304,7 +462,8 @@ def test_openai_compat_backend_against_a_local_server():
         def do_POST(self):
             body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
             seen.update(path=self.path, auth=self.headers.get("Authorization"), body=body)
-            payload = json.dumps({"choices": [{"message": {"content": "「好。」"}}]})
+            payload = json.dumps({"choices": [{"message": {"content": "「好。」"}}],
+                                  "usage": {"prompt_tokens": 120, "completion_tokens": 4}})
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
@@ -318,7 +477,7 @@ def test_openai_compat_backend_against_a_local_server():
     try:
         backend = OpenAICompatBackend(
             base_url=f"http://127.0.0.1:{server.server_port}/v1", model="local",
-            api_key="k")
+            api_key="k", extra_body={"chat_template_kwargs": {"enable_thinking": False}})
         assert backend.complete(_request()) == "「好。」"
     finally:
         server.shutdown()
@@ -326,6 +485,10 @@ def test_openai_compat_backend_against_a_local_server():
     assert seen["path"] == "/v1/chat/completions" and seen["auth"] == "Bearer k"
     assert [m["role"] for m in seen["body"]["messages"]] == ["system", "user"]
     assert seen["body"]["temperature"] == 0.9 and seen["body"]["model"] == "local"
+    # Extra fields ride along (how a local server's thinking mode is switched off),
+    # and the run's cost is kept.
+    assert seen["body"]["chat_template_kwargs"] == {"enable_thinking": False}
+    assert backend.usage == {"requests": 1, "input_tokens": 120, "output_tokens": 4}
     with pytest.raises(BackendError):
         OpenAICompatBackend().complete(_request())
 
@@ -383,10 +546,14 @@ def test_cli_relay_step_loop(pack, tmp_path, capsys):
     assert cli_main(["tavern", "enact", str(pack), "--brief", str(BRIEF),
                      "--backend", "relay", "--state", str(state), "--seed", "1"]) == 0
     view = json.loads(capsys.readouterr().out)
-    assert view["request"]["role"] == "director" and view["request"]["messages"]
-    replies = ["下一個：heroine_1\n提示：先講別的\n節拍：stay",
+    assert view["request"]["role"] == "narrator" and view["request"]["messages"]
+    replies = ["湖面沒有風。",
+               "下一個：heroine_1\n提示：先講別的\n節拍：stay",
                "<sprite:有點慌>\n「你也是來躲太陽的嗎？」",
-               "下一個：end\n節拍：next",
+               "下一個：end\n節拍：next",                    # refused: 素描本 is still owed
+               "「我的素描本如果還在的話……」",
+               "下一個：end\n節拍：stay",
+               "那張紙還是背面朝上。",
                "ask_again｜所以妳在畫什麼\nlet_it_go｜我可以坐這嗎"]
     for reply in replies:
         assert cli_main(["tavern", "step", str(state), "--submit", reply]) == 0

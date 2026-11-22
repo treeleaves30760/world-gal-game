@@ -30,8 +30,11 @@ import re
 import statistics
 from collections import Counter
 from dataclasses import dataclass, field
+from difflib import SequenceMatcher
 from typing import Any, Iterable
 
+from .scripts import SIMPLIFIED_ONLY as _SIMPLIFIED_ONLY
+from .scripts import TRADITIONAL_ONLY as _TRADITIONAL_ONLY
 from .style import SlopPattern, StyleGuide
 
 _DIRECTIVE_RE = re.compile(r"\[\[[^\]\n]*\]\]")
@@ -39,10 +42,6 @@ _TOKEN_RE = re.compile(r"\{[^{}\n]{1,40}\}")
 _ELLIPSIS_RE = re.compile(r"…|\.{3,}|。{3,}")
 _SENT_END = "。！？!?…～~.」』”\"' \u3000"
 _CLOSERS = "」』”\"'）)"
-_SIMPLIFIED_ONLY = set("们这说为个来时么对还发现过样会话让经问觉边东车长门间马鸟鱼饭饮钱银"
-                       "红绿黄蓝亲爱谢请该谁当应虽难离欢见观认识读书写记许诉语调")
-_TRADITIONAL_ONLY = set("們這說為個來時麼對還發現過樣會話讓經問覺邊東車長門間馬鳥魚飯飲錢銀"
-                        "紅綠黃藍親愛謝請該誰當應雖難離歡見觀認識讀書寫記許訴語調")
 _POLITE_RE = re.compile(r"[謝谢][謝谢]|[對对]不起|抱歉|不好意思|(?i:\bthank(?:s| you)\b)|(?i:\bsorry\b)")
 
 _MESSAGES: dict[str, dict[str, tuple[str, str]]] = {
@@ -76,6 +75,9 @@ _MESSAGES: dict[str, dict[str, tuple[str, str]]] = {
         "fmt.speaks_for_other": ("替「{who}」說話或行動", "只寫自己這個角色。"),
         "fmt.too_many_lines": ("一次說了 {count} 句", "這一輪只留最要緊的一兩句。"),
         "fmt.empty": ("沒有內容", "至少給一句話或一個動作。"),
+        "fmt.no_speech": ("這一輪沒有說出口的話", "給一句台詞；只有動作不算一輪。"),
+        "repeat.line": ("跟前面的句子一模一樣：「{text}」", "換一句；同一句話不會講兩次。"),
+        "beat.action_tag": ("{ratio:.0%} 的發言後面都接一行動作", "動作留給真的有事發生的地方，其餘只留台詞。"),
     },
     "zh-Hans": {
         "rhythm.uniform": ("台词长度太平均（变异系数 {cv:.2f}）",
@@ -107,6 +109,9 @@ _MESSAGES: dict[str, dict[str, tuple[str, str]]] = {
         "fmt.speaks_for_other": ("替「{who}」说话或行动", "只写自己这个角色。"),
         "fmt.too_many_lines": ("一次说了 {count} 句", "这一轮只留最要紧的一两句。"),
         "fmt.empty": ("没有内容", "至少给一句话或一个动作。"),
+        "fmt.no_speech": ("这一轮没有说出口的话", "给一句台词；只有动作不算一轮。"),
+        "repeat.line": ("跟前面的句子一模一样：「{text}」", "换一句；同一句话不会讲两次。"),
+        "beat.action_tag": ("{ratio:.0%} 的发言后面都接一行动作", "动作留给真的有事发生的地方，其余只留台词。"),
     },
     "en": {
         "rhythm.uniform": ("line lengths are too even (CV {cv:.2f})",
@@ -139,6 +144,9 @@ _MESSAGES: dict[str, dict[str, tuple[str, str]]] = {
         "fmt.speaks_for_other": ("speaks or acts for {who}", "Write only your own character."),
         "fmt.too_many_lines": ("{count} lines in one turn", "Keep the one or two that matter."),
         "fmt.empty": ("empty turn", "Give at least a word or an action."),
+        "fmt.no_speech": ("nothing is said aloud in this turn", "Give one spoken line; an action alone is not a turn."),
+        "repeat.line": ("identical to an earlier line: \"{text}\"", "Say something else; nobody says the same sentence twice."),
+        "beat.action_tag": ("{ratio:.0%} of speeches are followed by an action line", "Keep actions for when something happens; elsewhere leave the line alone."),
     },
 }
 _MESSAGES["ja"] = _MESSAGES["en"]
@@ -147,13 +155,15 @@ _WEIGHTS = {
     "rhythm.uniform": 4.0, "rhythm.no_short": 3.0, "rhythm.long_line": 1.0,
     "punct.full_stops": 2.0, "punct.ellipsis": 3.0, "punct.ellipsis_lead": 2.0,
     "tic.vocative": 3.0, "tic.opener": 2.0, "tic.polite": 2.0,
-    "voice.indistinct": 2.0, "script.mixed": 3.0, "script.mixed_hans": 3.0,
+    "voice.indistinct": 2.0, "script.mixed": 4.0, "script.mixed_hans": 4.0,
     "regional.term": 1.5, "card.never_says": 4.0, "banned.phrase": 4.0,
     "fmt.quote": 2.0, "fmt.speaks_for_other": 6.0, "fmt.too_many_lines": 3.0,
-    "fmt.empty": 6.0,
+    "fmt.empty": 6.0, "fmt.no_speech": 6.0, "repeat.line": 4.0,
+    "beat.action_tag": 4.0,
 }
 _HARD = {"card.never_says", "banned.phrase", "fmt.speaks_for_other",
-         "fmt.too_many_lines", "fmt.empty"}
+         "fmt.too_many_lines", "fmt.empty", "fmt.no_speech", "repeat.line",
+         "script.mixed", "script.mixed_hans"}
 
 #: Grade boundaries on the score (weighted hits per 100 lines).
 GRADES = ((10.0, "A"), (25.0, "B"), (50.0, "C"))
@@ -254,6 +264,45 @@ class SlopReport:
         return "\n".join(out)
 
 
+_NORM_RE = re.compile(r"[\s\W_]+", re.UNICODE)
+
+
+def normalize_line(text: str) -> str:
+    """A line reduced to its words, for spotting the same sentence said twice."""
+    return _NORM_RE.sub("", clean_text(text)).casefold()
+
+
+#: Shorter than this (after normalising) a repeat is ordinary speech ("嗯。").
+REPEAT_MIN_CHARS = 4
+#: From this length on, a line that is nearly an earlier one counts as well.
+NEAR_REPEAT_MIN_CHARS = 10
+NEAR_REPEAT_RATIO = 0.85
+
+
+def repeats_earlier(key: str, seen: Iterable[str], *, cjk: bool = True,
+                    near: bool = True) -> bool:
+    """Whether a normalised line says what an earlier one already said.
+
+    Exact matches count from ``REPEAT_MIN_CHARS``. With ``near``, longer lines
+    also count when they differ from an earlier line by a word or two, which
+    is how a model loops once it has been told not to repeat itself verbatim.
+    Use ``near`` for freshly generated turns only: an authored scene may hold
+    parallel variants of one line behind different conditions.
+    """
+    scale = 1 if cjk else 3
+    if len(key) < REPEAT_MIN_CHARS * scale:
+        return False
+    near_floor = NEAR_REPEAT_MIN_CHARS * scale
+    for other in seen:
+        if key == other:
+            return True
+        if near and len(key) >= near_floor and len(other) >= near_floor \
+                and abs(len(key) - len(other)) <= len(key) * 0.3 \
+                and SequenceMatcher(None, key, other).ratio() >= NEAR_REPEAT_RATIO:
+            return True
+    return False
+
+
 def grade_for(score: float) -> str:
     for limit, grade in GRADES:
         if score < limit:
@@ -310,6 +359,12 @@ class SlopLinter:
                        weight=_WEIGHTS.get(rule, 1.0) if weight is None else weight,
                        hard=rule in _HARD, line=line, scene_id=scene_id,
                        speaker=speaker, snippet=snippet)
+
+    def other_script(self, text: str) -> str:
+        """Characters in ``text`` that belong to the other Chinese script."""
+        table = {"zh-Hant": _SIMPLIFIED_ONLY, "zh-Hans": _TRADITIONAL_ONLY}.get(
+            self.style.locale)
+        return "".join(sorted({ch for ch in text if ch in table})) if table else ""
 
     def spoken(self, text: str) -> str:
         """The part of a dialogue line that is actually said aloud."""
@@ -391,16 +446,10 @@ class SlopLinter:
                     hits.append(self._hit("regional.term", term=term, prefer=prefer,
                                           snippet=self._snippet(text, at, at + len(term)),
                                           **common))
-        locale = self.style.locale
-        if locale == "zh-Hant":
-            stray = sorted({ch for ch in text if ch in _SIMPLIFIED_ONLY})
-            if stray:
-                hits.append(self._hit("script.mixed", chars="".join(stray[:8]), **common))
-        elif locale == "zh-Hans":
-            stray = sorted({ch for ch in text if ch in _TRADITIONAL_ONLY})
-            if stray:
-                hits.append(self._hit("script.mixed_hans", chars="".join(stray[:8]),
-                                      **common))
+        stray = self.other_script(text)
+        if stray:
+            rule = "script.mixed" if self.style.locale == "zh-Hant" else "script.mixed_hans"
+            hits.append(self._hit(rule, chars=stray[:8], **common))
         return hits
 
     # ------------------------------------------------------------------
@@ -408,12 +457,16 @@ class SlopLinter:
 
     def lint_turn(self, text: str, *, speaker: str | None = None,
                   others: Iterable[str] = (), max_lines: int = 3,
-                  is_last: bool = False) -> list[SlopHit]:
+                  is_last: bool = False, previous: Iterable[str] = (),
+                  require_speech: bool = False) -> list[SlopHit]:
         """Check one freshly written turn.
 
         ``speaker`` is the display name of the character whose turn it is
         (``None`` for narration). ``others`` are the names this turn must not
-        speak for — the other cast members and the player.
+        speak for — the other cast members and the player. ``previous`` is
+        the text of the lines already in the scene: a row that says exactly
+        what an earlier row said is sent back. ``require_speech`` rejects a
+        turn that has an action but no spoken line.
         """
         line = TextLine(index=0, text=text, speaker=speaker)
         body = clean_text(text)
@@ -422,6 +475,17 @@ class SlopLinter:
         hits = self._pattern_hits(line, body, density=None, close_zone=is_last)
         hits += self._lexical_hits(line, body)
         style = self.style
+        seen = {normalize_line(row) for row in previous}
+        for row in body.splitlines():
+            key = normalize_line(row)
+            if repeats_earlier(key, seen, cjk=self._cjk):
+                shown = row.strip().strip(style.quote_open + style.quote_close
+                                          + "（）()")[:24]
+                hits.append(self._hit("repeat.line", text=shown, speaker=speaker))
+                break
+        if require_speech and speaker is not None \
+                and style.quote_open and style.quote_open not in body:
+            hits.append(self._hit("fmt.no_speech", speaker=speaker))
         if body.count(style.quote_open) != body.count(style.quote_close):
             hits.append(self._hit("fmt.quote", speaker=speaker))
         if speaker is not None:
@@ -563,6 +627,8 @@ class SlopLinter:
                 snippet=" / ".join(snip for _line, snip in found[:3])))
 
         self._structure_hits(report, dialogue, names)
+        self._repeat_hits(report, cleaned)
+        self._action_tag_hits(report, cleaned)
         for speaker, texts in by_speaker.items():
             report.fingerprints[speaker] = self.fingerprint(texts)
         self._voice_hits(report)
@@ -629,6 +695,48 @@ class SlopLinter:
             if n >= 3 and n / len(texts) > 0.4:
                 report.hits.append(self._hit("tic.opener", who=speaker, opener=opener,
                                              ratio=n / len(texts), speaker=speaker))
+
+    def _repeat_hits(self, report: SlopReport,
+                     cleaned: list[tuple[TextLine, str]]) -> None:
+        """The same sentence twice in one scene (a model looping on itself)."""
+        seen: dict[str, list[str]] = {}
+        found = 0
+        for line, text in cleaned:
+            if line.speaker is None and text.lstrip().startswith(("【", "[", "〔", "——", "--")):
+                continue                  # a time or place header, repeated on purpose
+            key = normalize_line(text)
+            earlier = seen.setdefault(line.scene_id, [])
+            if repeats_earlier(key, earlier, cjk=self._cjk, near=False):
+                found += 1
+                if found <= 3:
+                    shown = text.strip().strip(self.style.quote_open
+                                               + self.style.quote_close + "（）()")[:24]
+                    report.hits.append(self._hit(
+                        "repeat.line", text=shown, line=line.index,
+                        scene_id=line.scene_id, speaker=line.speaker))
+            else:
+                earlier.append(key)
+
+    def _action_tag_hits(self, report: SlopReport,
+                         cleaned: list[tuple[TextLine, str]]) -> None:
+        """Every speech trailed by a line of business: the stage-direction habit."""
+        by_scene: dict[str, list[TextLine]] = {}
+        for line, _text in cleaned:
+            by_scene.setdefault(line.scene_id, []).append(line)
+        for scene_id, lines in by_scene.items():
+            runs = tagged = 0
+            for index, line in enumerate(lines):
+                if line.speaker is None:
+                    continue
+                following = lines[index + 1] if index + 1 < len(lines) else None
+                if following is not None and following.speaker == line.speaker:
+                    continue              # same speaker goes on: the run is not over
+                runs += 1
+                if following is not None and following.speaker is None:
+                    tagged += 1
+            if runs >= 6 and tagged / runs > 0.75:
+                report.hits.append(self._hit("beat.action_tag", ratio=tagged / runs,
+                                             scene_id=scene_id))
 
     def _voice_hits(self, report: SlopReport) -> None:
         speakers = [(name, fp) for name, fp in report.fingerprints.items()

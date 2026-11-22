@@ -292,6 +292,10 @@ class OpenAICompatBackend(Backend):
     extra_body: dict[str, Any] = field(default_factory=dict)
     name = "openai"
 
+    def __post_init__(self) -> None:
+        self.usage: dict[str, int] = {"requests": 0, "input_tokens": 0,
+                                      "output_tokens": 0}
+
     def build_payload(self, request: StageRequest) -> dict[str, Any]:
         system, messages = shape_chat(request.messages, mid_system=False)
         payload: dict[str, Any] = {
@@ -337,6 +341,10 @@ class OpenAICompatBackend(Backend):
             content = data["choices"][0]["message"]["content"]
         except (KeyError, IndexError, TypeError) as exc:
             raise BackendError("endpoint reply had no choices[0].message.content") from exc
+        usage = data.get("usage") if isinstance(data.get("usage"), dict) else {}
+        self.usage["requests"] += 1
+        self.usage["input_tokens"] += int(usage.get("prompt_tokens") or 0)
+        self.usage["output_tokens"] += int(usage.get("completion_tokens") or 0)
         return content if isinstance(content, str) else ""
 
 

@@ -284,6 +284,56 @@ def test_lines_from_scene_accepts_models_and_dicts():
     assert [(r.scene_id, r.speaker) for r in rows] == [("s", None), ("s", "B")]
 
 
+def test_linter_catches_what_a_real_model_actually_did():
+    """Regressions from the first runs against a live model."""
+    linter = SlopLinter()
+    # A Simplified character in a Traditional line is sent back, not just scored.
+    hits = linter.lint_turn("「是有点凉了。」", speaker="林清雪")
+    assert [(hit.rule, hit.hard) for hit in hits] == [("script.mixed", True)]
+    assert linter.lint_turn("「是有點涼了。」", speaker="林清雪") == []
+    hans = SlopLinter(StyleGuide.builtin("zh-Hans"))
+    assert [hit.rule for hit in hans.lint_turn("「是有點涼了。」", speaker="林清雪")] \
+        == ["script.mixed_hans"]
+    # The same sentence twice is a loop; a short interjection twice is speech.
+    again = linter.lint_turn("「風變涼了。」", speaker="林清雪", previous=["風變涼了。"])
+    assert [(hit.rule, hit.hard) for hit in again] == [("repeat.line", True)]
+    assert linter.lint_turn("「嗯。」", speaker="林清雪", previous=["嗯。"]) == []
+    # Told not to repeat itself, a model changes one word. That still counts.
+    nearly = linter.lint_turn("（你目光在她膝上那張翻過去的紙頁停了一秒，隨即移開。）",
+                              previous=["你視線在她膝上那張翻過去的紙頁停了一秒，隨即移開。"])
+    assert [hit.rule for hit in nearly] == ["repeat.line"]
+    assert linter.lint_turn("「我明天下午會去圖書館還書。」", speaker="林清雪",
+                            previous=["我明天下午會去書店買書。"]) == []
+    # An action with nothing said is not a turn.
+    silent = linter.lint_turn("（你看著遠處的水面）", speaker="玩家", require_speech=True)
+    assert [hit.rule for hit in silent] == ["fmt.no_speech"]
+    assert linter.lint_turn("（你看著遠處的水面）", speaker="玩家") == []
+
+
+def test_linter_scene_level_repeats_and_action_tags():
+    linter = SlopLinter()
+    rows = []
+    for index in range(7):
+        rows.append({"speaker": "林清雪", "text": f"「第{index}件事，我還沒想好要怎麼說。」"})
+        rows.append({"text": f"林清雪把第{index}張紙收進包包。"})
+    report = linter.lint(lines_from_scene({"id": "s", "lines": rows}))
+    assert report.by_rule().get("beat.action_tag") == 1
+    sparse = [row for index, row in enumerate(rows) if "speaker" in row or index % 6 == 1]
+    assert "beat.action_tag" not in linter.lint(
+        lines_from_scene({"id": "s", "lines": sparse})).by_rule()
+    looped = [{"speaker": "林清雪", "text": "「風變涼了。」"},
+              {"text": "林清雪把椅子往後挪了半寸。"},
+              {"speaker": "林清雪", "text": "「風變涼了。」"},
+              {"text": "林清雪把椅子往後挪了半寸。"},
+              {"text": "【隔天 · 下午】"}, {"text": "【隔天 · 下午】"}]
+    report = linter.lint(lines_from_scene({"id": "s", "lines": looped}))
+    assert report.by_rule().get("repeat.line") == 2          # headers may repeat
+    # An authored scene may hold parallel variants of a line; only exact repeats count.
+    variants = [{"text": "去湖邊的那條路你走過，路口的招牌還是歪的。"},
+                {"text": "去廣場的那條路你走過，路口的招牌還是歪的。"}]
+    assert linter.lint(lines_from_scene({"id": "s", "lines": variants})).by_rule() == {}
+
+
 # ---------------------------------------------------------------- expressions
 
 

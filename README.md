@@ -90,8 +90,9 @@ uv run world-gal-game tavern enact demo_pack --backend echo \
 uv run world-gal-game tavern restage demo_pack --scene meet_heroine --backend echo
 ```
 
-目前是階段性成果、屬於寫作期工具：遊戲內的即時對話尚未接上，接模型的後端也還沒做過
-端到端驗證。細節與限制見 [tavern](docs/tavern.md)。
+目前是階段性成果、屬於寫作期工具：遊戲內的即時對話尚未接上。舞台已經用一個本機模型
+（OpenAI 相容端點）實際排過戲並量過結果，Claude 後端還沒有實際呼叫過。量測方式、數字與
+限制見 [tavern](docs/tavern.md)。
 
 ## 引擎能力一覽
 

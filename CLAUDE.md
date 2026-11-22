@@ -85,9 +85,11 @@ read [docs/tavern.md](docs/tavern.md). `world_gal_game/tavern/` adds tavern-styl
 character cards, world books, prompt presets with an inspector, a de-slop
 linter, and a multi-agent stage in which each character is a separate agent that
 sees only its own card and secrets. Its output is ordinary scene YAML written
-through `PackEditor`. Not wired yet: in-game live dialogue, warm-session
-`tavern.*` ops, validator coverage of tavern files, and end-to-end validation
-against a real model.
+through `PackEditor`. The stage has been run and measured against one locally
+hosted model through the OpenAI-compatible backend (`tools/tavern_eval.py`;
+numbers in docs/tavern.md); the Claude backend has not been called for real.
+Not wired yet: in-game live dialogue, warm-session `tavern.*` ops, and
+validator coverage of tavern files.
 
 See [ROADMAP.md](ROADMAP.md) for the full picture.
 
@@ -393,6 +395,7 @@ uv run python main.py
 | Multi-agent stage + its prompts | `world_gal_game/tavern/{stage,stage_text}.py` |
 | De-slop linter and per-language rules | `world_gal_game/tavern/{slop,style}.py` |
 | Stage backends / stage → pack edits | `world_gal_game/tavern/{backends,commit}.py` |
+| Measure the stage on a real model (vs. a single-author baseline) | `tools/tavern_eval.py` |
 | Example card / persona / world book / brief | `games/demo_pack/content/tavern/` |
 | Example plugin | `games/demo_pack/plugins/step_counter/` |
 | End-to-end smoke (demo_pack routes) | `games/demo_pack/scripts/test_*_route.json` |

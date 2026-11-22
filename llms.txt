@@ -57,6 +57,7 @@ regenerate onboarding from code: `world-gal-game agent-guide`,
 - `tavern enact <pack> --brief <f> [--backend anthropic|openai|echo|relay]`: stage a brief into a new scene (dry run unless `--write`)
 - `tavern restage <pack> --scene <id>`: re-perform an existing scene line by line (text-only `update_line` edits)
 - `tavern step <state>`: relay mode — an outer agent answers each request itself (one sub-agent per `speaker_id`)
+- `tools/tavern_eval.py <pack> --brief <f> --runs N [--compare-single]`: stage a brief N times on a real model and tabulate structure, lint score and cost against a single-author baseline
 
 ## Authoring & extension
 

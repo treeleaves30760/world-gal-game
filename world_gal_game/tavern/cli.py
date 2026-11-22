@@ -117,11 +117,15 @@ def _request_view(stage) -> dict[str, Any]:
     return {"done": False, "request": request.model_dump(exclude={"params"})}
 
 
-def _report(args, stage, root: Path, into_file: str | None) -> int:
+def _report(args, stage, root: Path, into_file: str | None,
+            usage: dict | None = None) -> int:
     from ..dev.pack_editor import PackEditError
     from .commit import commit_stage
     try:
         report = commit_stage(stage, root, write=args.write, into_file=into_file)
+        if usage and usage.get("requests"):
+            # What the run cost, when the backend reports it.
+            report["summary"]["usage"] = dict(usage)
     except PackEditError as exc:
         # The performance is fine but the pack will not take it as it stands
         # (most often: a scene with this id already exists).
@@ -168,7 +172,7 @@ def _run(args, stage, root: Path) -> int:
         print("[error] the stage stopped waiting for a human line; "
               "use player.mode: actor or silent for a written scene", file=sys.stderr)
         return 1
-    return _report(args, stage, root, into_file)
+    return _report(args, stage, root, into_file, getattr(backend, "usage", None))
 
 
 def _cmd_step(args) -> int:

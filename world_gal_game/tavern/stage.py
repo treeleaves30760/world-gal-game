@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Literal
 
@@ -47,7 +47,9 @@ from .preset import Preset
 from .prompt import (AuthorNote, CastView, ChatMessage, PrivateBrief, PromptBuild,
                      PromptInputs, SceneContext, build_prompt)
 from .reply import ParsedLine, parse_reply, render_turn, strip_private
-from .slop import SlopHit, SlopLinter, SlopReport, lines_from_scene
+from .scripts import repair_slip, to_traditional
+from .slop import (SlopHit, SlopLinter, SlopReport, lines_from_scene, normalize_line,
+                   repeats_earlier)
 from .stage_text import stage_text
 from .style import StyleGuide
 
@@ -171,6 +173,13 @@ class SceneBrief(BaseModel):
     ending: str = ""                    # how it should stop (director only)
     max_turns: int = Field(default=24, ge=1)
     lines_per_turn: int = Field(default=2, ge=1, le=6)
+    #: An actor may add an action row at most once every this many of their
+    #: turns (1 = every turn, 0 = never). Left alone, a model tags a gesture
+    #: onto every line and half the scene becomes fidgeting.
+    action_every: int = Field(default=2, ge=0, le=8)
+    #: How many turns in a row one speaker may take before the stage hands the
+    #: turn to someone else (0 = no limit).
+    max_consecutive: int = Field(default=2, ge=0, le=8)
     retakes: int = Field(default=2, ge=0, le=5)
     choices: list[ChoiceOption] = Field(default_factory=list)
     choice_max_chars: int = Field(default=16, ge=4)
@@ -353,6 +362,10 @@ class StageContext:
         names += [loc.name for loc in locations.values()]
         items = getattr(getattr(self.state, "items", None), "items", {}) or {}
         names += [getattr(item, "name", "") for item in items.values()]
+        # World-book keys are the nouns the author marked as mattering.
+        book = getattr(self.tavern, "lorebook", None)
+        for entry in getattr(book, "entries", None) or []:
+            names += [key for key in entry.keys if key and not key.startswith("/")]
         return sorted({name for name in names if name and len(name) >= 2},
                       key=len, reverse=True)
 
@@ -417,7 +430,8 @@ class Stage:
         self.T = stage_text(self.style.locale)
         self.rng = seeded_rng(seed if seed is not None else brief.seed)
         self.user = ctx.tavern.player_name or "Player"
-        self._sep = "、" if self.style.locale.startswith(("zh", "ja")) else ", "
+        self._cjk = self.style.locale.startswith(("zh", "ja"))
+        self._sep = "、" if self._cjk else ", "
 
         self.cards: dict[str, CharacterCard] = {}
         for member in brief.cast:
@@ -590,6 +604,89 @@ class Stage:
     def _log(self, kind: str, **data: Any) -> None:
         self.events.append({"event": kind, "turn": len(self.turns), **data})
 
+    def _own_takes(self, speaker_id: str) -> list[list[Turn]]:
+        """One speaker's turns, grouped by take, oldest first."""
+        takes: dict[int, list[Turn]] = {}
+        for turn in self.turns:
+            if turn.speaker_id == speaker_id:
+                takes.setdefault(turn.take, []).append(turn)
+        return [takes[key] for key in sorted(takes)]
+
+    def _action_allowed(self, speaker_id: str) -> bool:
+        """Whether this speaker may add an action row on their next turn."""
+        every = self.brief.action_every
+        if every <= 0:
+            return False
+        recent = self._own_takes(speaker_id)[-(every - 1):] if every > 1 else []
+        return not any(turn.kind == "narration" for take in recent for turn in take)
+
+    def _streak(self) -> tuple[str, int]:
+        """Who has been speaking, and for how many turns in a row."""
+        speaker, count, last_take = "", 0, None
+        for turn in reversed(self.turns):
+            if turn.speaker_id == NARRATOR or turn.take == last_take:
+                continue
+            if speaker and turn.speaker_id != speaker:
+                break
+            speaker, count, last_take = turn.speaker_id, count + 1, turn.take
+        return speaker, count
+
+    def _missing_must(self) -> list[str]:
+        """What the current beat has to surface and nobody has said yet.
+
+        A word counts once it is spoken, or written by the narrator. An
+        actor's own action row does not count: "she brings it up" is not the
+        same as a gesture near it.
+        """
+        beats = self.brief.beats
+        if not beats or self.beat >= len(beats) or not beats[self.beat].must_include:
+            return []
+        said = "\n".join(turn.text for turn in self.turns if turn.beat == self.beat
+                         and (turn.kind != "narration" or turn.speaker_id == NARRATOR))
+        return [word for word in beats[self.beat].must_include if word not in said]
+
+    def _owed(self) -> list[str]:
+        """Everything the remaining beats still have to surface."""
+        later = [word for beat in self.brief.beats[self.beat + 1:]
+                 for word in beat.must_include]
+        return [*self._missing_must(), *later]
+
+    #: How a subjectless action row tends to begin (Traditional and Simplified).
+    _ACTION_OPENERS = (
+        "把", "將", "将", "隨手", "随手", "順著", "顺着", "用", "往", "朝", "從", "从",
+        "抬", "低", "轉", "转", "伸", "拿", "看", "指", "盯", "沒", "没", "走", "坐",
+        "站", "笑", "點", "点", "搖", "摇", "皺", "皱", "輕輕", "轻轻", "默默", "慢慢",
+        "假裝", "假装", "繼續", "继续", "目光", "視線", "视线", "在",
+    )
+
+    def _repair_action(self, speaker_id: str, text: str) -> str:
+        """Give an action row its subject and its full stop.
+
+        Models often answer a direction by echoing it as a bare verb phrase
+        ("把紙翻到背面"). In the finished scene that row is narration, so it
+        has to say who is doing it.
+        """
+        text = text.strip()
+        if not self._cjk or not text:
+            return text
+        if speaker_id == PLAYER:
+            # The protagonist's own row: it is theirs unless it opens on
+            # somebody else.
+            pov = self._pov()
+            others = [name for cid, card in self.cards.items() if cid != PLAYER
+                      for name in (card.name, card.nickname) if name]
+            if pov not in text[:6] and self.user not in text \
+                    and not text.startswith(("她", "他", "它", *others)):
+                text = pov + text
+        elif text.startswith(self._ACTION_OPENERS):
+            card = self.cards.get(speaker_id)
+            names = [n for n in (card.name, card.nickname) if n] if card else []
+            if names and not any(name in text for name in names):
+                text = names[0] + text
+        if text[-1] not in "。！？!?…～」』）":
+            text += "。"
+        return text
+
     # ------------------------------------------------------------------
     # what each agent gets to see
 
@@ -698,12 +795,25 @@ class Stage:
             upcoming = self._next_source(step)
             if upcoming:
                 direction_parts.append(T["restage_next"].format(next=upcoming))
+        missing = self._missing_must() if (step is None and not is_player) else []
+        if missing:
+            beat = self.brief.beats[self.beat]
+            last_chance = (self.beat_turns >= beat.max_turns - 2
+                           or self.takes >= self.brief.max_turns - 2)
+            if last_chance:
+                direction_parts.append(T["must_mention"].format(
+                    items=self._sep.join(missing)))
+        action_ok = step is None and self._action_allowed(speaker_id)
         if is_player:
+            rule = T["player_action_ok"].format(pov=self._pov()) if action_ok \
+                else T["action_no"]
             output = T["player_format"].format(char=card.name, user=self.user,
-                                               pov=self._pov())
+                                               pov=self._pov(), action_rule=rule)
         else:
+            rule = T["actor_action_ok"].format(char=card.name) if action_ok \
+                else T["action_no"]
             output = T["actor_format"].format(
-                char=card.name, user=self.user,
+                char=card.name, user=self.user, action_rule=rule,
                 sprite_line=T["sprite_line"] if resolver is not None else "")
         if step is not None:
             output += "\n" + T["restage_one_line"]
@@ -838,10 +948,26 @@ class Stage:
         options.append(END)
         beat_max = brief.beats[self.beat].max_turns if self.beat < len(brief.beats) \
             else brief.max_turns
+        status: list[str] = []
+        left = brief.max_turns - self.takes
+        if left <= 3:
+            status.append(T["director_left"].format(left=left))
+        missing = self._missing_must()
+        if missing:
+            status.append(T["director_missing"].format(items=self._sep.join(missing)))
+        streak_id, streak = self._streak()
+        if brief.max_consecutive and streak >= brief.max_consecutive \
+                and len(self._speakers()) > 1:
+            status.append(T["director_streak"].format(name=self._name(streak_id),
+                                                      n=streak))
+        if PLAYER in self._speakers() and self.takes >= 2 and not any(
+                turn.kind == "player" for turn in self.turns):
+            status.append(T["director_silent"].format(name=self._name(PLAYER)))
         user = T["director_user"].format(
             turn=self.takes + 1, max_turns=brief.max_turns, beat_turns=self.beat_turns,
             beat_max=beat_max, transcript=self._transcript_text(numbered=True),
-            options="｜".join(options))
+            options="｜".join(options),
+            status="\n".join(status) + "\n\n" if status else "")
         return StageRequest(
             id=self._next_id(), role="director",
             messages=[{"role": "system", "content": system},
@@ -928,12 +1054,17 @@ class Stage:
         return bool(self.brief.beats) and self.beat >= len(self.brief.beats)
 
     def _finish(self) -> None:
+        # A director cannot write, so an ending the author spelled out is the
+        # narrator's to deliver; without a director the narrator always closes.
+        wanted = bool(self.brief.ending.strip()) if self.brief.order == "director" \
+            else True
         if (not self._closing_done and not self.chat and not self.is_restage
-                and self.brief.order != "director" and self.brief.narration != "none"
-                and self.turns and self.turns[-1].kind != "narration"):
+                and wanted and self.brief.narration != "none" and self.turns
+                and self.turns[-1].speaker_id != NARRATOR):
             self._closing_done = True
-            self._cue = _Cue(NARRATOR, note=self.brief.ending
-                             or self.T["default_ending"])
+            ending = self.brief.ending.strip()
+            self._cue = _Cue(NARRATOR, note=self.T["narrator_close_cue"].format(
+                ending=ending) if ending else self.T["default_ending"])
             self.phase = "act"
             return
         self.phase = "choices" if self.brief.choices else "done"
@@ -964,6 +1095,11 @@ class Stage:
                 self._finish()
                 return None
             if self.brief.order == "director":
+                if not self.turns and self.brief.narration != "none":
+                    # Someone has to say where we are before anyone acts in it.
+                    self._cue = _Cue(NARRATOR)
+                    self.phase = "act"
+                    return None
                 return self._director_request()
             self._cue = self._pick_cue()
             self.phase = "act"
@@ -1077,24 +1213,54 @@ class Stage:
         beats = self.brief.beats
         wants_next = fields.get("beat", "").strip().casefold().startswith(
             ("next", "下", "換", "换", "done", "完"))
+        missing = self._missing_must()
+        # A beat that still owes something gets two turns of grace before the
+        # stage gives up on it; a director's "next" alone cannot skip it.
         forced = bool(beats) and self.beat < len(beats) \
-            and self.beat_turns >= beats[self.beat].max_turns
-        if beats and (wants_next or forced) and self.beat < len(beats):
+            and self.beat_turns >= beats[self.beat].max_turns + (2 if missing else 0)
+        if beats and self.beat < len(beats) and (forced or (wants_next and not missing)):
             self.beat += 1
             self.beat_turns = 0
+        elif wants_next and missing:
+            self._log("beat_held", beat=self.beat, missing=missing)
         speaker = self._match_speaker(fields.get("next", ""))
         note = fields.get("note", "").strip().strip("<>＜＞")
+        pinned = False          # the stage chose this speaker itself; do not reassign
         if speaker is None:
             self._log("director_unparsed", raw=public.strip()[:200])
             self._cue = self._pick_cue()
+        elif speaker == END and self._owed() and self.takes < self.brief.max_turns:
+            # Not yet: the beats still owe the scene something.
+            owed = self._owed()
+            self._log("end_refused", beat=self.beat, missing=owed)
+            cast = [member.id for member in self.brief.cast]
+            self._cue = _Cue(cast[0] if cast else self._pick_speaker(),
+                             note=self.T["must_mention"].format(
+                                 items=self._sep.join(owed)))
+            pinned = True
         elif speaker == END:
             self._log("director_end", why=fields.get("why", ""))
-            self.phase = "choices" if self.brief.choices else "done"
+            self._finish()
             return {"accepted": True, "role": "director", "next": END}
         elif speaker == NARRATOR and self.brief.narration == "none":
             self._cue = _Cue(self._pick_speaker(), note="")
         else:
             self._cue = _Cue(speaker, note=note)
+        cap = self.brief.max_consecutive
+        streak_id, streak = self._streak()
+        chosen = self._cue.speaker_id
+        if cap and not pinned and chosen != NARRATOR and chosen == streak_id \
+                and streak >= cap:
+            others = [s for s in self._speakers() if s != chosen]
+            if others:
+                # Whoever has been quiet longest takes the turn, with no note:
+                # the one written was for somebody else.
+                spoken = [t.speaker_id for t in self.turns]
+                others.sort(key=lambda s: len(spoken) - 1 - spoken[::-1].index(s)
+                            if s in spoken else -1)
+                self._log("director_overruled", wanted=chosen, gave=others[0],
+                          streak=streak)
+                self._cue = _Cue(others[0], note="")
         self._log("direction", next=self._cue.speaker_id, note=self._cue.note,
                   beat=self.beat, why=fields.get("why", ""))
         self.phase = "act"
@@ -1130,11 +1296,24 @@ class Stage:
         speaker_id = cue.speaker_id
         own = self._name(speaker_id)
         lines = self._parse(speaker_id, text)
+        if self.style.locale == "zh-Hant":
+            # One or two leaked characters are not worth a request: fix them
+            # here. A line that has really drifted is still sent back below.
+            for index, line in enumerate(lines):
+                mended = repair_slip(line.text)
+                if mended is not None:
+                    self._log("script_repaired", speaker=speaker_id, was=line.text,
+                              now=mended)
+                    lines[index] = replace(line, text=mended)
         others = [card.name for cid, card in self.cards.items() if cid != speaker_id]
         hits = self.linter.lint_turn(
             self._public_text(speaker_id, lines),
             speaker=None if speaker_id == NARRATOR else own, others=others,
-            max_lines=self.brief.lines_per_turn + 1)
+            max_lines=self.brief.lines_per_turn + 1,
+            # A restaged scene keeps its authored structure, parallel variants
+            # of one line included, so only fresh scenes are checked for loops.
+            previous=[] if cue.step is not None else [t.text for t in self.turns],
+            require_speech=speaker_id != NARRATOR and not self.chat)
         strays = [line for line in lines if line.kind == "dialogue"
                   and line.speaker != (own or None)]
         if strays:
@@ -1152,6 +1331,17 @@ class Stage:
                 hits.append(SlopHit(rule="keep.missing", hard=True, weight=6.0,
                                     label=self.T["keep_missing"].format(
                                         tokens=self._sep.join(missing))))
+        if step is not None:
+            # A rewrite far shorter than its source has dropped something the
+            # scene needed, however natural it sounds.
+            source = len(normalize_line(step.source))
+            now = len(normalize_line("".join(
+                line.text for line in lines
+                if line.kind == ("narration" if speaker_id == NARRATOR else "dialogue"))))
+            if source >= 8 and 0 < now < source * 0.5:
+                hits.append(SlopHit(rule="restage.lost", hard=True, weight=6.0,
+                                    label=self.T["restage_lost"].format(source=source,
+                                                                        now=now)))
         return _Candidate(text=text, lines=lines, hits=hits)
 
     def _on_performance(self, request: StageRequest, text: str) -> dict[str, Any]:
@@ -1193,6 +1383,47 @@ class Stage:
                 "turns": [turn.model_dump(exclude_defaults=True) for turn in added],
                 "hits": [hit.to_dict() for hit in best.hits], "done": self.done}
 
+    def _salvage(self, speaker_id: str, lines: list[ParsedLine]) -> list[ParsedLine]:
+        """Drop the rows of an accepted take that are still plainly broken.
+
+        Retakes run out. When they do, the least bad take is kept, and it can
+        still hold a row that repeats an earlier line word for word or slips
+        into the other script. A Simplified slip in Traditional text is
+        converted character by character; a repeated row is dropped. A take
+        that is nothing but
+        such rows leaves nothing behind.
+        """
+        seen = [normalize_line(turn.text) for turn in self.turns]
+        repaired: list[ParsedLine] = []
+        kept: list[ParsedLine] = []
+        dropped: list[str] = []
+        for line in lines:
+            if self.style.locale == "zh-Hant" and self.linter.other_script(line.text):
+                fixed_text = to_traditional(line.text)
+                self._log("script_repaired", speaker=speaker_id, was=line.text,
+                          now=fixed_text)
+                line = replace(line, text=fixed_text)
+            if line.kind == "narration":
+                # Compare the row as it will be written, subject included.
+                line = replace(line, text=self._repair_action(speaker_id, line.text))
+            repaired.append(line)
+            key = normalize_line(line.text)
+            # Exact repeats only: dropping a row is not reversible, so a line
+            # that merely resembles an earlier one is left to the retake.
+            broken = repeats_earlier(key, seen, cjk=self._cjk, near=False) \
+                or bool(self.linter.other_script(line.text))
+            if broken:
+                dropped.append(line.text)
+            else:
+                kept.append(line)
+                seen.append(key)
+        if not dropped:
+            return repaired
+        # A turn that only repeats what was already said adds nothing: better
+        # that it leaves no rows than that the scene says a line twice.
+        self._log("rows_dropped", speaker=speaker_id, rows=dropped)
+        return kept
+
     def _add_reply_turns(self, speaker_id: str, lines: list[ParsedLine], *, note: str,
                          attempts: int, hits: list[SlopHit],
                          step: ScriptStep | None = None, fixed: bool = False
@@ -1204,6 +1435,13 @@ class Stage:
         spoken = 0
         acted = False
         hit_dicts = [hit.to_dict() for hit in hits]
+        if speaker_id != NARRATOR and not fixed and step is None:
+            lines = self._salvage(speaker_id, lines)
+        speaks = any(line.kind == "dialogue" and line.speaker == own for line in lines)
+        # An action row the speaker was not offered is dropped, unless it is
+        # all they gave (better a gesture than an empty turn).
+        action_ok = (speaker_id == NARRATOR or fixed or not speaks
+                     or self._action_allowed(speaker_id))
         previous_key = next((t.expression for t in reversed(self.turns)
                              if t.speaker_id == speaker_id and t.expression is not None),
                             None)
@@ -1232,10 +1470,12 @@ class Stage:
                         turn.expression = previous_key
                     previous_key = turn.expression
             else:
-                if speaker_id != NARRATOR and acted:
+                if speaker_id != NARRATOR and (acted or not action_ok):
                     continue                  # one action row per actor take
                 acted = True
-                turn = Turn(kind="narration", speaker_id=speaker_id, text=line.text,
+                text = line.text if speaker_id == NARRATOR or fixed \
+                    else self._repair_action(speaker_id, line.text)
+                turn = Turn(kind="narration", speaker_id=speaker_id, text=text,
                             take=take, beat=self.beat, note=note, attempts=attempts,
                             fixed=fixed)
             for key in ("bg", "bgm", "cg", "sfx"):

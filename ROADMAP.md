@@ -6,9 +6,11 @@ onboarding) and [docs/architecture.md](docs/architecture.md) (engine internals).
 > Last updated: 2026-11-22. **Phase 8 — tavern mode — has landed as an interim,
 > authoring-time milestone**: tavern-style character cards, world books, prompt
 > presets with an inspector, a de-slop linter, and a multi-agent stage that
-> writes dialogue with one agent per character. It is verified offline only;
-> real-model validation, warm-session ops, validator coverage and in-game live
-> dialogue are the next work (see [Next PRs](#next-prs) §0).
+> writes dialogue with one agent per character. It has been run and measured
+> against one locally hosted model, and corrected against what that run showed;
+> a wider measurement, warm-session ops, validator coverage and in-game live
+> dialogue are the next work (see [Next PRs](#next-prs) §0). CI's `test` job is
+> red for a reason unrelated to this phase (see [Known gaps](#known-gaps)).
 > Phases 1-2.5, 5A-5C, 6, and 7 are implemented:
 > plugin extensibility, the AI-Coding-Native contract and world model, animated
 > portraits, image-sequence / desktop-plugin movie playback, and the warm
@@ -74,10 +76,11 @@ The engine is built around three pillars (see CLAUDE.md for the framing):
   `PluginManager` reconciles declared-vs-registered (see
   [Extension points](#extension-points-pillar-c)).
 
-Test inventory: 2,901 tests passed, with 3 environment-conditional skips and
-16 expected dummy-SDL renderer warnings, in 135.98 seconds on the 2026-11-22
-working tree (50 of them cover tavern mode). CI remains the source of truth for
-a given commit.
+Test inventory: 2,911 tests passed, with 3 environment-conditional skips and
+16 expected dummy-SDL renderer warnings, in 124.95 seconds on the 2026-11-22
+working tree on macOS (60 of them cover tavern mode). CI's `test` job does not
+currently agree: 19 layout tests fail on the Linux runner for a font reason
+described under Known gaps.
 
 ---
 
@@ -573,13 +576,37 @@ Landed (`world_gal_game/tavern/`, `world-gal-game tavern …`):
 
 What "interim" means here — verified versus not:
 
-- Verified: 50 unit / CLI tests using scripted and echo backends; the full
-  suite stays green; demo_pack `validate` and `smoke` unchanged.
-- **Not verified:** no scene has been staged with a real model yet. The Claude
-  backend's request shape is checked against the installed SDK's signature and
-  the OpenAI-compatible one against a local fake server, but output quality,
-  retake rates and cost are unmeasured. Treat prompt wording and linter
-  thresholds as first drafts.
+- Verified offline: 60 unit / CLI tests using scripted and echo backends; the
+  full suite stays green; demo_pack `validate` and `smoke` unchanged.
+- **Verified against one real model (2026-11-22):** a locally hosted
+  open-weights model behind an OpenAI-compatible endpoint, one brief
+  (demo_pack `park_bench`), five scenes per condition, plus restaging one
+  existing scene. Reproduce with `tools/tavern_eval.py`; the table and the
+  method are in [docs/tavern.md](docs/tavern.md).
+  - The version first published had never met a model, and it showed: the
+    player's agent acted but never spoke, nearly every line dragged a gesture
+    behind it, lines repeated verbatim, Simplified characters leaked into
+    Traditional text, the beat's required word was spoken in 0 of 5 scenes, and
+    the linter of the day graded one such scene A. Scored with today's linter
+    it averages 54.0 — no better than the same model writing the scene alone
+    (54.6 over ten scenes).
+  - After the fixes that run prompted — rationed action rows, subject repair,
+    speech required, beats that cannot be skipped while they owe a word, a cap
+    on consecutive turns, narrator-delivered opening and ending, script tables
+    with repair, repeated-line detection — the stage averages 6.5 on the last
+    round (13.5 over all fifteen scenes of the three revised rounds, worst
+    43.5), with the required word spoken in 5 of 5.
+  - Cost: about 22 requests, 22k input / 0.8k output tokens and a minute per
+    scene, against one request and 16 seconds for the single-author baseline.
+  - Restaging dropped content on first contact (a quest keyword, and the
+    request the scene's choice answers). It now holds world-book keys as
+    required wording and sends back a rewrite under half its source's length.
+- **Still not verified:** the Claude backend has never sent a real request
+  (its request shape is checked against the installed SDK's signature only);
+  no second model, no second brief, no multi-character scene, no English or
+  Japanese output. Fifteen scenes on one brief is a direction, not a result.
+
+---
 
 ## Extension points (Pillar C)
 
@@ -622,13 +649,17 @@ In priority order.
 Phase 8 landed the machinery; this is what turns it from "runs offline" into
 something to rely on. In order:
 
-1. **Stage a real scene and measure it.** Run `tavern enact` and
-   `tavern restage` on demo_pack with the Claude backend. Record, per run:
-   retake rate, lint score before/after, request count and tokens, and a human
-   read of whether the lines are better. Build a small fixed eval set (a few
-   briefs + a few existing scenes) so prompt and threshold changes can be
-   compared instead of guessed. Until this is done, nothing below should tune
-   wording.
+1. **Widen the measurement.** Started 2026-11-22: `tools/tavern_eval.py`
+   stages a brief N times on a real model and tabulates structure, lint score
+   and cost against a single-author baseline; one local model and one brief
+   are done (Phase 8 has the numbers). Still to do, and prompt or threshold
+   changes should wait on it: a second and third model including the Claude
+   backend, which has never sent a real request; more briefs, with at least one
+   three-character scene; `restage` at more than one scene; English and
+   Japanese; and a blind human read, because every number so far is
+   structural. The known failures to watch are content, not form: actors
+   invent story facts, lose continuity between lines, circle one topic, and
+   overuse a card's catchphrase.
 2. **Warm-session ops.** `tavern.open` / `tavern.next` / `tavern.submit` /
    `tavern.transcript` / `tavern.commit` on `HeadlessSession` and the NDJSON
    server, with `commit` routed through the existing `edit.*` path so it
@@ -835,19 +866,42 @@ vs `pyproject.toml`-pinned, and seek review.
   cannot always be re-localized; true per-glyph fallback, text-expansion/reflow
   coverage, complete pack translations, and human linguistic/cultural QA remain
   open. GUI switching intentionally stays at the title boundary in v1.
-- **Tavern mode is unproven against a real model** — everything in Phase 8 is
-  tested with scripted and offline backends only. Prompt wording, retake
-  thresholds and the linter's pattern lists have not been calibrated on real
-  output; the linter is a heuristic that finds lines worth a second look, not a
-  judge of writing quality.
+- **Tavern mode is calibrated on one model and one brief** — the stage ran end
+  to end on a local model on 2026-11-22 and its prompts, guards and linter
+  rules were corrected against what that model did; nothing says the same
+  settings suit another model. The Claude backend is still untested against
+  the real API. The linter finds lines worth a second look; it is not a judge
+  of writing quality, and before that run it graded a visibly broken scene A.
+- **The stage guards structure, not content** — actors still invent facts the
+  story does not contain, contradict the line before, and circle one topic.
+  A staged scene needs a human read before it is committed.
 - **Tavern mode is authoring-time only and CLI-only** — no warm-session
   `tavern.*` ops, no validator / self-check / capability-manifest coverage of
   tavern files, no `tavern chat`, and no runtime use: `llm_speaker` lines and
   NPC free chat still fall back as before. A staged scene is not wired into the
   game flow automatically.
 - **Restaging preserves wording it can name, not meaning** — entity names,
-  numbers and tokens are enforced; whether a rewritten line still says the same
-  thing needs a human read of the diff.
+  world-book keys, numbers and tokens are enforced, and a rewrite under half
+  its source's length is sent back, both added after a real model dropped a
+  quest keyword and a request on the first try. Whether a rewritten line still
+  says the same thing needs a human read of the diff.
+- **CI's `test` job is red, and layouts depend on the host's font** — diagnosed
+  2026-11-22. The same 19 layout tests have failed on `main` since at least
+  2026-10-21; `runtime-reliability` and `web-smoke` pass. Cause: the Linux
+  runner has no CJK font, so `FontRegistry` falls back to pygame's default
+  font, whose metrics the layout tests were never written for (reproduced in a
+  Linux container, and on macOS by forcing `match_font` to return nothing).
+  Installing Noto Sans CJK on the runner does **not** make it green: a
+  different 12–13 tests fail, because that font's line height is about 1.45 em
+  where the macOS font the tests were calibrated on is about 1.0 em (41 px
+  against 28 px at size 28), and several layouts overflow — flowchart nodes,
+  the destination-picker preview, dialogue paging, sound captions, map
+  navigation. So this is two problems: (1) tests measure whatever font the
+  host happens to have, and (2) real layout overflow under a tall CJK font,
+  which is what Linux desktops and Android ship. Options, not yet chosen:
+  bundle one reference CJK font and have the tests and demo_pack use it
+  (deterministic everywhere, costs several MB in the repo); and/or make the
+  affected layouts measure line height instead of assuming it.
 - **No `@field` decorator** for public plugin state — plugins use
   `state.meta["__plugin:<id>__"]` for private state and `@inspect_field` for the
   read path; writing public fields into `GameState` is not yet a first-class API.
@@ -915,4 +969,6 @@ vs `pyproject.toml`-pinned, and seek review.
 | 2026-08-02 | Settings information architecture P1: four fixed responsive pages, accessibility-first 1/2/3-operation entry, stable per-page focus/scroll, stacked narrow audio rows, voiced-character filtering, live/persisted fullscreen, strict preference normalization and Menu-context restoration | engine capability done; human-approved visual baselines, real-device input/fullscreen and disabled-player review remain open |
 | — | Phase 5A native rigs: Live2D / Spine as a desktop-only plugin | open (Next PR #2) |
 | 2026-11-22 | Phase 8 (interim): tavern mode — character cards (community V1/V2/V3 JSON + PNG, engine speech / private-knowledge extensions), world book with state gates and decision log, tavern presets + macros + prompt inspector, multi-agent stage (actor per character, director, narrator; knowledge partition; lint-driven retakes), text-only restaging of existing scenes, de-slop linter (zh-Hant / zh-Hans / en / ja), expression-word resolution with memo, `anthropic` / `openai` / `echo` / `relay` backends, chat-log import (`world-gal-game tavern …`, `docs/tavern.md`) | done offline; real-model validation, warm-session ops, validator coverage and runtime live dialogue remain open |
+| 2026-11-22 | Phase 8: first runs against a real model (local, OpenAI-compatible) and the fixes they forced — rationed action rows, required speech, beat and speaker guards, narrator opening / ending, derived script tables with repair, repeated-line and action-tag rules, restage content guard; `tools/tavern_eval.py` | done |
+| 2026-11-22 | CI `test` job diagnosed: host-font dependence (no CJK font on the runner; layouts overflow under a tall CJK font) | open (Known gaps) |
 | — | Phase 3: runtime LLM NPC, autonomous spec-to-pack, cross-pack plugins | deferred |

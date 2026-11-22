@@ -111,6 +111,8 @@ world-gal-game tavern enact <pack> --brief <brief.yaml> --backend relay --state 
 world-gal-game tavern step s.json --submit "<reply>"    # repeat until "done": true
 world-gal-game tavern step s.json --write               # add_scene via PackEditor
 world-gal-game tavern restage <pack> --scene <id> --only-flagged   # text-only edits
+python tools/tavern_eval.py <pack> --brief <brief.yaml> --runs 5 --compare-single
+                                                        # measure it on a real model
 ```
 
 Authoring-time only: in-game live dialogue and warm-session `tavern.*` ops are
