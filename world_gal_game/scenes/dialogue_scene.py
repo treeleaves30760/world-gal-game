@@ -3744,6 +3744,16 @@ class DialogueScene(Scene):
                     candidate_blocked
                     or target_status.colliderect(self.box.rect)
                 )
+            elif isinstance(self.box, NVLBox):
+                # The transcript keeps at least one readable row above its
+                # bottom padding; a HUD pushed into that row would sit on the
+                # text. Fonts with tall lines reach this on small canvases.
+                candidate_blocked = (
+                    candidate_blocked
+                    or target_status.bottom + gap
+                    > self.box.content_rect.bottom
+                    - self.box.minimum_content_height
+                )
             if candidate_blocked:
                 # Only now spend vertical caption space. This fallback keeps
                 # the displaced HUD wholly above a horizontally-overlapping

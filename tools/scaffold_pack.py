@@ -279,7 +279,7 @@ def main(argv: list[str] | None = None) -> int:
 
     print()
     print(f"[scaffold] pack ready at {pack_dir}")
-    print(f"[scaffold] try it:")
+    print("[scaffold] try it:")
     print(f"    uv run python main.py --pack {args.pack}")
     print(f"    uv run python main.py --pack {args.pack} --headless --inspect")
     return 0

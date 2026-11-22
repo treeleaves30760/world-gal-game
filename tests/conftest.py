@@ -9,8 +9,10 @@ name the engine probes resolves to it, on every host. A registry built with no
 candidates still gets pygame's bundled default, which is also the same bytes
 everywhere.
 
-This fixes what the suite measures, not what a player's machine has. Layouts
-under a taller system font are a separate, open problem (ROADMAP, Known gaps).
+This fixes what the suite measures, not what a player's machine has. To hold
+layouts to a font with taller lines (Noto Sans CJK, which Linux desktops and
+Android ship, is about 1.45 em), point ``WGG_TEST_FONT`` at that font file and
+run the suite again; CI does this in its ``layout-tall-font`` job.
 
 The same goes for player data. Run from a checkout, the engine keeps
 ``settings.json`` and ``saves/`` next to the project, so the suite used to
@@ -24,12 +26,18 @@ writes the developer's. A test about the first run says so itself
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pygame
 import pytest
 
-REFERENCE_FONT = Path(__file__).parent / "fonts" / "jf-openhuninn-2.1.ttf"
+REFERENCE_FONT = Path(
+    os.environ.get("WGG_TEST_FONT")
+    or Path(__file__).parent / "fonts" / "jf-openhuninn-2.1.ttf"
+)
+if not REFERENCE_FONT.is_file():
+    raise RuntimeError(f"WGG_TEST_FONT does not name a font file: {REFERENCE_FONT}")
 
 
 def _reference_match(name, bold=False, italic=False):

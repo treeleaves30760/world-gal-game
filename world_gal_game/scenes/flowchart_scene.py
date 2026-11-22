@@ -311,7 +311,6 @@ class FlowchartScene(Scene):
         # Instance geometry lets high-resolution canvases scale with fonts,
         # while 360p retains a readable two-line title and >=44px cards.
         self._card_w = max(176, self._sp(self._CARD_W))
-        self._card_h = max(76, self._sp(self._CARD_H))
         self._col_gap = max(16, self._sp(self._COL_GAP))
         self._lane_gap = max(12, self._sp(self._LANE_GAP))
         self._act_gap = max(18, self._sp(self._ACT_GAP))
@@ -327,6 +326,16 @@ class FlowchartScene(Scene):
         self._row_label_size = max(16, int(round(
             20 * min(1.0, self._layout_scale),
         )))
+        # A card holds two title lines and a subtitle. Their height comes from
+        # the font, not from the point size: a CJK font with tall lines (about
+        # 1.45 em) would otherwise push the subtitle over the second title line.
+        fonts = self.ctx.fonts
+        content_h = (
+            fonts.get(self._card_title_size, bold=True).get_linesize() * 2
+            + fonts.get(self._card_sub_size).get_linesize()
+            + self._sp(24)
+        )
+        self._card_h = max(76, self._sp(self._CARD_H), content_h)
 
     # ---- layout / rendering -------------------------------------------
     # Geometry. Cards are sized to hold two readable CJK lines + a subtitle.

@@ -6,7 +6,6 @@ test_qa_map suite used to provide.
 """
 from __future__ import annotations
 
-import pytest
 
 from world_gal_game.core.map_system import Exit, Location, MapSystem
 

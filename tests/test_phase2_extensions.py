@@ -15,12 +15,11 @@ from pathlib import Path
 import pytest
 
 from world_gal_game.core.game_state import GameState
-from world_gal_game.core.story_graph import Effect, Condition
+from world_gal_game.core.story_graph import Effect
 from world_gal_game.plugins import (
-    BRAIN_REGISTRY, DIALOGUE_OP_REGISTRY,
-    SCENE_REGISTRY, WIDGET_REGISTRY,
+    BRAIN_REGISTRY, SCENE_REGISTRY, WIDGET_REGISTRY,
     HookEvent, PluginContext, PluginManager,
-    brain, dialogue_op, effect, hook, scene, widget,
+    brain, dialogue_op, hook, scene, widget,
     snapshot, restore,
 )
 
@@ -363,9 +362,7 @@ def test_brain_constructor_arg_overrides_meta(clean_registry, tmp_path: Path):
 
 def test_dialogue_op_runs_during_engine_present():
     """An `[[upper]]` directive in a real scene line is processed by the engine."""
-    from world_gal_game.config import EngineConfig
     from world_gal_game.dialogue.dialogue_engine import _apply_dialogue_ops
-    from world_gal_game.headless import HeadlessSession
 
     snap = snapshot()
     try:

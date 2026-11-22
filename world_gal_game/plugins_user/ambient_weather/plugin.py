@@ -23,7 +23,7 @@ import pygame
 
 from world_gal_game.plugins import ambient_backend
 from world_gal_game.ui.ambient_backend import (
-    ParticleBackend, Lcg, coerce_color, fnum, inum,
+    ParticleBackend, Lcg, coerce_color, fnum,
 )
 
 

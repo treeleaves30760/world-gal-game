@@ -5,8 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 import textwrap
 import tempfile
-import yaml
-import pytest
 
 from world_gal_game.core.map_system import (
     Exit, Location, MapSystem, Region, SceneHook, NPCPresence,

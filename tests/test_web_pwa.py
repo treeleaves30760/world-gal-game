@@ -121,7 +121,7 @@ def test_inject_adds_manifest_link_and_sw_registration() -> None:
     html = "<html><head></head><body></body></html>"
     out = inject_pwa_into_html(html, "My Game")
     # Manifest link.
-    assert f'rel="manifest"' in out
+    assert 'rel="manifest"' in out
     assert MANIFEST_FILENAME in out
     # Service worker registration script.
     assert "serviceWorker" in out

@@ -708,7 +708,7 @@ class MapView(Widget):
             return None
         cx, cy = origin.center
         dx, dy = direction
-        candidates: list[tuple[int, int, int, str]] = []
+        candidates: list[tuple[int, int, int, int, str]] = []
         for node_id in candidate_ids:
             rect = self._node_rects[node_id]
             delta_x = rect.centerx - cx
@@ -719,9 +719,14 @@ class MapView(Widget):
                 primary, orthogonal = abs(delta_y), abs(delta_x)
             else:
                 continue
-            # Penalise off-axis candidates without making a slightly diagonal
-            # nearby node impossible to reach.
+            # A node within about 27 degrees of the pressed direction reads as
+            # "that way"; prefer those, nearest first. Only when none is
+            # aligned does a diagonal node compete, still penalised off-axis.
+            # Without the first key, a node at 45 degrees could beat a far
+            # aligned one by a few pixels, and which one won changed with the
+            # label font's line height.
             candidates.append((
+                0 if orthogonal * 2 <= primary else 1,
                 primary + orthogonal * 2,
                 orthogonal,
                 primary,

@@ -9,7 +9,6 @@ import pytest
 import world_gal_game
 from world_gal_game.config import EngineConfig, _PERSISTED_SETTING_FIELDS
 from world_gal_game.core.game_state import GameState
-from world_gal_game.core.story_graph import Effect
 from world_gal_game.headless import HeadlessSession
 
 

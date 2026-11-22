@@ -44,7 +44,7 @@ from typing import Any, TYPE_CHECKING
 
 from .errors import (
     DependencyError, IncompatibleEngineError, ManifestError,
-    PluginError, PluginLoadError, PluginRuntimeError, isolate,
+    PluginError, PluginLoadError, PluginRuntimeError,
 )
 from .manifest import PluginManifest
 from .registry import (
@@ -53,7 +53,7 @@ from .registry import (
     PORTRAIT_BACKEND_REGISTRY, AMBIENT_BACKEND_REGISTRY,
     loading,
 )
-from .context import HookEvent, PluginContext
+from .context import PluginContext
 
 if TYPE_CHECKING:
     pass

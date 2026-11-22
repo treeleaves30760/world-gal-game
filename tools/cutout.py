@@ -214,7 +214,6 @@ def _solidify(rgb, alpha, *, thin_max: int = 6, edge_keep: int = 3,
     Returns (rgb, alpha) uint8. Gap pixels get the colour of the nearest
     confident-foreground pixel so the fill reads as hair, not a flat patch.
     """
-    import numpy as np
     from scipy import ndimage
 
     cover = alpha > cover_thresh

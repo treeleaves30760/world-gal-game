@@ -14,7 +14,6 @@ Either the delta or the affinity tag can be overridden per item via the
 """
 from __future__ import annotations
 
-from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 from .story_graph import Effect

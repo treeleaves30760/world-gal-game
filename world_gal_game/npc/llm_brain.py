@@ -12,7 +12,7 @@ just rely on hand-authored `line.text`.
 """
 from __future__ import annotations
 
-from typing import Any, Callable
+from typing import Callable
 
 from .npc_base import NPC, NPCRegistry
 

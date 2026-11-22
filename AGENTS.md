@@ -45,6 +45,7 @@ absolute pack outside configured search roots. Where state evolves, pass
 
 ```bash
 uv run pytest tests/                                    # unit tests
+WGG_TEST_FONT=<tall CJK font> uv run pytest tests/     # layouts in a 1.45 em font
 uv run python -m world_gal_game.cli self-check demo_pack
 uv run python -m world_gal_game.cli context games/demo_pack   # one-call orientation
 ```

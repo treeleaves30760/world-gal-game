@@ -80,8 +80,9 @@ Test inventory: 2,911 tests passed, with 3 environment-conditional skips and
 working tree on macOS (60 of them cover tavern mode). The suite pins one
 reference font and its own player-data root (`tests/conftest.py`,
 `tests/fonts/`), so it measures the same glyphs and starts from the same
-settings on every host; the same tree passes in a bare Linux container and in
-one with a system CJK font installed.
+settings on every host. CI runs it twice: once in that font, whose lines are
+one em tall, and once in Noto Sans CJK (`WGG_TEST_FONT`, about 1.45 em), the
+font Linux desktops and Android ship; both pass.
 
 ---
 
@@ -886,22 +887,14 @@ vs `pyproject.toml`-pinned, and seek review.
   its source's length is sent back, both added after a real model dropped a
   quest keyword and a request on the first try. Whether a rewritten line still
   says the same thing needs a human read of the diff.
-- **Layouts overflow under a tall CJK font** — found 2026-11-22 while fixing
-  CI. Several layouts assume a line is about one em tall, which holds for the
-  font macOS resolves (28 px at size 28) and not for Noto Sans CJK (41 px at
-  size 28, about 1.45 em), which is what Linux desktops and Android ship.
-  Under it, text overflows in flowchart nodes, the destination-picker preview,
-  dialogue paging, sound captions and map navigation; 12–13 layout tests fail
-  when the suite is pointed at that font. The suite does not see this any
-  more, by design: it now pins a reference font with one-em lines so that CI
-  measures the same thing everywhere (the `test` job had been red since
-  2026-10-21 because the runner has no CJK font at all and fell back to
-  pygame's Latin default; one further test passed only where a developer's
-  own `settings.json` said the onboarding had been seen, so the suite now
-  brings its own). The fix is for those layouts to measure line height
-  instead of assuming it, with a second pinned font of the tall kind to hold
-  the result; until then a pack that must look right on Linux or Android
-  should ship its own font through `bundled_font`.
+- **The destination preview is cramped at 540p and below** — at 960x540
+  and 800x450 the sheet already fills the canvas, so the three-row NPC /
+  event grid gets what is left after the title, the itinerary and the first
+  line of a refusal: about 130 px at 540p and 44 px at 450p in the reference
+  font, less under Noto Sans CJK, against roughly 150 px it needs. The grid
+  is clipped, never painted over its neighbours, but rows are lost. The
+  refusal wins on purpose: it is the reason the player cannot go. A real fix
+  needs the body to scroll, or a compact grid for small canvases.
 - **No `@field` decorator** for public plugin state — plugins use
   `state.meta["__plugin:<id>__"]` for private state and `@inspect_field` for the
   read path; writing public fields into `GameState` is not yet a first-class API.
@@ -971,4 +964,5 @@ vs `pyproject.toml`-pinned, and seek review.
 | 2026-11-22 | Phase 8 (interim): tavern mode — character cards (community V1/V2/V3 JSON + PNG, engine speech / private-knowledge extensions), world book with state gates and decision log, tavern presets + macros + prompt inspector, multi-agent stage (actor per character, director, narrator; knowledge partition; lint-driven retakes), text-only restaging of existing scenes, de-slop linter (zh-Hant / zh-Hans / en / ja), expression-word resolution with memo, `anthropic` / `openai` / `echo` / `relay` backends, chat-log import (`world-gal-game tavern …`, `docs/tavern.md`) | done offline; real-model validation, warm-session ops, validator coverage and runtime live dialogue remain open |
 | 2026-11-22 | Phase 8: first runs against a real model (local, OpenAI-compatible) and the fixes they forced — rationed action rows, required speech, beat and speaker guards, narrator opening / ending, derived script tables with repair, repeated-line and action-tag rules, restage content guard; `tools/tavern_eval.py` | done |
 | 2026-11-22 | CI `test` job repaired: the suite pins a reference font (`tests/conftest.py`, `tests/fonts/`, SIL OFL 1.1) instead of measuring the host's, and runs on its own player-data root instead of the checkout's `settings.json`; seven tests that hard-coded one host's metrics now state their line capacity | done; layout overflow under a tall CJK font is open (Known gaps) |
+| 2026-11-22 | Layouts measured, not assumed, under a tall-line CJK font: flowchart cards size from line height, the destination preview grows by its measured shortfall instead of hiding a refusal, the NVL status HUD no longer lands on the transcript, map focus prefers aligned nodes; CI gains a `layout-tall-font` job, a lint step, and Node 24 actions | done; the destination preview at 540p and below is open (Known gaps) |
 | — | Phase 3: runtime LLM NPC, autonomous spec-to-pack, cross-pack plugins | deferred |

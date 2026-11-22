@@ -6,9 +6,6 @@ gal-game can model both romance and dread on the same NPC.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Iterable
-
 from pydantic import BaseModel, Field, PrivateAttr
 
 

@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import os
-import tempfile
 from pathlib import Path
 
 import pygame
@@ -104,7 +103,6 @@ def test_portrait_animations_constant():
 # script_loader three YAML forms
 # ---------------------------------------------------------------------------
 
-import yaml
 import textwrap
 from world_gal_game.dialogue.script_loader import load_scenes_from_yaml
 

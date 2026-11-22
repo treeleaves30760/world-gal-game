@@ -1,5 +1,5 @@
 """Inventory + gift heuristic."""
-from world_gal_game.core.inventory import Inventory, Item, ItemRegistry, evaluate_gift
+from world_gal_game.core.inventory import Inventory, Item, evaluate_gift
 from world_gal_game.npc.npc_base import NPC
 from world_gal_game.core.game_state import GameState
 from world_gal_game.core.story_graph import Effect

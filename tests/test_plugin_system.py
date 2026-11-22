@@ -25,8 +25,7 @@ from world_gal_game.core.game_state import GameState
 from world_gal_game.core.story_graph import Condition, Effect
 from world_gal_game.plugins import (
     EFFECT_REGISTRY, CONDITION_REGISTRY, HOOK_REGISTRY, INSPECT_FIELD_REGISTRY,
-    EffectEntry, ConditionEntry,
-    PluginContext, PluginManager, PluginManifest, HookEvent,
+    EffectEntry, PluginContext, PluginManager, PluginManifest, HookEvent,
     DuplicateKindError, DependencyError, IncompatibleEngineError,
     ManifestError, PluginLoadError, UnknownKindError,
     effect, condition, hook, inspect_field,
@@ -475,7 +474,7 @@ def test_manager_malformed_manifest_marks_failed(tmp_path: Path, clean_registry)
                                           encoding="utf-8")
     mgr = PluginManager(pack_root=pack_root, engine_version="0.1.0")
     mgr.discover()
-    failed = mgr.failed()
+    assert mgr.failed()
     assert any(r.state == "failed" for r in mgr.records.values())
     # Synthetic id is allowed to be anything; the key thing is it didn't crash.
 

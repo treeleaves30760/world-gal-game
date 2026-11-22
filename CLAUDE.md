@@ -269,8 +269,10 @@ lines in one pass — stage them. See [docs/tavern.md](docs/tavern.md).
 ## Quick dev loop
 
 ```bash
-# Unit tests (1,200+ cases)
+# Unit tests (2,900+ cases; layouts measured in the pinned font, tests/fonts/)
 uv run pytest tests/
+# Same suite in a CJK font with tall lines, as CI's layout-tall-font job does
+WGG_TEST_FONT=/path/to/NotoSansCJK-Regular.ttc uv run pytest tests/
 
 # End-to-end playthrough (demo_pack's lover / friend / alone routes)
 uv run python main.py --headless --pack demo_pack \

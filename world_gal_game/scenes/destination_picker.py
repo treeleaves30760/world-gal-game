@@ -1005,10 +1005,20 @@ class DestinationPickerScene(Scene):
         self,
         d: _Dest,
         action_label: str,
+        grow: int = 0,
     ) -> dict[str, object]:
-        """Measure the sheet once so body copy never enters the footer."""
+        """Measure the sheet once so body copy never enters the footer.
+
+        The sheet keeps its baseline size whenever the content fits. A font
+        with tall lines (CJK fonts at about 1.45 em) can leave the status card
+        too short to show the itinerary and even one line of the reason the
+        trip is refused; then the sheet grows by exactly the missing height,
+        as far as the canvas margins allow, rather than hide that reason.
+        """
         sw, sh = self.ctx.screen_size
         pw, ph = self._preview_size()
+        ph_limit = max(ph, sh - self._sp(40) * 2)
+        ph = min(ph + max(0, grow), ph_limit)
         panel = pygame.Rect((sw - pw) // 2, (sh - ph) // 2, pw, ph)
         edge = self._sp(4)
         # Pack chrome may carry a small document/header label at the top of
@@ -1167,7 +1177,18 @@ class DestinationPickerScene(Scene):
             + details_need_h
             + vertical_gap
         )
-        minimum_status_card_h = status_line_h + summary_pad_y * 2
+        # The status card must at least show every itinerary line and, when
+        # the trip is refused, the first line of the reason (the rest scroll).
+        minimum_status_card_h = (
+            max(1, len(itinerary_lines)) * status_line_h
+            + (self._sp(4) + status_line_h if reason_lines else 0)
+            + summary_pad_y * 2
+        )
+        shortfall = fixed_body_h + minimum_status_card_h - body.height
+        if shortfall > 0 and grow == 0 and ph < ph_limit:
+            return self._compute_preview_layout(
+                d, action_label, grow=shortfall,
+            )
         status_card_h = min(
             status_card_h,
             max(
@@ -1294,6 +1315,7 @@ class DestinationPickerScene(Scene):
             "npc_row_h": npc_row_h,
             "npc_avatar_size": self._sp(38),
             "hook_row_h": hook_row_h,
+            "grown_by": ph - self._preview_size()[1],
         }
 
     def _confirm(self) -> None:

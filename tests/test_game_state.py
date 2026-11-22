@@ -1,5 +1,4 @@
 """GameState: condition evaluation + effect application."""
-import pytest
 
 from world_gal_game.core.game_state import GameState
 from world_gal_game.core.story_graph import Condition, Effect

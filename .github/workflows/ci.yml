@@ -23,16 +23,19 @@ jobs:
       SDL_AUDIODRIVER: dummy
       PYGAME_HIDE_SUPPORT_PROMPT: "1"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v7
 
       - name: Install Python
         run: uv python install 3.12
 
       - name: Sync dependencies (engine + dev/test extras)
         run: uv sync --extra dev
+
+      - name: Lint (undefined names, unused imports, syntax)
+        run: uvx ruff@0.15.0 check --select F,E9 world_gal_game tools tests main.py build.py
 
       - name: Run tests
         run: uv run pytest tests/ -q
@@ -42,6 +45,39 @@ jobs:
 
       - name: Self-check demo pack (schema + refs + smoke)
         run: uv run python main.py self-check games/demo_pack
+
+  layout-tall-font:
+    # The `test` job measures layouts in the suite's pinned reference font,
+    # whose lines are one em tall. Linux desktops and Android ship Noto Sans
+    # CJK, whose lines are about 1.45 em; run the suite again in that font so
+    # a layout that only fits short lines cannot land unnoticed.
+    runs-on: ubuntu-latest
+    env:
+      SDL_VIDEODRIVER: dummy
+      SDL_AUDIODRIVER: dummy
+      PYGAME_HIDE_SUPPORT_PROMPT: "1"
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Install Python
+        run: uv python install 3.12
+
+      - name: Install Noto Sans CJK
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends fonts-noto-cjk fontconfig
+          echo "WGG_TEST_FONT=$(fc-match -f '%{file}' 'Noto Sans CJK TC')" >> "$GITHUB_ENV"
+
+      - name: Sync dependencies (engine + dev/test extras)
+        run: uv sync --extra dev
+
+      - name: Run tests in the tall font
+        run: |
+          echo "font: $WGG_TEST_FONT"
+          uv run pytest tests/ -q
 
   runtime-reliability:
     # Host-sensitive source-runtime evidence is deliberately separate from
@@ -54,10 +90,10 @@ jobs:
       SDL_AUDIODRIVER: dummy
       PYGAME_HIDE_SUPPORT_PROMPT: "1"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v7
 
       - name: Install Python
         run: uv python install 3.12
@@ -73,7 +109,7 @@ jobs:
 
       - name: Upload runtime reliability evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: runtime-reliability-${{ runner.os }}-${{ github.run_attempt }}
           path: artifacts/runtime-reliability/demo-pack-linux.json
@@ -87,10 +123,10 @@ jobs:
     runs-on: ubuntu-latest
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v7
 
       - name: Install Python
         run: uv python install 3.12

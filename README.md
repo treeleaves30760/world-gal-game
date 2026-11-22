@@ -135,7 +135,8 @@ World-Gal-Game/
 ## 測試與檢查
 
 ```bash
-uv run pytest tests/                          # 單元與整合測試
+uv run pytest tests/                          # 單元與整合測試（版面以 tests/fonts/ 的字型量測）
+WGG_TEST_FONT=<行高較高的中文字型> uv run pytest tests/   # 用 Noto Sans CJK 這類字型再跑一次
 uv run world-gal-game smoke games/demo_pack   # 執行 pack 的所有 scripts/test_*.json
 uv run world-gal-game self-check games/demo_pack
 ```

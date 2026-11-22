@@ -205,7 +205,7 @@ def test_clue_unlocked_during_play_shows_in_journal(driver):
     driver.advance_frames(5)
     # prologue_done is set by the prologue scene → cl_demo_intro should
     # already be in the journal.
-    snap = driver._widget_catalogue()
+    driver._widget_catalogue()
     driver.press_key(pygame.K_j)
     driver.advance_frames(6)
     state = driver.app.state

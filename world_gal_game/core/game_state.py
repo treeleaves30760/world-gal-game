@@ -20,7 +20,7 @@ each dispatch so plugins can observe and react.
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from pydantic import BaseModel, Field, field_serializer
 
 from .achievements import AchievementTracker
@@ -37,6 +37,9 @@ from .read_log import ReadLog
 from .resources import ResourceTracker
 from .story_graph import StoryGraph, Condition, Effect
 from .time_system import TimeSystem
+
+if TYPE_CHECKING:  # annotations only; randomness enters through rng()
+    import random
 
 
 _log = logging.getLogger("world_gal_game.core.game_state")

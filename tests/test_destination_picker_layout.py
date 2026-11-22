@@ -338,11 +338,22 @@ def test_worst_case_preview_keeps_body_and_footer_separate(size, tmp_path) -> No
     left = pygame.Rect(layout["left_column"])
     right = pygame.Rect(layout["right_column"])
 
+    # The sheet keeps its baseline size while the content fits, and grows
+    # only by what a tall-line font needs to show the itinerary and the
+    # first line of the refusal (run the suite with WGG_TEST_FONT to see it).
+    grown_by = int(layout["grown_by"])
+    assert grown_by >= 0
     assert panel.size == (
         round(920 * size[1] / 720),
-        round(_PREVIEW_H * size[1] / 720),
+        round(_PREVIEW_H * size[1] / 720) + grown_by,
     )
-    assert panel.height <= round(size[1] * 0.70)
+    if grown_by == 0:
+        assert panel.height <= round(size[1] * 0.70)
+    assert pygame.Rect(0, 0, *size).inflate(
+        -2 * picker._sp(40), -2 * picker._sp(40),
+    ).height >= panel.height
+    reason_line_h = picker.ctx.fonts.get(14).get_linesize()
+    assert pygame.Rect(layout["reason_view"]).height >= reason_line_h
     for name in ("image", "body", "footer", "go_button", "cancel_button"):
         assert panel.contains(pygame.Rect(layout[name])), name
     for name in ("title", "teaser", "details", "status_card"):
@@ -397,6 +408,7 @@ def test_worst_case_preview_keeps_body_and_footer_separate(size, tmp_path) -> No
     assert pygame.Rect(long_layout["body"]).contains(long_status)
     assert long_status_card.contains(long_status)
     assert long_status.contains(long_reason_view)
+    assert long_reason_view.height >= reason_line_h
     assert long_details.bottom <= long_status_card.top
     assert (
         head_h + picker._sp(6) + 3 * int(long_layout["npc_row_h"])
@@ -437,8 +449,10 @@ def test_available_preview_is_compact_portrait_forward_and_cancel_safe(
     status_card = pygame.Rect(layout["status_card"])
     status = pygame.Rect(layout["status"])
 
-    assert panel.height == 750
-    assert panel.height < 1080 * 0.70
+    # Baseline height unless a tall-line font needs room for the itinerary.
+    assert panel.height == 750 + int(layout["grown_by"])
+    if not layout["grown_by"]:
+        assert panel.height < 1080 * 0.70
     assert int(layout["npc_avatar_size"]) == 57
     assert int(layout["npc_avatar_size"]) > round(30 * 1.5)
     assert status_card.contains(status)
